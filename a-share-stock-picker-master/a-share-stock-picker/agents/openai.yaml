@@ -1,0 +1,4 @@
+interface:
+  display_name: "A-Share Stock Picker"
+  short_description: "Score A-share candidates and render short/mid/long watchlists."
+  default_prompt: "Use $a-share-stock-picker to build an evidence-based A-share watchlist or conditional trade plan across short-, medium-, and long-term horizons using the latest close, Tonghuashun machine-readable quote data, broader Tonghuashun multi-page stock context with pagination when available, fallback public sources, policy/news catalysts, and market context."

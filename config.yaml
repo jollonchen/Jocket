@@ -1,0 +1,34 @@
+data:
+  provider: "ths"   # auto / ths / akshare / yfinance
+  akshare_adjust: "qfq"  # qfq=前复权, hfq=后复权, 空字符串=不复权
+  timeout: 12
+
+market:
+  default_start_date: "2024-01-01"
+  benchmark: "000300.SS"
+  yahoo_suffix:
+    sh: ".SS"
+    sz: ".SZ"
+  min_history_days: 60
+  min_avg_amount_20d: 50000000
+  exclude_prefixes: ["ST", "*ST", "退"]
+
+scoring:
+  short:
+    trend: 20
+    volume_price: 20
+    momentum: 15
+    liquidity: 15
+    sector_proxy: 15
+    risk_control: 15
+  long:
+    quality_placeholder: 20
+    growth_placeholder: 15
+    valuation_placeholder: 10
+    long_trend: 25
+    stability: 20
+    risk_control: 10
+
+ui:
+  default_top_n: 10
+  default_limit: 30

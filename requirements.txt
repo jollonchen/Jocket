@@ -1,0 +1,11 @@
+pandas>=2.0.0
+numpy>=1.24.0
+akshare>=1.16.0
+yfinance>=0.2.50
+streamlit>=1.35.0
+plotly>=5.20.0
+PyYAML>=6.0.1
+openpyxl>=3.1.0
+requests>=2.31.0
+urllib3>=2.0.0
+efinance>=0.5.3
