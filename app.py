@@ -4,12 +4,16 @@ import copy
 from datetime import datetime
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from src.config import load_config
 from src.fundamental_analyzer import FundamentalAnalyzer
 from src.fundamental_fetcher import FundamentalFetcher
+from src.news_fetcher import news_items_to_frame
+from src.rotation_analyzer import RotationAnalyzer
 from src.stock_analyzer import StockAnalyzer
+from src.stock_lookup import build_stock_directory, resolve_stock_query
 from src.stock_screener import StockScreener
 from src.ui_components import (
     format_number_cn,
@@ -58,7 +62,7 @@ load_css()
 config = load_config()
 provider_options = ["auto", "ths", "akshare", "yfinance"]
 provider_labels = {
-    "auto": "自动：同花顺优先，失败后切换",
+    "auto": "自动：AkShare优先，失败后切换",
     "ths": "同花顺",
     "akshare": "AkShare / 东方财富",
     "yfinance": "Yahoo Finance",
@@ -67,6 +71,15 @@ provider_labels = {
 
 def _provider_index(value: str) -> int:
     return provider_options.index(value) if value in provider_options else provider_options.index("ths")
+
+
+def _start_date_for_trading_days(days: int) -> pd.Timestamp:
+    return (pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None).normalize() - pd.offsets.BDay(days))
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _stock_directory() -> pd.DataFrame:
+    return build_stock_directory()
 
 
 def _latest_date(hist: pd.DataFrame | None) -> str:
@@ -892,22 +905,157 @@ def _render_screen_dashboard(df: pd.DataFrame, path: str, top: int, limit: int) 
     st.success(f"选股结果已保存：{path}")
 
 
+def _render_rotation_table(df: pd.DataFrame, title: str) -> None:
+    with st.container(border=True):
+        st.markdown(f'<div class="chart-title"><span>{title}</span><span class="pill pill-cyan">AkShare</span></div>', unsafe_allow_html=True)
+        if df is None or df.empty:
+            st.info("当前未获取到该分类的轮动数据。")
+            return
+        view = df.head(30).copy()
+        keep = [
+            "board_type",
+            "board_name",
+            "rotation_score",
+            "board_pct",
+            "net_flow",
+            "flow_pct_d3",
+            "flow_pct_d5",
+            "leader",
+            "leader_pct",
+            "opportunity",
+            "risk_note",
+        ]
+        view = view[[col for col in keep if col in view.columns]].rename(
+            columns={
+                "board_type": "类型",
+                "board_name": "板块/行业/热点",
+                "rotation_score": "轮动分",
+                "board_pct": "当日涨跌幅",
+                "net_flow": "主力净额(亿)",
+                "flow_pct_d3": "3日涨跌幅",
+                "flow_pct_d5": "5日涨跌幅",
+                "leader": "领涨股",
+                "leader_pct": "领涨股涨幅",
+                "opportunity": "机会状态",
+                "risk_note": "风险提示",
+            }
+        )
+        for col in ["当日涨跌幅", "3日涨跌幅", "5日涨跌幅", "领涨股涨幅"]:
+            if col in view.columns:
+                view[col] = pd.to_numeric(view[col], errors="coerce").map(lambda x: "N/A" if pd.isna(x) else f"{x:+.2f}%")
+        if "主力净额(亿)" in view.columns:
+            view["主力净额(亿)"] = pd.to_numeric(view["主力净额(亿)"], errors="coerce").map(lambda x: "N/A" if pd.isna(x) else f"{x:+.2f}")
+        st.dataframe(view, hide_index=True, use_container_width=True, height=min(620, 44 + len(view) * 38))
+
+
+def _render_rotation_dashboard(payload: dict, top_n: int) -> None:
+    summary = payload.get("summary", {}) if payload else {}
+    combined = payload.get("combined", pd.DataFrame()) if payload else pd.DataFrame()
+    industry = payload.get("industry", pd.DataFrame()) if payload else pd.DataFrame()
+    concept = payload.get("concept", pd.DataFrame()) if payload else pd.DataFrame()
+
+    render_section_title("板块 / 行业 / 热点轮动", "基于 AkShare 行业资金流、概念资金流和板块行情，追踪每日资金方向与机会状态。")
+    if not payload or not payload.get("available"):
+        st.warning("AkShare 轮动数据当前不可用。请稍后重试，或查看下方数据源诊断。")
+        errors = (payload or {}).get("errors", [])
+        if errors:
+            with st.expander("查看数据源错误详情", expanded=False):
+                st.dataframe(pd.DataFrame(errors), hide_index=True, use_container_width=True)
+        return
+
+    render_bento_grid(
+        [
+            metric_card("最强方向", str(summary.get("top_board") or "N/A"), str(summary.get("top_type") or "综合"), "green", "neutral"),
+            metric_card("轮动分", format_price(summary.get("top_score"), 1), "资金 + 涨幅 + 延续性", "cyan", "neutral"),
+            metric_card("主力净额", f"{float(summary.get('top_net_flow') or 0):+.2f} 亿", "最强方向净流入", "green" if (summary.get("top_net_flow") or 0) > 0 else "orange", "neutral"),
+            metric_card("上涨方向数", str(summary.get("positive_pct_count") or 0), f"资金净流入 {summary.get('positive_flow_count') or 0}", "purple", "neutral"),
+            metric_card("行业覆盖", str(summary.get("industry_count") or 0), "AkShare 行业资金流", "blue", "neutral"),
+            metric_card("热点覆盖", str(summary.get("concept_count") or 0), "AkShare 概念资金流", "cyan", "neutral"),
+        ]
+    )
+
+    if combined is not None and not combined.empty:
+        chart_df = combined.head(int(top_n)).copy()
+        fig = px.scatter(
+            chart_df,
+            x="net_flow",
+            y="board_pct",
+            size="rotation_score",
+            color="board_type",
+            hover_name="board_name",
+            hover_data=["leader", "leader_pct", "opportunity"],
+            labels={"net_flow": "主力净额(亿)", "board_pct": "当日涨跌幅(%)", "board_type": "类型"},
+            color_discrete_sequence=["#22c55e", "#38bdf8", "#a78bfa"],
+        )
+        fig.update_layout(height=430, margin=dict(l=8, r=8, t=8, b=8), legend=dict(orientation="h"))
+        _render_chart_card("资金流向 vs 当日强度", "Rotation Map", fig)
+
+    tabs = st.tabs(["综合轮动榜", "行业轮动", "热点/概念轮动", "数据源诊断"])
+    with tabs[0]:
+        _render_rotation_table(combined.head(int(top_n)), "综合轮动榜")
+    with tabs[1]:
+        _render_rotation_table(industry, "行业轮动与资金")
+    with tabs[2]:
+        _render_rotation_table(concept, "热点/概念轮动与资金")
+    with tabs[3]:
+        st.caption(f"更新时间：{payload.get('updated_at')}；数据源：{payload.get('source')}")
+        errors = payload.get("errors", [])
+        if errors:
+            st.dataframe(pd.DataFrame(errors), hide_index=True, use_container_width=True)
+        else:
+            st.success("本次 AkShare 轮动接口未记录错误。")
+
+
 with st.sidebar:
     st.markdown("### Control Center")
-    page = st.radio("分析模式", ["个股分析", "每日选股"], index=0, help="个股分析用于深入复盘；每日选股用于扫描内置股票池。")
+    page = st.radio("分析模式", ["个股分析", "每日选股", "板块轮动"], index=0, help="个股分析用于深入复盘；每日选股用于扫描内置股票池；板块轮动追踪行业/热点资金方向。")
     provider_label = st.selectbox(
         "行情数据源",
         provider_options,
-        index=_provider_index(config.get("data", {}).get("provider", "ths")),
+        index=_provider_index(config.get("data", {}).get("provider", "auto")),
         format_func=lambda x: provider_labels[x],
-        help="默认建议使用同花顺。auto 会自动尝试多个数据源。",
+        help="默认建议使用 AkShare 优先。auto 会自动尝试多个数据源。",
     )
     config.setdefault("data", {})["provider"] = provider_label
-    start = st.date_input("行情起始日期", value=pd.to_datetime(config.get("market", {}).get("default_start_date", "2024-01-01")), help="时间越长，指标越稳定；扫描也会更慢。")
+    if "start_date" not in st.session_state:
+        configured_start = config.get("market", {}).get("default_start_date")
+        st.session_state["start_date"] = (
+            pd.to_datetime(configured_start).date()
+            if configured_start
+            else _start_date_for_trading_days(180).date()
+        )
+
+    quick_60, quick_180, quick_year = st.columns(3)
+    if quick_60.button("过去60", use_container_width=True):
+        st.session_state["start_date"] = _start_date_for_trading_days(60).date()
+    if quick_180.button("过去180", use_container_width=True):
+        st.session_state["start_date"] = _start_date_for_trading_days(180).date()
+    if quick_year.button("过去1年", use_container_width=True):
+        st.session_state["start_date"] = _start_date_for_trading_days(252).date()
+    start = st.date_input("行情起始日期", key="start_date", help="默认按当前日期回退 180 个交易日；快捷按钮会自动重算日期。")
 
     st.divider()
-    code = st.text_input("股票代码", value="600522", help="例如 600522、300750、000001。")
-    name = st.text_input("股票名称（可选）", value="", help="只影响报告显示，不影响数据源。")
+    stock_query = st.text_input(
+        "股票代码 / 名称",
+        value="",
+        placeholder="输入 600519、贵州茅台、茅台等",
+        help="支持 6 位股票代码、完整中文名和中文名称模糊匹配。",
+    )
+    code = ""
+    name = ""
+    matches = resolve_stock_query(stock_query, _stock_directory()) if stock_query.strip() else []
+    if matches:
+        labels = [
+            f"{item.get('name', '-')} · {item.get('code', '-')} · {item.get('reason', '匹配')}"
+            for item in matches
+        ]
+        selected_label = st.selectbox("匹配到的个股", labels, index=0)
+        selected = matches[labels.index(selected_label)]
+        code = str(selected.get("code") or "")
+        name = str(selected.get("name") or "")
+        st.caption(f"将使用 {name}（{code}）运行分析。")
+    elif stock_query.strip():
+        st.warning("没有匹配到股票。可以尝试输入 6 位代码、完整名称或更短的名称关键词。")
 
     st.divider()
     top = st.number_input("输出 Top N", min_value=5, max_value=50, value=int(config.get("ui", {}).get("default_top_n", 10)), step=1)
@@ -936,23 +1084,33 @@ dcf_assumptions = {
 start_str = start.strftime("%Y-%m-%d")
 analysis_result = None
 screen_result = None
+rotation_result = None
 run_error = None
 
 if run and page == "个股分析":
-    with st.spinner("正在拉取多源行情并计算技术指标..."):
-        try:
-            analysis_result = StockAnalyzer(config).analyze(code, name=name, start=start_str)
-        except Exception as exc:
-            run_error = str(exc)
+    if not code:
+        run_error = "请先输入股票代码或股票名称，并从匹配结果中选择一个个股。"
+    else:
+        with st.spinner("正在拉取多源行情并计算技术指标..."):
+            try:
+                analysis_result = StockAnalyzer(config).analyze(code, name=name, start=start_str)
+            except Exception as exc:
+                run_error = str(exc)
 elif run and page == "每日选股":
     with st.spinner("正在扫描股票池并构建排行榜..."):
         try:
             screen_result = StockScreener(config).screen(mode=mode, top=int(top), limit=int(limit), start=start_str)
         except Exception as exc:
             run_error = str(exc)
+elif run and page == "板块轮动":
+    with st.spinner("正在拉取 AkShare 行业/概念资金流并计算每日轮动..."):
+        try:
+            rotation_result = RotationAnalyzer(config).analyze(top_n=int(top), force_refresh=True)
+        except Exception as exc:
+            run_error = str(exc)
 
 
-hero_code = code if page == "个股分析" else f"Top {int(top)}"
+hero_code = (f"{name} {code}".strip() if code else "未选择个股") if page == "个股分析" else f"Top {int(top)}"
 hero_source = provider_label
 hero_latest = "-"
 
@@ -967,6 +1125,9 @@ elif screen_result:
         hero_latest = screen_dt.strftime("%Y-%m-%d") if not pd.isna(screen_dt) else str(df_for_hero["date"].iloc[0])
     if "data_source" in df_for_hero.columns and not df_for_hero.empty:
         hero_source = ", ".join(sorted({str(v) for v in df_for_hero["data_source"].dropna().unique()}))
+elif rotation_result:
+    hero_source = "AkShare rotation"
+    hero_latest = rotation_result.get("updated_at", "-")
 
 render_hero(hero_code, hero_source, hero_latest, datetime.now().strftime("%Y-%m-%d %H:%M"))
 
@@ -982,6 +1143,8 @@ elif analysis_result:
 elif screen_result:
     df, path = screen_result
     _render_screen_dashboard(df, path, int(top), int(limit))
+elif rotation_result:
+    _render_rotation_dashboard(rotation_result, int(top))
 else:
     render_section_title("Ready When You Are", "从左侧控制台选择模式并运行，仪表盘会在这里生成 Bento 风格的行情分析。")
     render_bento_grid(
@@ -989,5 +1152,6 @@ else:
             metric_card("默认数据源", provider_labels.get(provider_label, provider_label), "可在侧边栏切换", "cyan", "neutral"),
             metric_card("个股分析", "KPI + 图表", "输入代码后运行", "purple", "neutral"),
             metric_card("每日选股", f"Top {int(top)}", "扫描内置股票池", "blue", "neutral"),
+            metric_card("板块轮动", "行业 + 热点", "追踪资金与扩散", "green", "neutral"),
         ]
     )

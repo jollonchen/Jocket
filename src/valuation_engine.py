@@ -61,6 +61,8 @@ class ValuationEngine:
         bvps = _latest(annual, "bvps")
         ocf = _latest(annual, "operatingCashFlow")
         fcf = _latest(annual, "freeCashFlow")
+        gross_margin = _latest(annual, "grossMargin")
+        net_margin = _latest(annual, "netMargin")
 
         pe = _num(source.get("trailingPE"))
         if pe is None:
@@ -97,6 +99,8 @@ class ValuationEngine:
             dividend_yield = dividend_yield / 100
 
         dcf = self._dcf(fcf or ocf, shares, latest_price)
+        debt_to_assets = liabilities / assets if liabilities and assets else None
+        cashflow_quality = ocf / net_income if ocf is not None and net_income not in (None, 0) else None
         metrics = {
             "market_cap": market_cap,
             "pe_ttm": pe,
@@ -109,6 +113,10 @@ class ValuationEngine:
             "roe": roe,
             "roa": roa,
             "debt_to_equity": de,
+            "debt_to_assets": debt_to_assets,
+            "gross_margin": gross_margin,
+            "net_margin": net_margin,
+            "cashflow_quality": cashflow_quality,
             "ev_ebitda": None,
             "dcf": dcf,
         }
@@ -187,12 +195,27 @@ class ValuationEngine:
             "ROA": _score_threshold(metrics.get("roa"), [
                 (lambda x: x > 0.10, 5), (lambda x: x >= 0.07, 4), (lambda x: x >= 0.04, 3), (lambda x: x >= 0.01, 2), (lambda x: True, 1)
             ]),
+            "Gross Margin": _score_threshold(metrics.get("gross_margin"), [
+                (lambda x: x >= 0.35, 5), (lambda x: x >= 0.25, 4), (lambda x: x >= 0.15, 3), (lambda x: x >= 0.08, 2), (lambda x: True, 1)
+            ]),
+            "Net Margin": _score_threshold(metrics.get("net_margin"), [
+                (lambda x: x >= 0.18, 5), (lambda x: x >= 0.12, 4), (lambda x: x >= 0.06, 3), (lambda x: x >= 0.02, 2), (lambda x: True, 1)
+            ]),
             "D/E": _score_threshold(metrics.get("debt_to_equity"), [
                 (lambda x: x < 0.5, 5), (lambda x: x < 1.0, 4), (lambda x: x < 1.5, 3), (lambda x: x < 2.5, 2), (lambda x: True, 1)
             ]),
+            "Debt Ratio": _score_threshold(metrics.get("debt_to_assets"), [
+                (lambda x: x < 0.35, 5), (lambda x: x < 0.50, 4), (lambda x: x < 0.65, 3), (lambda x: x < 0.80, 2), (lambda x: True, 1)
+            ]),
+            "Cashflow Quality": _score_threshold(metrics.get("cashflow_quality"), [
+                (lambda x: x >= 1.2, 5), (lambda x: x >= 0.9, 4), (lambda x: x >= 0.6, 3), (lambda x: x >= 0.2, 2), (lambda x: True, 1)
+            ]),
             "P/E": self._pe_score(metrics.get("pe_ttm"), _latest(annual, "netIncome")),
             "P/B": _score_threshold(metrics.get("pb"), [
-                (lambda x: 1 <= x <= 3, 5), (lambda x: 3 < x <= 5 or 0.5 <= x < 1, 4), (lambda x: 5 < x <= 8, 3), (lambda x: x > 8, 2), (lambda x: True, 1)
+                (lambda x: 0.8 <= x <= 4, 4.2), (lambda x: 4 < x <= 7 or 0.4 <= x < 0.8, 3.3), (lambda x: 7 < x <= 10, 2.5), (lambda x: x > 10, 2), (lambda x: True, 2.5)
+            ]),
+            "P/S": _score_threshold(metrics.get("ps"), [
+                (lambda x: 0 < x <= 2, 4.5), (lambda x: x <= 5, 3.5), (lambda x: x <= 10, 2.8), (lambda x: True, 2.2)
             ]),
             "Dividend Yield": _score_threshold(metrics.get("dividend_yield"), [
                 (lambda x: x > 0.04, 5), (lambda x: x >= 0.03, 4), (lambda x: x >= 0.015, 3), (lambda x: x > 0, 2), (lambda x: True, 1)
@@ -200,23 +223,56 @@ class ValuationEngine:
             "Revenue Growth": self._growth_score(self._growth(annual, "totalRevenue")),
             "Net Profit Growth": self._growth_score(self._growth(annual, "netIncome")),
         }
-        usable = [v for v in scores.values() if v is not None]
-        overall = round(sum(usable) / len(usable), 1) if usable else None
-        return {"scores": scores, "overall": overall, "rating": self._letter(overall)}
+        categories = {
+            "盈利能力": {"weight": 0.25, "items": ["ROE", "ROA", "Gross Margin", "Net Margin"]},
+            "成长能力": {"weight": 0.20, "items": ["Revenue Growth", "Net Profit Growth"]},
+            "估值合理性": {"weight": 0.20, "items": ["P/E", "P/B", "P/S", "Dividend Yield"]},
+            "财务稳健性": {"weight": 0.15, "items": ["Debt Ratio", "D/E", "Cashflow Quality"]},
+            "股东回报": {"weight": 0.10, "items": ["Dividend Yield"]},
+            "DCF参考": {"weight": 0.10, "items": ["DCF"]},
+        }
+        category_scores = {}
+        weighted = 0
+        used_weight = 0
+        used_item_count = 0
+        total_item_count = 0
+        for name, spec in categories.items():
+            vals = [scores.get(item) for item in spec["items"] if scores.get(item) is not None]
+            total_item_count += len(spec["items"])
+            used_item_count += len(vals)
+            if not vals:
+                category_scores[name] = {"score": None, "weight": spec["weight"], "items": spec["items"]}
+                continue
+            category_score = sum(vals) / len(vals)
+            category_scores[name] = {"score": round(category_score, 2), "weight": spec["weight"], "items": spec["items"]}
+            weighted += category_score * spec["weight"]
+            used_weight += spec["weight"]
+        coverage = used_item_count / total_item_count if total_item_count else 0
+        overall = round(weighted / used_weight, 1) if used_weight else None
+        return {
+            "scores": scores,
+            "category_scores": category_scores,
+            "coverage": round(coverage, 2),
+            "overall": overall,
+            "overall_100": round(overall * 20, 1) if overall is not None else None,
+            "rating": "数据受限 / Limited" if coverage < 0.5 else self._letter(overall),
+        }
 
     def _pe_score(self, pe, net_income):
         pe = _num(pe)
-        if pe is None or (_num(net_income) is not None and net_income <= 0):
-            return 1
-        if 10 <= pe <= 25:
+        if pe is None:
+            return None
+        if _num(net_income) is not None and net_income <= 0:
+            return 1.5
+        if 8 <= pe <= 30:
             return 5
-        if 25 < pe <= 40 or 5 <= pe < 10:
+        if 30 < pe <= 50 or 5 <= pe < 8:
             return 4
-        if 40 < pe <= 60:
+        if 50 < pe <= 80:
             return 3
-        if pe > 60:
-            return 2
-        return 1
+        if pe > 80:
+            return 2.2
+        return 2.5
 
     def _growth_score(self, growth):
         growth = _num(growth)
@@ -247,6 +303,8 @@ class ValuationEngine:
             return "C+"
         if overall >= 2.0:
             return "C"
+        if overall >= 1.5:
+            return "C-"
         return "D"
 
     def _limitations(self, metrics, payload) -> list[str]:
@@ -256,5 +314,11 @@ class ValuationEngine:
         for key, label in [("pe_ttm", "PE"), ("pb", "PB"), ("ps", "PS"), ("roe", "ROE"), ("roa", "ROA"), ("debt_to_equity", "D/E")]:
             if metrics.get(key) is None:
                 notes.append(f"{label} 当前数据源暂不支持或缺失")
-        notes.extend(payload.get("errors", []))
+        for error in payload.get("errors", []):
+            if isinstance(error, dict):
+                source = error.get("source", "数据源")
+                interface = error.get("interface", "")
+                notes.append(f"{source} {interface} 暂时不可用，已尝试使用其他数据源或缓存")
+            else:
+                notes.append(str(error).split("：", 1)[0] + "，已尝试使用其他数据源或缓存")
         return notes

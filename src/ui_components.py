@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 PLOT_BG = "rgba(0,0,0,0)"
@@ -28,6 +29,32 @@ def load_css(path: str = "assets/styles.css") -> None:
     css_path = Path(path)
     if css_path.exists():
         st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+        components.html(
+            """
+            <script>
+            (() => {
+              const doc = window.parent.document;
+              const selector = ".hero-meta-item,.metric-card,.insight-card,.rank-card,.chart-card,.section-card,.profile-card";
+              let active = null;
+              doc.addEventListener("pointermove", (event) => {
+                const card = doc.elementFromPoint(event.clientX, event.clientY)?.closest(selector);
+                if (active && active !== card) active.removeAttribute("data-cursor-glow");
+                active = card;
+                if (!card) return;
+                const rect = card.getBoundingClientRect();
+                card.style.setProperty("--cursor-x", `${event.clientX - rect.left}px`);
+                card.style.setProperty("--cursor-y", `${event.clientY - rect.top}px`);
+                card.setAttribute("data-cursor-glow", "true");
+              }, { passive: true });
+              doc.addEventListener("pointerleave", () => {
+                if (active) active.removeAttribute("data-cursor-glow");
+                active = null;
+              }, { passive: true });
+            })();
+            </script>
+            """,
+            height=0,
+        )
 
 
 def _safe(value, default="-"):

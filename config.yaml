@@ -1,10 +1,10 @@
 data:
-  provider: "ths"   # auto / ths / akshare / yfinance
+  provider: "auto"   # auto / akshare / ths / yfinance
   akshare_adjust: "qfq"  # qfq=前复权, hfq=后复权, 空字符串=不复权
   timeout: 12
 
 market:
-  default_start_date: "2024-01-01"
+  default_start_date:
   benchmark: "000300.SS"
   yahoo_suffix:
     sh: ".SS"

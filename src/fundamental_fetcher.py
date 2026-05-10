@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from .cache_utils import FileCache, safe_fetch
 from .utils import display_code, ensure_dirs, normalize_a_share_code
 from .sector_fetcher import SectorFetcher
 
@@ -91,14 +92,23 @@ class FundamentalFetcher:
         self.config = config or {}
         ensure_dirs()
         Path("data/fundamentals").mkdir(parents=True, exist_ok=True)
+        self.cache = FileCache("data/cache")
 
     def fetch(self, code: str, latest_price: float | None = None) -> dict:
         yahoo_code = normalize_a_share_code(code)
         ticker = display_code(yahoo_code)
+        cache_key = f"fundamental_{ticker}_{datetime.now().strftime('%Y%m%d')}"
+        cached = self.cache.get_pickle("fundamentals", cache_key, ttl_seconds=86400)
+        if cached:
+            cached.setdefault("profile", {})["latest_price"] = latest_price or cached.get("profile", {}).get("latest_price")
+            cached.setdefault("profile", {})["data_source"] = str(cached.get("profile", {}).get("data_source", "")) + " + cache"
+            return cached
         y = self._fetch_yfinance(yahoo_code, latest_price)
         ak_payload = self._fetch_akshare(ticker)
         sector_payload = SectorFetcher(self.config).fetch(ticker)
-        return self._merge_payload(ticker, yahoo_code, y, ak_payload, sector_payload, latest_price)
+        payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, sector_payload, latest_price)
+        self.cache.set_pickle("fundamentals", cache_key, payload)
+        return payload
 
     def _fetch_yfinance(self, yahoo_code: str, latest_price: float | None) -> dict:
         errors = []
@@ -108,15 +118,25 @@ class FundamentalFetcher:
         try:
             ticker = yf.Ticker(yahoo_code)
             try:
-                info = ticker.info or {}
+                info, info_errors = safe_fetch("yfinance", "ticker.info", lambda: ticker.info or {}, retries=2, min_interval=0.8, cache=self.cache)
+                info = info or {}
+                errors.extend(info_errors)
             except Exception as exc:
                 errors.append(f"yfinance info失败：{exc}")
             try:
-                annual = _statement_to_records(ticker.income_stmt, ticker.balance_sheet, ticker.cashflow, 5)
+                income, e1 = safe_fetch("yfinance", "income_stmt", lambda: ticker.income_stmt, retries=1, min_interval=0.8, cache=self.cache)
+                balance, e2 = safe_fetch("yfinance", "balance_sheet", lambda: ticker.balance_sheet, retries=1, min_interval=0.8, cache=self.cache)
+                cashflow, e3 = safe_fetch("yfinance", "cashflow", lambda: ticker.cashflow, retries=1, min_interval=0.8, cache=self.cache)
+                errors.extend(e1 + e2 + e3)
+                annual = _statement_to_records(income, balance, cashflow, 5)
             except Exception as exc:
                 errors.append(f"yfinance 年度财务失败：{exc}")
             try:
-                quarterly = _statement_to_records(ticker.quarterly_income_stmt, ticker.quarterly_balance_sheet, ticker.quarterly_cashflow, 12)
+                q_income, e1 = safe_fetch("yfinance", "quarterly_income_stmt", lambda: ticker.quarterly_income_stmt, retries=1, min_interval=0.8, cache=self.cache)
+                q_balance, e2 = safe_fetch("yfinance", "quarterly_balance_sheet", lambda: ticker.quarterly_balance_sheet, retries=1, min_interval=0.8, cache=self.cache)
+                q_cashflow, e3 = safe_fetch("yfinance", "quarterly_cashflow", lambda: ticker.quarterly_cashflow, retries=1, min_interval=0.8, cache=self.cache)
+                errors.extend(e1 + e2 + e3)
+                quarterly = _statement_to_records(q_income, q_balance, q_cashflow, 12)
             except Exception as exc:
                 errors.append(f"yfinance 季度财务失败：{exc}")
         except Exception as exc:
@@ -126,14 +146,15 @@ class FundamentalFetcher:
     def _fetch_akshare(self, ticker: str) -> dict:
         out = {"info": {}, "errors": []}
         if ak is None:
-            out["errors"].append("AkShare未安装")
+            out["errors"].append({"source": "akshare", "interface": "stock_individual_info_em", "error_type": "ImportError", "message": "AkShare未安装", "fallback_used": "yfinance"})
             return out
+        df, errors = safe_fetch("akshare", "stock_individual_info_em", lambda: ak.stock_individual_info_em(symbol=ticker), retries=1, min_interval=1.5, cache=self.cache)
+        out["errors"].extend(errors)
         try:
-            df = ak.stock_individual_info_em(symbol=ticker)
             if df is not None and not df.empty and {"item", "value"}.issubset(df.columns):
                 out["info"] = dict(zip(df["item"], df["value"]))
         except Exception as exc:
-            out["errors"].append(f"AkShare 财务/公司资料获取失败：{exc}")
+            out["errors"].append({"source": "akshare", "interface": "stock_individual_info_em", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "yfinance"})
         return out
 
     def _market_name(self, ticker: str, yahoo_code: str) -> tuple[str, str]:
@@ -152,6 +173,12 @@ class FundamentalFetcher:
         ak_info = ak_payload.get("info", {}) or {}
         sector_summary = sector_payload.get("summary", {}) or {}
         primary_boards = sector_summary.get("primary_boards", []) or []
+        sector_source = sector_summary.get("source") or "sector_fallback"
+        data_sources = ["yfinance"]
+        if ak_info:
+            data_sources.append("akshare")
+        if primary_boards:
+            data_sources.append(str(sector_source))
         exchange, market = self._market_name(ticker, yahoo_code)
         market_cap = info.get("marketCap")
         shares = info.get("sharesOutstanding")
@@ -176,7 +203,7 @@ class FundamentalFetcher:
             "latest_price": price,
             "employees": info.get("fullTimeEmployees"),
             "updated_at": datetime.now().strftime("%Y-%m-%d"),
-            "data_source": "yfinance + akshare + efinance" if ak_info else "yfinance + efinance",
+            "data_source": " + ".join(dict.fromkeys(data_sources)),
         }
         valuation_source = {
             "marketCap": market_cap,

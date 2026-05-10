@@ -39,6 +39,20 @@ class ReportGenerator:
         lines += ['', '## 风险信号']
         for r in risks:
             lines.append(f"- {r}")
+        news = score.get('news') or {}
+        if news:
+            lines += [
+                '',
+                '## 公开消息参考',
+                f"- 消息源：{news.get('source', 'N/A')}",
+                f"- 消息热度：{news.get('heat_score', 0)}",
+                f"- 摘要：{news.get('summary', '暂无摘要')}",
+            ]
+            for item in (news.get('items') or [])[:5]:
+                lines.append(
+                    f"- [{item.get('kind', '消息')}] 关联度 {item.get('relevance_score', 0)}/100："
+                    f"{item.get('title', '')}（{item.get('relevance_reason', '暂无关联理由')}）"
+                )
         if not hist.empty:
             last = hist.iloc[-1]
             support = min(hist['low'].tail(20))

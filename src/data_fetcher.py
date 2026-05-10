@@ -12,6 +12,7 @@ import requests
 import pandas as pd
 import yfinance as yf
 
+from .cache_utils import FileCache, safe_fetch
 from .utils import normalize_a_share_code, display_code, ensure_dirs
 from .universe import DEFAULT_UNIVERSE
 
@@ -70,7 +71,7 @@ class DataFetcher:
     """Market data fetcher with selectable providers.
 
     provider:
-    - auto: try Tonghuashun first, then yfinance and AkShare fallback
+    - auto: try AkShare first, then Tonghuashun and yfinance fallback
     - ths: only Tonghuashun
     - akshare: only AkShare
     - yfinance: only Yahoo Finance
@@ -80,6 +81,7 @@ class DataFetcher:
         self.config = config or {}
         ensure_dirs()
         self.cache_dir = Path('data/cache')
+        self.file_cache = FileCache(self.cache_dir)
         self.provider = self.config.get('data', {}).get('provider', 'auto')
         self.adjust = self.config.get('data', {}).get('akshare_adjust', 'qfq')
         self.timeout = float(self.config.get('data', {}).get('timeout', 12))
@@ -100,7 +102,9 @@ class DataFetcher:
         provider: str | None = None,
     ) -> pd.DataFrame:
         provider = provider or self.provider
-        start = start or self.config.get('market', {}).get('default_start_date', '2024-01-01')
+        start = start or self.config.get('market', {}).get('default_start_date')
+        if not start:
+            start = (pd.Timestamp.today().normalize() - pd.offsets.BDay(180)).strftime('%Y-%m-%d')
         end = end or datetime.now().strftime('%Y-%m-%d')
 
         if provider == 'ths':
@@ -110,10 +114,16 @@ class DataFetcher:
         if provider == 'yfinance':
             return self._get_hist_yfinance(code, start, end, use_cache)
 
-        # auto mode: prefer Tonghuashun for A-share data, then fall back.
+        # auto mode: prefer AkShare for A-share data, then fall back.
         errors: list[str] = []
         try:
-            return self._get_hist_ths(code, start, end, use_cache)
+            return self._get_hist_akshare(code, start, end, use_cache)
+        except Exception as exc:
+            errors.append(f'AkShare失败：{exc}')
+        try:
+            df = self._get_hist_ths(code, start, end, use_cache)
+            df.attrs['fallback_warning'] = '；'.join(errors)
+            return df
         except Exception as exc:
             errors.append(f'同花顺失败：{exc}')
         try:
@@ -122,17 +132,22 @@ class DataFetcher:
             return df
         except Exception as exc:
             errors.append(f'yfinance失败：{exc}')
-        try:
-            df = self._get_hist_akshare(code, start, end, use_cache)
-            df.attrs['fallback_warning'] = '；'.join(errors)
-            return df
-        except Exception as exc:
-            errors.append(f'AkShare失败：{exc}')
             raise RuntimeError('所有数据源均失败：' + ' | '.join(errors)) from exc
 
     def _cache_path(self, provider: str, code: str, start: str, end: str) -> Path:
-        key = f"{provider}_{code}_{start}_{end}.csv".replace('/', '-').replace(':', '-')
-        return self.cache_dir / key
+        key = f"price_{code}_{provider}_{start}_{end}.csv".replace('/', '-').replace(':', '-')
+        price_dir = self.cache_dir / "price"
+        price_dir.mkdir(parents=True, exist_ok=True)
+        return price_dir / key
+
+    def _read_price_cache(self, provider: str, code: str, start: str, end: str, ttl_seconds: int = 1800) -> pd.DataFrame | None:
+        cache_path = self._cache_path(provider, code, start, end)
+        if cache_path.exists() and (datetime.now().timestamp() - cache_path.stat().st_mtime) <= ttl_seconds:
+            df = pd.read_csv(cache_path, parse_dates=['date'])
+            if not df.empty:
+                df.attrs['from_cache'] = True
+                return df
+        return None
 
     @staticmethod
     def _to_ak_code(code: str) -> str:
@@ -147,6 +162,18 @@ class DataFetcher:
         ticker = display_code(normalize_a_share_code(code))
         market = 'sh' if ticker.startswith(('5', '6', '9')) else 'sz'
         return market, ticker
+
+    @staticmethod
+    def _to_ak_prefixed_code(code: str) -> str:
+        ticker = display_code(normalize_a_share_code(code))
+        market = 'sh' if ticker.startswith(('5', '6', '9')) else 'sz'
+        return f"{market}{ticker}"
+
+    @staticmethod
+    def _to_xq_code(code: str) -> str:
+        ticker = display_code(normalize_a_share_code(code))
+        market = 'SH' if ticker.startswith(('5', '6', '9')) else 'SZ'
+        return f"{market}{ticker}"
 
     @staticmethod
     def _parse_ths_today(text: str) -> dict | None:
@@ -223,17 +250,21 @@ class DataFetcher:
     def _get_hist_ths(self, code: str, start: str, end: str, use_cache: bool = True) -> pd.DataFrame:
         market, ticker = self._to_ths_market(code)
         cache_path = self._cache_path('ths', ticker, start, end)
-        if use_cache and cache_path.exists():
-            df = pd.read_csv(cache_path, parse_dates=['date'])
-            if not df.empty:
-                return df
+        if use_cache:
+            cached = self._read_price_cache('ths', ticker, start, end, ttl_seconds=1800)
+            if cached is not None:
+                return cached
 
         last_url = f'https://d.10jqka.com.cn/v2/line/{market}_{ticker}/01/last.js'
         today_url = f'https://d.10jqka.com.cn/v2/line/{market}_{ticker}/01/today.js'
-        rows = self._parse_ths_last(self._fetch_ths_text(last_url))
+        text, errors = safe_fetch("ths", "line_last", lambda: self._fetch_ths_text(last_url), retries=2, min_interval=0.8, cache=self.file_cache)
+        if text is None:
+            raise RuntimeError("同花顺行情接口暂不可用")
+        rows = self._parse_ths_last(text)
 
         try:
-            today = self._parse_ths_today(self._fetch_ths_text(today_url))
+            today_text, _ = safe_fetch("ths", "line_today", lambda: self._fetch_ths_text(today_url), retries=1, min_interval=0.8, cache=self.file_cache)
+            today = self._parse_ths_today(today_text) if today_text else None
         except Exception:
             today = None
         if today and today.get('date'):
@@ -268,26 +299,75 @@ class DataFetcher:
         if ak is None:
             raise RuntimeError('未安装 akshare，请先执行：pip install akshare')
         ak_code = self._to_ak_code(code)
+        prefixed_code = self._to_ak_prefixed_code(code)
+        xq_code = self._to_xq_code(code)
         cache_path = self._cache_path('akshare', ak_code, start, end)
-        if use_cache and cache_path.exists():
+        if use_cache:
+            cached = self._read_price_cache('akshare', ak_code, start, end, ttl_seconds=3600)
+            if cached is not None:
+                return cached
+
+        errors: list[dict] = []
+        raw = None
+        source_detail = ""
+        ak_attempts = [
+            (
+                "stock_zh_a_hist_em",
+                lambda: ak.stock_zh_a_hist(
+                    symbol=ak_code,
+                    period='daily',
+                    start_date=self._to_yyyymmdd(start),
+                    end_date=self._to_yyyymmdd(end),
+                    adjust=self.adjust,
+                    timeout=self.timeout,
+                ),
+            ),
+            (
+                "stock_zh_a_daily_sina",
+                lambda: ak.stock_zh_a_daily(
+                    symbol=prefixed_code,
+                    start_date=self._to_yyyymmdd(start),
+                    end_date=self._to_yyyymmdd(end),
+                    adjust=self.adjust,
+                ),
+            ),
+            (
+                "stock_zh_a_hist_tx",
+                lambda: ak.stock_zh_a_hist_tx(
+                    symbol=prefixed_code,
+                    start_date=self._to_yyyymmdd(start),
+                    end_date=self._to_yyyymmdd(end),
+                    adjust=self.adjust,
+                    timeout=self.timeout,
+                ),
+            ),
+        ]
+        for interface, fetcher in ak_attempts:
+            raw, err = safe_fetch(
+                "akshare",
+                interface,
+                fetcher,
+                retries=1,
+                min_interval=1.2,
+                cache=self.file_cache,
+            )
+            errors.extend(err)
+            if raw is not None and not raw.empty:
+                source_detail = interface
+                break
+        if raw is None and cache_path.exists():
             df = pd.read_csv(cache_path, parse_dates=['date'])
             if not df.empty:
+                df.attrs['from_cache'] = True
+                df.attrs['fallback_warning'] = "AkShare 实时请求失败，已使用过期缓存"
                 return df
-
-        raw = ak.stock_zh_a_hist(
-            symbol=ak_code,
-            period='daily',
-            start_date=self._to_yyyymmdd(start),
-            end_date=self._to_yyyymmdd(end),
-            adjust=self.adjust,
-        )
         if raw is None or raw.empty:
             raise ValueError(f'AkShare没有获取到行情数据：{ak_code}')
 
         col_map = {
             '日期': 'date', '开盘': 'open', '最高': 'high', '最低': 'low', '收盘': 'close',
             '成交量': 'volume', '成交额': 'amount', '振幅': 'amplitude', '涨跌幅': 'pct_chg',
-            '涨跌额': 'change', '换手率': 'turnover_rate',
+            '涨跌额': 'change', '换手率': 'turnover_rate', 'turnover': 'turnover_rate',
         }
         df = raw.rename(columns=col_map).copy()
         keep = [c for c in ['date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg', 'turnover_rate'] if c in df.columns]
@@ -297,30 +377,98 @@ class DataFetcher:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
         df = df.dropna(subset=['date', 'close']).sort_values('date')
-        if 'amount' not in df.columns:
+        if 'volume' not in df.columns and 'amount' in df.columns and source_detail == "stock_zh_a_hist_tx":
+            df['volume'] = df['amount'] * 100
+            df['amount'] = df['close'] * df['volume']
+        elif 'volume' not in df.columns:
+            df['volume'] = 0
+        if 'amount' not in df.columns and 'volume' in df.columns:
             df['amount'] = df['close'] * df.get('volume', 0)
+        if 'pct_chg' not in df.columns:
+            df['pct_chg'] = df['close'].pct_change() * 100
         df['amount_est'] = df['amount']
-        df['data_source'] = 'akshare'
+        df['data_source'] = f'akshare:{source_detail or "unknown"}'
         df['yahoo_code'] = normalize_a_share_code(code)
+        spot_row, spot_errors = self._get_akshare_xq_spot_row(xq_code)
+        errors.extend(spot_errors)
+        if spot_row:
+            spot_date = pd.to_datetime(spot_row.get("date"), errors="coerce")
+            start_ts = pd.to_datetime(start)
+            end_ts = pd.to_datetime(end)
+            if not pd.isna(spot_date) and start_ts <= spot_date <= end_ts:
+                df = df[df["date"] != spot_date].copy()
+                df = pd.concat([df, pd.DataFrame([spot_row])], ignore_index=True, sort=False)
+                df = df.sort_values("date").reset_index(drop=True)
+                df["pct_chg"] = pd.to_numeric(df.get("pct_chg"), errors="coerce")
+                df["pct_chg"] = df["pct_chg"].fillna(df["close"].pct_change() * 100)
+        if errors:
+            df.attrs['fallback_warning'] = "；".join(
+                f"{e.get('interface', 'akshare')}失败:{e.get('message', '')}" for e in errors[-3:]
+            )
         if use_cache:
             df.to_csv(cache_path, index=False, encoding='utf-8-sig')
         return df
 
+    def _get_akshare_xq_spot_row(self, xq_code: str) -> tuple[dict | None, list[dict]]:
+        raw, errors = safe_fetch(
+            "akshare",
+            "stock_individual_spot_xq",
+            lambda: ak.stock_individual_spot_xq(symbol=xq_code, timeout=self.timeout),
+            retries=1,
+            min_interval=0.8,
+            cache=self.file_cache,
+        )
+        if raw is None or raw.empty:
+            return None, errors
+        try:
+            data = dict(zip(raw.iloc[:, 0].astype(str), raw.iloc[:, 1]))
+            dt = pd.to_datetime(data.get("时间"), errors="coerce")
+            if pd.isna(dt):
+                return None, errors
+            row = {
+                "date": dt.normalize(),
+                "open": data.get("今开"),
+                "high": data.get("最高"),
+                "low": data.get("最低"),
+                "close": data.get("现价"),
+                "volume": data.get("成交量"),
+                "amount": data.get("成交额"),
+                "turnover_rate": data.get("周转率"),
+                "pct_chg": data.get("涨幅"),
+                "data_source": "akshare:stock_individual_spot_xq",
+                "yahoo_code": normalize_a_share_code(xq_code[-6:]),
+            }
+            for col in ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "pct_chg"]:
+                row[col] = pd.to_numeric(row[col], errors="coerce")
+            row["amount_est"] = row["amount"]
+            if pd.isna(row["close"]):
+                return None, errors
+            return row, errors
+        except Exception as exc:
+            return None, errors + [{"source": "akshare", "interface": "stock_individual_spot_xq", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "daily_only"}]
+
     def _get_hist_yfinance(self, code: str, start: str, end: str, use_cache: bool = True) -> pd.DataFrame:
         yahoo_code = normalize_a_share_code(code)
         cache_path = self._cache_path('yfinance', yahoo_code, start, end)
-        if use_cache and cache_path.exists():
-            df = pd.read_csv(cache_path, parse_dates=['date'])
-            if not df.empty:
-                return df
+        if use_cache:
+            cached = self._read_price_cache('yfinance', yahoo_code, start, end, ttl_seconds=3600)
+            if cached is not None:
+                return cached
 
-        raw = yf.download(
-            yahoo_code,
-            start=start,
-            end=end,
-            progress=False,
-            auto_adjust=False,
-            threads=False,
+        raw, errors = safe_fetch(
+            "yfinance",
+            "download",
+            lambda: yf.download(
+                yahoo_code,
+                start=start,
+                end=end,
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+            ),
+            retries=2,
+            min_interval=0.8,
+            cache=self.file_cache,
         )
         if raw is None or raw.empty:
             raise ValueError(f'yfinance没有获取到行情数据：{yahoo_code}')
