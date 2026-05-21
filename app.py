@@ -250,8 +250,8 @@ def _fetch_stock_news_payload(code: str, name: str | None = None, boards: tuple[
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _fetch_stock_analysis_core(code: str, name: str | None, start: str) -> tuple[dict, pd.DataFrame, str]:
-    return StockAnalyzer(config).analyze(code, name=name, start=start, include_news=False)
+def _fetch_stock_analysis_core(code: str, name: str | None) -> tuple[dict, pd.DataFrame, str]:
+    return StockAnalyzer(config).analyze(code, name=name, include_news=False)
 
 
 def _stock_ai_summary_key(code: str, latest_date: str, score: dict) -> str:
@@ -1594,14 +1594,6 @@ page = st.segmented_control(
 st.markdown(f'<div id="jocket-current-page" data-page="{escape(str(page or "AI行情"))}"></div>', unsafe_allow_html=True)
 config.setdefault("data", {})["provider"] = "auto"
 
-if "start_date" not in st.session_state:
-    configured_start = config.get("market", {}).get("default_start_date")
-    st.session_state["start_date"] = (
-        pd.to_datetime(configured_start).date()
-        if configured_start
-        else _start_date_for_trading_days(180).date()
-    )
-
 code = ""
 name = ""
 dcf_years = 5
@@ -1617,7 +1609,6 @@ else:
     sentiment_date = (_now.normalize() - pd.offsets.BDay(1)).date()
 sentiment_refresh = False
 sentiment_backfill = False
-start = st.session_state["start_date"]
 run = False
 ai_prompt = ""
 ai_submitted = False
@@ -1640,7 +1631,7 @@ elif page in {"个股分析", "市场情绪"}:
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">参数与操作</div>', unsafe_allow_html=True)
         if page == "个股分析":
-            command_cols = st.columns([0.36, 0.18, 0.28, 0.18], vertical_alignment="top")
+            command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
             with command_cols[0]:
                 _command_label("股票代码 / 名称")
                 stock_query = st.text_input(
@@ -1652,17 +1643,6 @@ elif page in {"个股分析", "市场情绪"}:
                     label_visibility="collapsed",
                 )
             with command_cols[1]:
-                _command_label("行情日期")
-                start = st.date_input("行情日期", key="start_date", help="快捷按钮会自动重算行情起始日期。", label_visibility="collapsed")
-            with command_cols[2]:
-                _command_label("观察窗口")
-                stock_window = _window_buttons(
-                    "stock_window_segment",
-                    int(st.session_state.get("stock_window_segment", 60) or 60),
-                    date_key="start_date",
-                )
-                start = st.session_state.get("start_date", start)
-            with command_cols[3]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
                 run = st.button("启动雷达", type="primary", use_container_width=True, key="run_个股分析")
     
@@ -1713,7 +1693,6 @@ dcf_assumptions = {
     "margin_of_safety": float(dcf_margin) / 100,
 }
 
-start_str = start.strftime("%Y-%m-%d") if hasattr(start, "strftime") else pd.to_datetime(start).strftime("%Y-%m-%d")
 analysis_result = None
 sentiment_result = None
 run_error = None
@@ -1726,7 +1705,7 @@ if run and page == "个股分析":
     else:
         with st.spinner("正在拉取行情并计算技术指标..."):
             try:
-                analysis_result = _fetch_stock_analysis_core(code, name, start_str)
+                analysis_result = _fetch_stock_analysis_core(code, name)
                 score_tmp, hist_tmp, _ = analysis_result
             except Exception as exc:
                 run_error = f"{type(exc).__name__}: {exc}"
@@ -1820,7 +1799,7 @@ if page == "AI行情":
 elif run_error:
     with st.container(border=True):
         st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
-        st.error(f"本次请求没有成功生成结果。请稍后重试，或缩短日期范围/降低扫描数量。\n\n**错误详情：** `{run_error}`")
+        st.error(f"本次请求没有成功生成结果。请稍后重试，或更换个股验证实时行情源。\n\n**错误详情：** `{run_error}`")
         with st.expander("调试信息（Streamlit Cloud / Railway 排错用）"):
             st.code(run_error)
 elif analysis_result:

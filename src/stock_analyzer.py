@@ -37,15 +37,11 @@ class StockAnalyzer:
             else {"available": False, "items": [], "summary": "消息面后置加载", "heat_score": 0, "errors": []}
         )
         
-        # Truncate history to the user's requested window for UI/chart display
-        if start:
-            start_ts = pd.to_datetime(start)
-            hist = full_hist[full_hist['date'] >= start_ts].copy()
-            hist.attrs = full_hist.attrs
-            if hist.empty:
-                hist = full_hist
-        else:
-            hist = full_hist
+        # The UI always receives a stable 120-trading-day display window. Scores
+        # are computed above on the full fetch window, so short chart windows do
+        # not blank RSI/MACD/KDJ or trigger "history insufficient" scoring.
+        hist = full_hist.tail(120).copy()
+        hist.attrs = full_hist.attrs
             
         report_path = self.reporter.save_analysis_markdown(ycode, name or display_code(ycode), score, hist)
         return score, hist, str(report_path)

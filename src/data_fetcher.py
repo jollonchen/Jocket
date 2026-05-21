@@ -5,7 +5,9 @@ from datetime import datetime
 import json
 import os
 import re
+import signal
 import ssl
+import threading
 import urllib.request
 import urllib3
 import requests
@@ -205,6 +207,58 @@ class DataFetcher:
         return f"{market}{ticker}"
 
     @staticmethod
+    def _is_a_share(code: str) -> bool:
+        ycode = normalize_a_share_code(code)
+        return ycode.endswith((".SS", ".SZ"))
+
+    @staticmethod
+    def _num(value):
+        try:
+            if value is None or pd.isna(value):
+                return None
+            if isinstance(value, str):
+                value = value.strip().replace("%", "").replace(",", "")
+                if not value or value in {"-", "--", "None", "nan"}:
+                    return None
+            return float(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _source_error(source: str, interface: str, message: str, error_type: str = "ValueError") -> dict:
+        return {"source": source, "interface": interface, "error_type": error_type, "message": str(message)}
+
+    @staticmethod
+    def _first_value(mapping: dict, names: list[str]):
+        lowered = {str(k).strip().lower(): v for k, v in mapping.items()}
+        for name in names:
+            if name in mapping:
+                return mapping[name]
+            value = lowered.get(str(name).strip().lower())
+            if value is not None:
+                return value
+        return None
+
+    def _call_with_timeout(self, func, seconds: float | None = None):
+        seconds = max(3, int(seconds or self.timeout or 8))
+        if threading.current_thread() is not threading.main_thread():
+            return func()
+
+        def _timeout_handler(signum, frame):
+            raise TimeoutError(f"接口超过 {seconds} 秒未返回")
+
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        try:
+            return func()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+            if previous_timer and previous_timer[0] > 0:
+                signal.setitimer(signal.ITIMER_REAL, previous_timer[0], previous_timer[1])
+
+    @staticmethod
     def _parse_ths_today(text: str) -> dict | None:
         payload_match = re.search(r'\(\{".+?":(\{.+\})\}\)', text)
         if payload_match:
@@ -344,12 +398,14 @@ class DataFetcher:
             ak_attempts.append(
                 (
                     "stock_hk_hist",
-                    lambda: ak.stock_hk_hist(
-                        symbol=ak_code,
-                        start_date=self._to_yyyymmdd(start),
-                        end_date=self._to_yyyymmdd(end),
-                        adjust=self.adjust,
-                        timeout=self.timeout,
+                    lambda: self._call_with_timeout(
+                        lambda: ak.stock_hk_hist(
+                            symbol=ak_code,
+                            start_date=self._to_yyyymmdd(start),
+                            end_date=self._to_yyyymmdd(end),
+                            adjust=self.adjust,
+                            timeout=self.timeout,
+                        )
                     ),
                 )
             )
@@ -357,32 +413,38 @@ class DataFetcher:
             ak_attempts = [
                 (
                     "stock_zh_a_hist_em",
-                    lambda: ak.stock_zh_a_hist(
-                        symbol=ak_code,
-                        period='daily',
-                        start_date=self._to_yyyymmdd(start),
-                        end_date=self._to_yyyymmdd(end),
-                        adjust=self.adjust,
-                        timeout=self.timeout,
+                    lambda: self._call_with_timeout(
+                        lambda: ak.stock_zh_a_hist(
+                            symbol=ak_code,
+                            period='daily',
+                            start_date=self._to_yyyymmdd(start),
+                            end_date=self._to_yyyymmdd(end),
+                            adjust=self.adjust,
+                            timeout=self.timeout,
+                        )
                     ),
                 ),
                 (
                     "stock_zh_a_daily_sina",
-                    lambda: ak.stock_zh_a_daily(
-                        symbol=prefixed_code,
-                        start_date=self._to_yyyymmdd(start),
-                        end_date=self._to_yyyymmdd(end),
-                        adjust=self.adjust,
+                    lambda: self._call_with_timeout(
+                        lambda: ak.stock_zh_a_daily(
+                            symbol=prefixed_code,
+                            start_date=self._to_yyyymmdd(start),
+                            end_date=self._to_yyyymmdd(end),
+                            adjust=self.adjust,
+                        )
                     ),
                 ),
                 (
                     "stock_zh_a_hist_tx",
-                    lambda: ak.stock_zh_a_hist_tx(
-                        symbol=prefixed_code,
-                        start_date=self._to_yyyymmdd(start),
-                        end_date=self._to_yyyymmdd(end),
-                        adjust=self.adjust,
-                        timeout=self.timeout,
+                    lambda: self._call_with_timeout(
+                        lambda: ak.stock_zh_a_hist_tx(
+                            symbol=prefixed_code,
+                            start_date=self._to_yyyymmdd(start),
+                            end_date=self._to_yyyymmdd(end),
+                            adjust=self.adjust,
+                            timeout=self.timeout,
+                        )
                     ),
                 ),
             ]
@@ -446,18 +508,6 @@ class DataFetcher:
         df['amount_est'] = df['amount']
         df['data_source'] = f'akshare:{source_detail or "unknown"}'
         df['yahoo_code'] = normalize_a_share_code(code)
-        spot_row, spot_errors = self._get_akshare_xq_spot_row(xq_code)
-        errors.extend(spot_errors)
-        if spot_row:
-            spot_date = pd.to_datetime(spot_row.get("date"), errors="coerce")
-            start_ts = pd.to_datetime(start)
-            end_ts = pd.to_datetime(end)
-            if not pd.isna(spot_date) and start_ts <= spot_date <= end_ts:
-                df = df[df["date"] != spot_date].copy()
-                df = pd.concat([df, pd.DataFrame([spot_row])], ignore_index=True, sort=False)
-                df = df.sort_values("date").reset_index(drop=True)
-                df["pct_chg"] = pd.to_numeric(df.get("pct_chg"), errors="coerce")
-                df["pct_chg"] = df["pct_chg"].fillna(df["close"].pct_change() * 100)
         if errors:
             df.attrs['fallback_warning'] = "；".join(
                 f"{e.get('interface', 'akshare')}失败:{e.get('message', '')}" for e in errors[-3:]
@@ -467,85 +517,287 @@ class DataFetcher:
         return df
 
     def _get_akshare_xq_spot_row(self, xq_code: str) -> tuple[dict | None, list[dict]]:
+        if ak is None:
+            return None, [self._source_error("akshare", "stock_individual_spot_xq", "AkShare 未安装", "ImportError")]
         raw, errors = safe_fetch(
             "akshare",
             "stock_individual_spot_xq",
-            lambda: ak.stock_individual_spot_xq(symbol=xq_code, timeout=self.timeout),
-            retries=1,
+            lambda: self._call_with_timeout(lambda: ak.stock_individual_spot_xq(symbol=xq_code, timeout=self.timeout)),
+            retries=0,
             min_interval=0.8,
             cache=self.file_cache,
         )
-        if raw is None or raw.empty:
+        if raw is None:
             return None, errors
         try:
-            data = dict(zip(raw.iloc[:, 0].astype(str), raw.iloc[:, 1]))
-            dt = pd.to_datetime(data.get("时间"), errors="coerce")
-            if pd.isna(dt):
-                return None, errors
+            if isinstance(raw, pd.DataFrame):
+                if raw.empty:
+                    return None, errors + [self._source_error("akshare", "stock_individual_spot_xq", "AkShare 雪球实时接口返回空表")]
+                if raw.shape[1] >= 2 and set(raw.columns[:2]) != {"date", "close"}:
+                    data = dict(zip(raw.iloc[:, 0].astype(str), raw.iloc[:, 1]))
+                else:
+                    data = raw.iloc[0].to_dict()
+            elif isinstance(raw, dict):
+                data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+            else:
+                return None, errors + [self._source_error("akshare", "stock_individual_spot_xq", f"不支持的返回类型：{type(raw).__name__}")]
+
+            dt = pd.to_datetime(self._first_value(data, ["时间", "timestamp", "time", "日期", "date"]), errors="coerce")
+            close = self._num(self._first_value(data, ["现价", "当前价", "最新", "最新价", "current", "price", "close"]))
+            prev_close = self._num(self._first_value(data, ["昨收", "昨收价", "prev_close", "previous_close"]))
+            pct_chg = self._num(self._first_value(data, ["涨幅", "涨跌幅", "percent", "pct_chg"]))
+            if pct_chg is not None and abs(pct_chg) > 1:
+                pct_chg = pct_chg
+            if pct_chg is None and close is not None and prev_close:
+                pct_chg = (close - prev_close) / prev_close * 100
             row = {
-                "date": dt.normalize(),
-                "open": data.get("今开"),
-                "high": data.get("最高"),
-                "low": data.get("最低"),
-                "close": data.get("现价"),
-                "volume": data.get("成交量"),
-                "amount": data.get("成交额"),
-                "turnover_rate": data.get("周转率"),
-                "pct_chg": data.get("涨幅"),
+                "date": dt.normalize() if not pd.isna(dt) else pd.NaT,
+                "open": self._first_value(data, ["今开", "开盘", "open"]),
+                "high": self._first_value(data, ["最高", "最高价", "high"]),
+                "low": self._first_value(data, ["最低", "最低价", "low"]),
+                "close": close,
+                "volume": self._first_value(data, ["成交量", "volume", "vol"]),
+                "amount": self._first_value(data, ["成交额", "amount"]),
+                "turnover_rate": self._first_value(data, ["周转率", "换手率", "turnover_rate"]),
+                "pct_chg": pct_chg,
                 "data_source": "akshare:stock_individual_spot_xq",
                 "yahoo_code": normalize_a_share_code(xq_code[-6:]),
+                "quote_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "realtime_price": True,
             }
             for col in ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "pct_chg"]:
                 row[col] = pd.to_numeric(row[col], errors="coerce")
             row["amount_est"] = row["amount"]
-            if pd.isna(row["close"]):
-                return None, errors
+            missing = self._missing_realtime_fields(row, require_date=False)
+            if missing:
+                return None, errors + [self._source_error("akshare", "stock_individual_spot_xq", f"雪球实时字段缺失：{','.join(missing)}")]
             return row, errors
         except Exception as exc:
-            return None, errors + [{"source": "akshare", "interface": "stock_individual_spot_xq", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "daily_only"}]
+            return None, errors + [self._source_error("akshare", "stock_individual_spot_xq", str(exc), exc.__class__.__name__)]
+
+    def _get_akshare_bid_ask_row(self, code: str) -> tuple[dict | None, list[dict]]:
+        if ak is None:
+            return None, [self._source_error("akshare", "stock_bid_ask_em", "AkShare 未安装", "ImportError")]
+        ticker = display_code(normalize_a_share_code(code))
+        raw, errors = safe_fetch(
+            "akshare",
+            "stock_bid_ask_em",
+            lambda: self._call_with_timeout(lambda: ak.stock_bid_ask_em(symbol=ticker)),
+            retries=0,
+            min_interval=0.8,
+            cache=self.file_cache,
+        )
+        if raw is None:
+            return None, errors
+        try:
+            if raw.empty or raw.shape[1] < 2:
+                return None, errors + [self._source_error("akshare", "stock_bid_ask_em", "东财盘口实时接口返回空表")]
+            data = dict(zip(raw.iloc[:, 0].astype(str), raw.iloc[:, 1]))
+            close = self._num(data.get("最新"))
+            prev_close = self._num(data.get("昨收"))
+            pct_chg = self._num(data.get("涨幅"))
+            if pct_chg is None and close is not None and prev_close:
+                pct_chg = (close - prev_close) / prev_close * 100
+            volume_hands = self._num(data.get("总手"))
+            amount_wan = self._num(data.get("金额"))
+            amount = amount_wan * 10000 if amount_wan is not None and amount_wan < 100000000 else amount_wan
+            row = {
+                "date": pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None).normalize(),
+                "open": data.get("今开"),
+                "high": data.get("最高"),
+                "low": data.get("最低"),
+                "close": close,
+                "volume": volume_hands * 100 if volume_hands is not None else None,
+                "amount": amount,
+                "turnover_rate": data.get("换手"),
+                "pct_chg": pct_chg,
+                "amount_est": amount,
+                "data_source": "akshare:stock_bid_ask_em",
+                "yahoo_code": normalize_a_share_code(code),
+                "quote_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "realtime_price": True,
+                "date_inferred": True,
+            }
+            for col in ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "pct_chg", "amount_est"]:
+                row[col] = pd.to_numeric(row[col], errors="coerce")
+            missing = self._missing_realtime_fields(row, require_date=False)
+            if missing:
+                return None, errors + [self._source_error("akshare", "stock_bid_ask_em", f"东财盘口字段缺失：{','.join(missing)}")]
+            return row, errors
+        except Exception as exc:
+            return None, errors + [self._source_error("akshare", "stock_bid_ask_em", str(exc), exc.__class__.__name__)]
+
+    def _get_sina_spot_row(self, code: str) -> tuple[dict | None, list[dict]]:
+        ticker = display_code(normalize_a_share_code(code))
+        market = 'sh' if ticker.startswith(('5', '6', '9')) else 'sz'
+        url = f"http://hq.sinajs.cn/list={market}{ticker}"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                    "Referer": "http://finance.sina.com.cn",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                text = resp.read().decode("gbk", errors="ignore")
+            match = re.search(r'="([^"]*)"', text)
+            if not match:
+                return None, [self._source_error("sina", "hq_sinajs", "新浪实时接口返回空内容")]
+            fields = match.group(1).split(",")
+            if len(fields) < 32:
+                return None, [self._source_error("sina", "hq_sinajs", f"新浪实时字段不足：{len(fields)}")]
+            close = self._num(fields[3])
+            prev_close = self._num(fields[2])
+            amount = self._num(fields[9])
+            row = {
+                "date": pd.to_datetime(fields[30], errors="coerce").normalize(),
+                "open": fields[1],
+                "high": fields[4],
+                "low": fields[5],
+                "close": close,
+                "volume": fields[8],
+                "amount": amount,
+                "turnover_rate": None,
+                "pct_chg": (close - prev_close) / prev_close * 100 if close is not None and prev_close else None,
+                "amount_est": amount,
+                "data_source": "sina:hq_sinajs",
+                "yahoo_code": normalize_a_share_code(code),
+                "quote_updated_at": f"{fields[30]} {fields[31]}",
+                "realtime_price": True,
+            }
+            for col in ["open", "high", "low", "close", "volume", "amount", "pct_chg", "amount_est"]:
+                row[col] = pd.to_numeric(row[col], errors="coerce")
+            missing = self._missing_realtime_fields(row)
+            if missing:
+                return None, [self._source_error("sina", "hq_sinajs", f"新浪实时字段缺失：{','.join(missing)}")]
+            return row, []
+        except Exception as exc:
+            return None, [self._source_error("sina", "hq_sinajs", str(exc), exc.__class__.__name__)]
+
+    def _get_tencent_spot_row(self, code: str) -> tuple[dict | None, list[dict]]:
+        ticker = display_code(normalize_a_share_code(code))
+        market = 'sh' if ticker.startswith(('5', '6', '9')) else 'sz'
+        url = f"https://qt.gtimg.cn/q={market}{ticker}"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                    "Referer": "https://finance.qq.com/",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                text = resp.read().decode("gbk", errors="ignore")
+            match = re.search(r'="([^"]*)"', text)
+            if not match:
+                return None, [self._source_error("tencent", "qt_gtimg", "腾讯实时接口返回空内容")]
+            fields = match.group(1).split("~")
+            if len(fields) < 38:
+                return None, [self._source_error("tencent", "qt_gtimg", f"腾讯实时字段不足：{len(fields)}")]
+            close = self._num(fields[3])
+            prev_close = self._num(fields[4])
+            quote_dt = pd.to_datetime(fields[30], format="%Y%m%d%H%M%S", errors="coerce")
+            amount_wan = self._num(fields[37])
+            amount = amount_wan * 10000 if amount_wan is not None else None
+            volume_hands = self._num(fields[36])
+            row = {
+                "date": quote_dt.normalize() if not pd.isna(quote_dt) else pd.NaT,
+                "open": fields[5],
+                "high": fields[33],
+                "low": fields[34],
+                "close": close,
+                "volume": volume_hands * 100 if volume_hands is not None else None,
+                "amount": amount,
+                "turnover_rate": fields[38] if len(fields) > 38 else None,
+                "pct_chg": self._num(fields[32]) if len(fields) > 32 else ((close - prev_close) / prev_close * 100 if close is not None and prev_close else None),
+                "amount_est": amount,
+                "data_source": "tencent:qt_gtimg",
+                "yahoo_code": normalize_a_share_code(code),
+                "quote_updated_at": quote_dt.strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(quote_dt) else "",
+                "realtime_price": True,
+            }
+            for col in ["open", "high", "low", "close", "volume", "amount", "turnover_rate", "pct_chg", "amount_est"]:
+                row[col] = pd.to_numeric(row[col], errors="coerce")
+            missing = self._missing_realtime_fields(row)
+            if missing:
+                return None, [self._source_error("tencent", "qt_gtimg", f"腾讯实时字段缺失：{','.join(missing)}")]
+            return row, []
+        except Exception as exc:
+            return None, [self._source_error("tencent", "qt_gtimg", str(exc), exc.__class__.__name__)]
+
+    @staticmethod
+    def _missing_realtime_fields(row: dict, require_date: bool = True) -> list[str]:
+        required = ["open", "high", "low", "close", "volume", "amount"]
+        if require_date:
+            required.insert(0, "date")
+        missing = []
+        for field in required:
+            value = row.get(field)
+            if field == "date":
+                if pd.isna(pd.to_datetime(value, errors="coerce")):
+                    missing.append(field)
+                continue
+            if pd.isna(pd.to_numeric(value, errors="coerce")):
+                missing.append(field)
+        return missing
 
     def _with_realtime_quote(self, df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
         realtime_row = None
         errors = []
-        
-        # 1. Try efinance
-        rt_row, rt_errors = self._get_efinance_realtime_row(code)
-        errors.extend(rt_errors)
-        if rt_row:
-            realtime_row = rt_row
-            
-        # 2. Try akshare
-        if not realtime_row:
-            xq_code = self._to_xq_code(code)
-            ak_row, ak_errors = self._get_akshare_xq_spot_row(xq_code)
-            errors.extend(ak_errors)
-            if ak_row:
-                realtime_row = ak_row
-                realtime_row["quote_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                realtime_row["realtime_price"] = True
-                
-        # 3. Try yfinance as final fallback for realtime
+
+        realtime_attempts = [
+            ("AkShare雪球实时", lambda: self._get_akshare_xq_spot_row(self._to_xq_code(code))),
+            ("AkShare东财盘口", lambda: self._get_akshare_bid_ask_row(code)),
+            ("efinance实时", lambda: self._get_efinance_realtime_row(code)),
+            ("新浪实时", lambda: self._get_sina_spot_row(code)),
+            ("腾讯实时", lambda: self._get_tencent_spot_row(code)),
+        ]
+        for _, fetcher in realtime_attempts:
+            row, row_errors = fetcher()
+            errors.extend(row_errors)
+            if row:
+                realtime_row = row
+                break
+
         if not realtime_row:
             try:
-                yf_hist = self._get_hist_yfinance(code, start=(datetime.now() - pd.Timedelta(days=5)).strftime('%Y%m%d'), end=end, use_cache=False)
+                yf_hist = self._get_hist_yfinance(
+                    code,
+                    start=(datetime.now() - pd.Timedelta(days=10)).strftime('%Y-%m-%d'),
+                    end=(pd.Timestamp(end) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
+                    use_cache=False,
+                )
                 if not yf_hist.empty:
                     last_row = yf_hist.iloc[-1].to_dict()
-                    last_row['data_source'] = 'yfinance:realtime_fallback'
-                    last_row['quote_updated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    last_row['realtime_price'] = True
-                    realtime_row = last_row
+                    amount = last_row.get("amount") or last_row.get("amount_est")
+                    last_row.update({
+                        "amount": amount,
+                        "amount_est": amount,
+                        "data_source": "yfinance:recent_quote",
+                        "quote_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "realtime_price": True,
+                    })
+                    missing = self._missing_realtime_fields(last_row)
+                    if missing:
+                        errors.append(self._source_error("yfinance", "recent_quote", f"最近行情字段缺失：{','.join(missing)}"))
+                    else:
+                        realtime_row = last_row
             except Exception as e:
-                errors.append({"source": "yfinance", "interface": "realtime_fallback", "error_type": "Exception", "message": str(e)})
+                errors.append(self._source_error("yfinance", "recent_quote", str(e), e.__class__.__name__))
 
         if not realtime_row:
             if self.require_realtime:
-                detail = "；".join(f"{e.get('interface', 'realtime')}失败:{e.get('message', '')}" for e in errors[-3:])
+                detail = "；".join(f"{e.get('source', 'source')}.{e.get('interface', 'realtime')}失败:{e.get('message', '')}" for e in errors[-8:])
                 raise RuntimeError(f"实时行情不可用，已拒绝使用旧收盘价：{detail or '接口返回空数据'}")
             return df
 
         quote_date = pd.to_datetime(realtime_row.get("date"), errors="coerce")
         end_ts = pd.to_datetime(end)
         latest_hist_date = pd.to_datetime(df["date"].max(), errors="coerce") if "date" in df and not df.empty else pd.NaT
+        if bool(realtime_row.get("date_inferred")) and not pd.isna(latest_hist_date):
+            quote_date = latest_hist_date
+            realtime_row["date"] = quote_date
         if pd.isna(quote_date) or quote_date > end_ts:
             if self.require_realtime:
                 raise RuntimeError(f"实时行情日期不可用或超出查询区间：{realtime_row.get('date')}")
@@ -555,6 +807,11 @@ class DataFetcher:
                 raise RuntimeError(
                     f"实时行情已过期，最新实时交易日 {quote_date.strftime('%Y-%m-%d')} 早于日线交易日 {latest_hist_date.strftime('%Y-%m-%d')}"
                 )
+            return df
+        missing = self._missing_realtime_fields(realtime_row)
+        if missing:
+            if self.require_realtime:
+                raise RuntimeError(f"实时行情字段不完整，缺少：{','.join(missing)}；来源：{realtime_row.get('data_source', '-')}")
             return df
 
         out = df[df["date"] != quote_date].copy()

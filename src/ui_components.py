@@ -395,8 +395,18 @@ def style_plotly_figure(fig: go.Figure, height: int = 420) -> go.Figure:
     return _base_fig(fig, height)
 
 
+def _apply_recent_x_window(fig: go.Figure, data: pd.DataFrame, visible_days: int = 14, show_rangeslider: bool = False) -> go.Figure:
+    if data is not None and not data.empty and "date" in data.columns:
+        dates = pd.to_datetime(data["date"], errors="coerce").dropna()
+        if not dates.empty:
+            start_idx = max(0, len(dates) - int(visible_days))
+            fig.update_xaxes(range=[dates.iloc[start_idx], dates.iloc[-1]], rangeslider_visible=show_rangeslider)
+            fig.update_layout(dragmode="pan")
+    return fig
+
+
 def plot_price_trend(df: pd.DataFrame) -> go.Figure:
-    data = df.tail(180).copy()
+    data = df.tail(120).copy()
     fig = go.Figure()
     has_ohlc = all(col in data.columns for col in ["open", "high", "low", "close"])
     if has_ohlc:
@@ -423,7 +433,7 @@ def plot_price_trend(df: pd.DataFrame) -> go.Figure:
     for ma, color in [("ma20", CYAN), ("ma60", BLUE), ("ma120", PURPLE)]:
         if ma in data.columns and data[ma].notna().any():
             _add_glow_line(fig, x=data["date"], y=data[ma], name=ma.upper(), color=color, width=2.35, hovertemplate=f"{ma.upper()}<br>%{{x}}<br>%{{y:.2f}}<extra></extra>")
-    return _base_fig(fig, 460)
+    return _apply_recent_x_window(_base_fig(fig, 460), data, 14, True)
 
 
 def plot_market_sentiment_cycle(history: pd.DataFrame) -> go.Figure:
@@ -643,7 +653,7 @@ def plot_volume(df: pd.DataFrame) -> go.Figure:
             hovertemplate="%{x}<br>成交量 %{y:,.0f}<extra></extra>",
         )
     )
-    return _base_fig(fig, 460)
+    return _apply_recent_x_window(_base_fig(fig, 460), data)
 
 
 def plot_price_volume_scatter(df: pd.DataFrame) -> go.Figure:
@@ -684,7 +694,7 @@ def plot_price_volume_scatter(df: pd.DataFrame) -> go.Figure:
 
 
 def plot_rsi(df: pd.DataFrame) -> go.Figure:
-    data = df.tail(160).copy()
+    data = df.tail(120).copy()
     fig = go.Figure()
     if "rsi14" in data.columns:
         _add_glow_line(fig, x=data["date"], y=data["rsi14"], name="RSI 14", color=ORANGE, width=2.8, hovertemplate="RSI 14<br>%{x}<br>%{y:.1f}<extra></extra>")
@@ -693,11 +703,11 @@ def plot_rsi(df: pd.DataFrame) -> go.Figure:
     fig.add_hline(y=70, line_dash="dot", line_color="rgba(255,92,122,0.55)")
     fig.add_hline(y=30, line_dash="dot", line_color="rgba(51,214,159,0.55)")
     fig.update_yaxes(range=[0, 100])
-    return _base_fig(fig, 430)
+    return _apply_recent_x_window(_base_fig(fig, 430), data)
 
 
 def plot_macd(df: pd.DataFrame) -> go.Figure:
-    data = df.tail(160).copy()
+    data = df.tail(120).copy()
     fig = go.Figure()
     if "macd_hist" in data.columns:
         colors = np.where(data["macd_hist"].fillna(0) >= 0, _rgba(GREEN, 0.68), _rgba(RED, 0.68))
@@ -706,16 +716,16 @@ def plot_macd(df: pd.DataFrame) -> go.Figure:
         _add_glow_line(fig, x=data["date"], y=data["macd_diff"], name="DIF", color=CYAN, width=2.4)
     if "macd_dea" in data.columns:
         _add_glow_line(fig, x=data["date"], y=data["macd_dea"], name="DEA", color=PURPLE, width=2.4)
-    return _base_fig(fig, 430)
+    return _apply_recent_x_window(_base_fig(fig, 430), data)
 
 
 def plot_kdj(df: pd.DataFrame) -> go.Figure:
-    data = df.tail(160).copy()
+    data = df.tail(120).copy()
     fig = go.Figure()
     for col, name, color in [("kdj_k", "K", CYAN), ("kdj_d", "D", PURPLE), ("kdj_j", "J", ORANGE)]:
         if col in data.columns:
             _add_glow_line(fig, x=data["date"], y=data[col], name=name, color=color, width=2.4)
-    return _base_fig(fig, 430)
+    return _apply_recent_x_window(_base_fig(fig, 430), data)
 
 
 def plot_score_breakdown(score_detail: dict, title: str = "评分拆解") -> go.Figure:

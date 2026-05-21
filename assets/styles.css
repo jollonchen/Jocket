@@ -3063,3 +3063,53 @@ input:-webkit-autofill:active {
     filter: hue-rotate(30deg); 
   }
 }
+
+/* Final mobile navigation authority: keep all top-level mode buttons in one touch-scroll row. */
+@media (max-width: 768px) {
+  .st-key-analysis_mode_top {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 86px !important;
+    display: block !important;
+    padding: 14px 12px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    touch-action: pan-x !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+  }
+
+  .st-key-analysis_mode_top::-webkit-scrollbar,
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"]::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"],
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child,
+  .st-key-analysis_mode_top div[data-jocket-nav-enhanced="true"],
+  .st-key-analysis_mode_top div[role="group"],
+  .st-key-analysis_mode_top [role="radiogroup"] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 10px !important;
+    width: max-content !important;
+    min-width: max-content !important;
+    overflow: visible !important;
+    touch-action: pan-x !important;
+  }
+
+  .st-key-analysis_mode_top button,
+  .st-key-analysis_mode_top div[role="group"] > button,
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child > * {
+    flex: 0 0 126px !important;
+    width: 126px !important;
+    min-width: 126px !important;
+    max-width: 126px !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    padding: 0 14px !important;
+    white-space: nowrap !important;
+  }
+}
