@@ -92,6 +92,17 @@ def load_css(path: str = "assets/styles.css") -> None:
                 const nav = navButtons[0].parentElement;
                 if (!nav) return;
                 nav.dataset.jocketNavEnhanced = "true";
+
+                // Force nav wrapper to be compact (fit-content) regardless of Streamlit flex layout
+                const navWrap = doc.querySelector(".st-key-analysis_mode_top");
+                if (navWrap) {
+                  navWrap.style.setProperty("width", "fit-content", "important");
+                  navWrap.style.setProperty("max-width", "100%", "important");
+                  navWrap.style.setProperty("flex", "0 0 auto", "important");
+                  navWrap.style.setProperty("align-self", "flex-start", "important");
+                  navWrap.style.setProperty("display", "block", "important");
+                }
+
                 const marker = doc.getElementById("jocket-current-page");
                 const currentPage = marker ? marker.getAttribute("data-page") : "";
                 navButtons.forEach((item) => {
