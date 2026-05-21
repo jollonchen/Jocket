@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from .data_fetcher import DataFetcher
 from .indicators import add_indicators
 from .factor_engine import FactorEngine
@@ -18,14 +20,32 @@ class StockAnalyzer:
 
     def analyze(self, code: str, name: str | None = None, start: str | None = None, include_news: bool = True) -> tuple[dict, object, str]:
         ycode = normalize_a_share_code(code)
-        hist = self.fetcher.get_hist(ycode, start=start)
-        hist = add_indicators(hist)
-        score = self.engine.score(hist)
+        
+        # Always fetch at least ~260 business days of history to accurately calculate MA250 and scores
+        fetch_start = (pd.Timestamp.today().normalize() - pd.offsets.BDay(260)).strftime('%Y-%m-%d')
+        if start and start < fetch_start:
+            fetch_start = start
+            
+        full_hist = self.fetcher.get_hist(ycode, start=fetch_start)
+        full_hist = add_indicators(full_hist)
+        score = self.engine.score(full_hist)
+        
         score['code'] = display_code(ycode)
         score['news'] = (
             self.news_fetcher.fetch(ycode, name=name or display_code(ycode))
             if include_news
             else {"available": False, "items": [], "summary": "消息面后置加载", "heat_score": 0, "errors": []}
         )
+        
+        # Truncate history to the user's requested window for UI/chart display
+        if start:
+            start_ts = pd.to_datetime(start)
+            hist = full_hist[full_hist['date'] >= start_ts].copy()
+            hist.attrs = full_hist.attrs
+            if hist.empty:
+                hist = full_hist
+        else:
+            hist = full_hist
+            
         report_path = self.reporter.save_analysis_markdown(ycode, name or display_code(ycode), score, hist)
         return score, hist, str(report_path)
