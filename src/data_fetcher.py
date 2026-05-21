@@ -506,6 +506,17 @@ class DataFetcher:
 
     def _with_realtime_quote(self, df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
         realtime_row, errors = self._get_efinance_realtime_row(code)
+        
+        # Fallback to akshare realtime if efinance fails
+        if not realtime_row:
+            xq_code = self._to_xq_code(code)
+            ak_spot_row, ak_errors = self._get_akshare_xq_spot_row(xq_code)
+            errors.extend(ak_errors)
+            if ak_spot_row:
+                realtime_row = ak_spot_row
+                realtime_row["quote_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                realtime_row["realtime_price"] = True
+
         if not realtime_row:
             if self.require_realtime:
                 detail = "；".join(f"{e.get('interface', 'realtime')}失败:{e.get('message', '')}" for e in errors[-3:])
