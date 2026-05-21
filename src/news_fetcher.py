@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -10,6 +11,11 @@ import pandas as pd
 
 from .cache_utils import FileCache, safe_fetch
 from .utils import display_code, ensure_dirs, normalize_a_share_code
+
+try:
+    import akshare as ak
+except Exception:  # pragma: no cover
+    ak = None
 
 
 UA = "Mozilla/5.0 (stock-picker-ui news reference)"
@@ -127,7 +133,7 @@ def _recency_score(item_date: str | None) -> tuple[int, str]:
 
 
 class NewsFetcher:
-    """Fetch public news/notice references and score their relevance to a stock."""
+    """Fetch public news/notice references and score relevance to stocks or themes."""
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
@@ -137,13 +143,27 @@ class NewsFetcher:
 
     def fetch(self, code: str, name: str | None = None, boards: list[str] | None = None) -> dict:
         ticker = display_code(normalize_a_share_code(code))
-        cache_key = f"news_{ticker}_{datetime.now().strftime('%Y%m%d_%H')}"
+        cache_key = f"news_stock_{ticker}_{datetime.now().strftime('%Y%m%d_%H')}"
         ttl = int(self.config.get("news", {}).get("ttl_seconds", 1800))
         cached = self.cache.get_pickle("news", cache_key, ttl_seconds=ttl)
         if cached:
             return cached
 
         errors: list[dict] = []
+        entries: list[dict] = []
+        highlights: list[str] = []
+
+        em_news, err = safe_fetch(
+            "akshare",
+            "stock_news_em",
+            lambda: ak.stock_news_em(symbol=ticker) if ak is not None else pd.DataFrame(),
+            retries=1,
+            min_interval=1.0,
+            cache=self.cache,
+        )
+        errors.extend(err)
+        entries.extend(self._normalize_stock_news_em(em_news))
+
         base_url = f"https://stockpage.10jqka.com.cn/{ticker}/"
         text, err = safe_fetch(
             "ths",
@@ -154,27 +174,61 @@ class NewsFetcher:
             cache=self.cache,
         )
         errors.extend(err)
-
-        entries = _extract_entries(text or "", base_url) if text else []
+        entries.extend(_extract_entries(text or "", base_url) if text else [])
         generic_titles = {ticker}
         if name:
             generic_titles.update({name, f"{name} {ticker}", f"{ticker} {name}"})
         entries = [entry for entry in entries if entry.get("title") not in generic_titles]
-        highlights = _extract_meta(text or "") if text else []
+        highlights.extend(_extract_meta(text or "") if text else [])
+        global_items, global_errors = self._fetch_global_items()
+        errors.extend(global_errors)
+        entries.extend(global_items)
+
+        entries = self._dedupe(entries)
         scored = [self._score_entry(entry, ticker, name, boards or [], highlights) for entry in entries]
-        scored = sorted(scored, key=lambda item: item["relevance_score"], reverse=True)
+        scored = [item for item in scored if item.get("relevance_score", 0) >= int(self.config.get("news", {}).get("min_relevance", 20))]
+        scored = sorted(scored, key=lambda item: (item["relevance_score"], item.get("date") or ""), reverse=True)
         top_items = scored[: int(self.config.get("news", {}).get("max_items", 8))]
         heat_score = self._aggregate_score(top_items, highlights)
         payload = {
             "available": bool(top_items or highlights),
             "ticker": ticker,
-            "source": "同花顺公开页面",
+            "source": self._source_summary(top_items) or "东方财富 + 同花顺 + 财联社 + 公开快讯",
             "summary": self._summary(top_items, highlights),
             "heat_score": heat_score,
             "items": top_items,
             "highlights": highlights[:4],
             "errors": errors,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self.cache.set_pickle("news", cache_key, payload)
+        return payload
+
+    def fetch_topics(self, keywords: list[str], *, label: str = "市场消息面", max_items: int | None = None) -> dict:
+        clean_keywords = [str(k).strip() for k in keywords if str(k or "").strip()]
+        clean_keywords = list(dict.fromkeys(clean_keywords))[:20]
+        cache_key = f"news_topics_{'_'.join(clean_keywords[:6])}_{datetime.now().strftime('%Y%m%d_%H')}"
+        ttl = int(self.config.get("news", {}).get("ttl_seconds", 1800))
+        cached = self.cache.get_pickle("news", cache_key, ttl_seconds=ttl)
+        if cached:
+            return cached
+
+        global_items, errors = self._fetch_global_items()
+        scored = [self._score_topic_entry(entry, clean_keywords) for entry in global_items]
+        scored = [item for item in scored if item.get("relevance_score", 0) >= int(self.config.get("news", {}).get("topic_min_relevance", 18))]
+        scored = sorted(scored, key=lambda item: (item["relevance_score"], item.get("date") or ""), reverse=True)
+        top_items = scored[: int(max_items or self.config.get("news", {}).get("max_items", 12))]
+        payload = {
+            "available": bool(top_items),
+            "ticker": "",
+            "source": self._source_summary(top_items) or "财联社 + 同花顺 + 东方财富公开快讯",
+            "summary": self._summary(top_items, []),
+            "heat_score": self._aggregate_score(top_items, []),
+            "items": top_items,
+            "highlights": clean_keywords[:8],
+            "errors": errors,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "label": label,
         }
         self.cache.set_pickle("news", cache_key, payload)
         return payload
@@ -193,19 +247,148 @@ class NewsFetcher:
                 pass
         return raw.decode("utf-8", errors="ignore")
 
+    def _fetch_global_items(self) -> tuple[list[dict], list[dict]]:
+        cache_key = f"global_news_{datetime.now().strftime('%Y%m%d_%H')}"
+        cached = self.cache.get_pickle("news", cache_key, ttl_seconds=int(self.config.get("news", {}).get("global_ttl_seconds", 900)))
+        if cached:
+            return cached.get("items", []), cached.get("errors", [])
+
+        errors: list[dict] = []
+        entries: list[dict] = []
+        sources = [
+            ("财联社电报", "stock_info_global_cls", lambda: ak.stock_info_global_cls(symbol="全部") if ak is not None else pd.DataFrame()),
+            ("同花顺财经直播", "stock_info_global_ths", lambda: ak.stock_info_global_ths() if ak is not None else pd.DataFrame()),
+            ("东方财富快讯", "stock_info_global_em", lambda: ak.stock_info_global_em() if ak is not None else pd.DataFrame()),
+        ]
+        for source_name, interface, func in sources:
+            df, err = safe_fetch("akshare", interface, func, retries=1, min_interval=1.0, cache=self.cache)
+            errors.extend(err)
+            entries.extend(self._normalize_global_news(df, source_name))
+        entries.extend(self._fetch_extra_public_feeds(errors))
+        payload = {"items": self._dedupe(entries), "errors": errors}
+        self.cache.set_pickle("news", cache_key, payload)
+        return payload["items"], payload["errors"]
+
+    def _fetch_extra_public_feeds(self, errors: list[dict]) -> list[dict]:
+        feeds = self.config.get("news", {}).get("extra_public_feeds", [])
+        entries: list[dict] = []
+        for feed in feeds:
+            if not isinstance(feed, dict) or feed.get("type", "rss") != "rss" or not feed.get("url"):
+                continue
+            source = str(feed.get("name") or "第三方RSS")
+            text, err = safe_fetch(
+                "third_party_news",
+                source,
+                lambda url=feed["url"]: self._fetch_text(url),
+                retries=1,
+                min_interval=0.5,
+                cache=self.cache,
+            )
+            errors.extend(err)
+            if text:
+                entries.extend(self._parse_rss_items(text, source))
+        return entries
+
+    @staticmethod
+    def _parse_rss_items(text: str, source: str) -> list[dict]:
+        try:
+            root = ET.fromstring(text)
+        except Exception:
+            return []
+        rows = []
+        for item in root.findall(".//item")[:80]:
+            title = _clean_text(item.findtext("title"), 160)
+            content = _clean_text(item.findtext("description"), 360)
+            if not title and not content:
+                continue
+            rows.append(
+                {
+                    "title": title or content[:80],
+                    "content": content,
+                    "url": str(item.findtext("link") or ""),
+                    "kind": "第三方RSS",
+                    "date": _parse_any_date(item.findtext("pubDate")),
+                    "source": source,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_stock_news_em(df: pd.DataFrame | None) -> list[dict]:
+        if df is None or df.empty:
+            return []
+        rows = []
+        for _, row in df.head(60).iterrows():
+            title = _clean_text(row.get("新闻标题"), 140)
+            if not title:
+                continue
+            rows.append(
+                {
+                    "title": title,
+                    "content": _clean_text(row.get("新闻内容"), 280),
+                    "url": str(row.get("新闻链接") or ""),
+                    "kind": _classify(str(row.get("新闻链接") or ""), title),
+                    "date": _parse_any_date(row.get("发布时间")),
+                    "source": str(row.get("文章来源") or "东方财富个股新闻"),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_global_news(df: pd.DataFrame | None, source: str) -> list[dict]:
+        if df is None or df.empty:
+            return []
+        rows = []
+        for _, row in df.head(160).iterrows():
+            title = _clean_text(row.get("标题"), 160)
+            content = _clean_text(row.get("内容", row.get("摘要", "")), 360)
+            if not title and not content:
+                continue
+            date_text = row.get("发布时间") or row.get("发布日期")
+            rows.append(
+                {
+                    "title": title or content[:80],
+                    "content": content,
+                    "url": str(row.get("链接") or ""),
+                    "kind": "快讯" if source != "财联社电报" else "财联社电报",
+                    "date": _parse_any_date(date_text),
+                    "source": source,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _dedupe(entries: list[dict]) -> list[dict]:
+        seen = set()
+        out = []
+        for entry in entries:
+            title = _clean_text(entry.get("title"), 140)
+            if not title:
+                continue
+            marker = (title, _normalized_url(str(entry.get("url") or "")))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            item = dict(entry)
+            item["title"] = title
+            item.setdefault("source", "公开信息")
+            out.append(item)
+        return out
+
     def _score_entry(self, entry: dict, ticker: str, name: str | None, boards: list[str], highlights: list[str]) -> dict:
         title = entry.get("title", "")
+        content = entry.get("content", "")
         text = title
-        context_text = " ".join([title, " ".join(highlights)])
+        context_text = " ".join([title, content])
         score = 0
         reasons = []
 
-        if ticker in text:
+        if ticker in context_text:
             score += 35
-            reasons.append("标题/摘要直接包含股票代码")
-        if name and name in text:
+            reasons.append("消息直接包含股票代码")
+        if name and name in context_text:
             score += 35
-            reasons.append("标题/摘要直接包含股票名称")
+            reasons.append("消息直接包含股票名称")
 
         event_hits = [kw for kw in EVENT_KEYWORDS if kw in text]
         if event_hits:
@@ -240,6 +423,38 @@ class NewsFetcher:
         out["relevance_reason"] = "；".join(reasons)
         return out
 
+    def _score_topic_entry(self, entry: dict, keywords: list[str]) -> dict:
+        title = entry.get("title", "")
+        content = entry.get("content", "")
+        text = " ".join([title, content])
+        score = 0
+        reasons = []
+        keyword_hits = [kw for kw in keywords if kw and kw in text]
+        if keyword_hits:
+            score += min(55, 25 + len(keyword_hits) * 8)
+            reasons.append("匹配关键词：" + "、".join(keyword_hits[:5]))
+        event_hits = [kw for kw in EVENT_KEYWORDS if kw in text]
+        if event_hits:
+            score += min(18, 6 + len(event_hits) * 2)
+            reasons.append("包含事件词：" + "、".join(event_hits[:4]))
+        theme_hits = [kw for kw in THEME_KEYWORDS if kw in text]
+        if theme_hits:
+            score += min(16, 4 + len(theme_hits) * 2)
+            reasons.append("包含行业/题材词：" + "、".join(theme_hits[:4]))
+        if entry.get("source") == "财联社电报":
+            score += 8
+            reasons.append("财联社电报源")
+        recency, recency_reason = _recency_score(entry.get("date"))
+        score += recency
+        if recency:
+            reasons.append(f"时效性：{recency_reason}")
+        if not reasons:
+            reasons.append("弱相关公开快讯，仅作市场背景")
+        out = dict(entry)
+        out["relevance_score"] = int(max(0, min(100, score)))
+        out["relevance_reason"] = "；".join(reasons)
+        return out
+
     @staticmethod
     def _aggregate_score(items: list[dict], highlights: list[str]) -> float:
         if not items:
@@ -256,9 +471,28 @@ class NewsFetcher:
         parts = titles or highlights[:2]
         return "；".join(parts)[:260] if parts else "暂无可用公开消息摘要"
 
+    @staticmethod
+    def _source_summary(items: list[dict]) -> str:
+        sources = [str(item.get("source") or "").strip() for item in items if item.get("source")]
+        return " + ".join(list(dict.fromkeys(sources))[:5])
+
+
+def _parse_any_date(value) -> str | None:
+    if value is None or value == "":
+        return None
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.isna(dt):
+        return None
+    return dt.strftime("%Y-%m-%d")
+
 
 def news_items_to_frame(payload: dict) -> pd.DataFrame:
     items = payload.get("items", []) if payload else []
     if not items:
         return pd.DataFrame()
-    return pd.DataFrame(items)[["kind", "date", "title", "relevance_score", "relevance_reason", "url"]]
+    cols = ["source", "kind", "date", "title", "relevance_score", "relevance_reason", "url"]
+    frame = pd.DataFrame(items)
+    for col in cols:
+        if col not in frame.columns:
+            frame[col] = ""
+    return frame[cols]

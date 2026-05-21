@@ -42,7 +42,7 @@ def _rating_label(overall):
     if value >= 2.7:
         return "谨慎观察"
     if value >= 2.0:
-        return "等待验证"
+        return "低优先级观察"
     return "暂不优先"
 
 
@@ -93,9 +93,17 @@ class FundamentalAnalyzer:
         name = profile.get("name") or profile.get("code") or "该股票"
         industry = profile.get("industry") or "暂未获取"
         market = profile.get("market") or "暂未获取"
-        return f"{name} 所属市场为 {market}，行业为 {industry}。公司画像字段来自公开数据源，缺失项会保持为暂未获取。"
+        return f"{name} 所属市场为 {market}，行业为 {industry}。公司画像会按可获取字段展示。"
 
     def _quality_cards(self, annual: pd.DataFrame, metrics: dict) -> list[dict]:
+        def _pct_str(val):
+            if val is None: return "N/A"
+            return f"+{val*100:.1f}%" if val > 0 else f"{val*100:.1f}%"
+
+        def _num_str(val, suffix=""):
+            if val is None: return "N/A"
+            return f"{val:.2f}{suffix}"
+
         revenue_growth = _growth(annual, "totalRevenue")
         profit_growth = _growth(annual, "netIncome")
         roe = metrics.get("roe")
@@ -103,50 +111,98 @@ class FundamentalAnalyzer:
         ocf = _latest(annual, "operatingCashFlow")
         net_income = _latest(annual, "netIncome")
         dividend_yield = metrics.get("dividend_yield")
+        pe = metrics.get("pe_ttm")
+        pb = metrics.get("pb")
 
         cards = []
+
+        # 1. 营收增长 (YoY)
         if revenue_growth is None:
-            cards.append({"title": "收入增长趋势", "body": "当前数据源缺少可比收入序列，暂无法判断增长趋势。", "tone": "orange", "badge": "N/A"})
-        elif revenue_growth > 0.10:
-            cards.append({"title": "收入增长趋势", "body": "最近一期收入同比增长较快，收入端呈扩张迹象。", "tone": "green", "badge": "Growth"})
+            cards.append({"label": "营业收入 (YoY)", "title": "N/A", "body": "历史收入序列暂不完整，无法计算可比增速。", "tone": "orange", "badge": "数据不足"})
+        elif revenue_growth >= 0.10:
+            cards.append({"label": "营业收入 (YoY)", "title": _pct_str(revenue_growth), "body": "最近一期收入同比增长较快，处于扩张趋势。", "tone": "green", "badge": "高成长"})
         elif revenue_growth >= 0:
-            cards.append({"title": "收入增长趋势", "body": "最近一期收入保持正增长，但增速并不激进。", "tone": "cyan", "badge": "Stable"})
+            cards.append({"label": "营业收入 (YoY)", "title": _pct_str(revenue_growth), "body": "最近一期收入保持正增长，规模扩张较为平稳。", "tone": "cyan", "badge": "稳健"})
         else:
-            cards.append({"title": "收入增长趋势", "body": "最近一期收入同比下滑，需要结合行业景气度进一步验证。", "tone": "orange", "badge": "Watch"})
+            cards.append({"label": "营业收入 (YoY)", "title": _pct_str(revenue_growth), "body": "最近一期收入同比下滑，需关注行业景气度。", "tone": "orange", "badge": "萎缩"})
 
-        if net_income is None or ocf is None:
-            cards.append({"title": "净利润质量", "body": "经营现金流或净利润数据缺失，暂无法判断利润含金量。", "tone": "orange", "badge": "N/A"})
-        elif ocf >= net_income > 0:
-            cards.append({"title": "净利润质量", "body": "经营现金流覆盖净利润，利润质量相对更扎实。", "tone": "green", "badge": "Cash"})
-        elif net_income > 0:
-            cards.append({"title": "净利润质量", "body": "净利润为正但现金流覆盖不足，需要关注回款和营运资本变化。", "tone": "orange", "badge": "Check"})
+        # 2. 净利润增长 (YoY)
+        if profit_growth is None:
+            cards.append({"label": "净利润 (YoY)", "title": "N/A", "body": "净利润序列暂不完整或基数为负，无法计算增速。", "tone": "orange", "badge": "数据不足"})
+        elif profit_growth >= 0.15:
+            cards.append({"label": "净利润 (YoY)", "title": _pct_str(profit_growth), "body": "利润端增长强劲，增速表现优异。", "tone": "green", "badge": "高爆发"})
+        elif profit_growth >= 0:
+            cards.append({"label": "净利润 (YoY)", "title": _pct_str(profit_growth), "body": "利润端保持稳定增长。", "tone": "cyan", "badge": "平稳"})
         else:
-            cards.append({"title": "净利润质量", "body": "净利润为负或不可持续，基本面验证优先级上升。", "tone": "red", "badge": "Risk"})
+            cards.append({"label": "净利润 (YoY)", "title": _pct_str(profit_growth), "body": "利润端出现负增长，需排查非经常性损益或成本压力。", "tone": "red", "badge": "承压"})
 
+        # 3. ROE
         if roe is None:
-            cards.append({"title": "盈利能力", "body": "ROE 数据缺失，当前数据源暂不支持完整盈利能力判断。", "tone": "orange", "badge": "N/A"})
+            cards.append({"label": "净资产收益率 (ROE)", "title": "N/A", "body": "暂无 ROE 数据，无法评估资本回报率。", "tone": "orange", "badge": "数据不足"})
         elif roe >= 0.15:
-            cards.append({"title": "盈利能力", "body": "ROE 处于较高区间，股东权益回报表现较好。", "tone": "green", "badge": "ROE"})
+            cards.append({"label": "净资产收益率 (ROE)", "title": _pct_str(roe), "body": "股东权益回报表现优异，具备较强盈利壁垒。", "tone": "green", "badge": "高回报"})
         elif roe >= 0.08:
-            cards.append({"title": "盈利能力", "body": "ROE 中等，盈利能力仍需结合估值和成长性判断。", "tone": "cyan", "badge": "ROE"})
+            cards.append({"label": "净资产收益率 (ROE)", "title": _pct_str(roe), "body": "盈利能力中等，处于行业常规水平。", "tone": "cyan", "badge": "合格"})
         else:
-            cards.append({"title": "盈利能力", "body": "ROE 偏低，说明权益资本回报暂不突出。", "tone": "orange", "badge": "ROE"})
+            cards.append({"label": "净资产收益率 (ROE)", "title": _pct_str(roe), "body": "权益资本回报偏低，盈利能力不突出。", "tone": "orange", "badge": "低效"})
 
+        # 4. 现金流覆盖度
+        if ocf is None or net_income is None:
+            cards.append({"label": "现金流净利比", "title": "N/A", "body": "现金流或利润数据缺失。", "tone": "orange", "badge": "数据不足"})
+        elif net_income > 0:
+            ratio = ocf / net_income
+            if ratio >= 1:
+                cards.append({"label": "现金流净利比", "title": f"{ratio:.2f}x", "body": "经营现金流完全覆盖净利润，利润含金量高。", "tone": "green", "badge": "充沛"})
+            elif ratio > 0:
+                cards.append({"label": "现金流净利比", "title": f"{ratio:.2f}x", "body": "现金流为正但未完全覆盖净利润，需关注应收账款。", "tone": "orange", "badge": "弱覆盖"})
+            else:
+                cards.append({"label": "现金流净利比", "title": f"{ratio:.2f}x", "body": "经营现金流为负，纸面富贵风险较高。", "tone": "red", "badge": "失血"})
+        else:
+            cards.append({"label": "现金流净利比", "title": "亏损", "body": "当期净利润为负，不适用现金流覆盖度分析。", "tone": "red", "badge": "亏损"})
+
+        # 5. D/E
         if debt_to_equity is None:
-            cards.append({"title": "杠杆水平", "body": "负债权益比缺失，暂无法评估杠杆压力。", "tone": "orange", "badge": "N/A"})
+            cards.append({"label": "资产负债率 (D/E)", "title": "N/A", "body": "暂无负债权益比数据。", "tone": "orange", "badge": "数据不足"})
         elif debt_to_equity < 1:
-            cards.append({"title": "杠杆水平", "body": "D/E 低于 1，资产负债压力相对可控。", "tone": "green", "badge": "Debt"})
-        elif debt_to_equity < 2:
-            cards.append({"title": "杠杆水平", "body": "D/E 处于中等区间，需结合行业属性判断。", "tone": "cyan", "badge": "Debt"})
+            cards.append({"label": "资产负债率 (D/E)", "title": _num_str(debt_to_equity, "x"), "body": "自有资本充足，长期偿债压力较小。", "tone": "green", "badge": "健康"})
+        elif debt_to_equity < 2.5:
+            cards.append({"label": "资产负债率 (D/E)", "title": _num_str(debt_to_equity, "x"), "body": "杠杆水平适中，需结合行业重资产属性判断。", "tone": "cyan", "badge": "适中"})
         else:
-            cards.append({"title": "杠杆水平", "body": "D/E 较高，财务杠杆风险需要重点复核。", "tone": "orange", "badge": "Debt"})
+            cards.append({"label": "资产负债率 (D/E)", "title": _num_str(debt_to_equity, "x"), "body": "杠杆率偏高，财务结构具备一定脆弱性。", "tone": "orange", "badge": "高杠杆"})
 
+        # 6. 分红率
         if dividend_yield is None:
-            cards.append({"title": "分红能力", "body": "当前数据源暂未获取稳定分红或股息率数据。", "tone": "orange", "badge": "N/A"})
+            cards.append({"label": "股息率 (TTM)", "title": "N/A", "body": "暂未获取分红或股息率数据。", "tone": "orange", "badge": "无分红"})
         elif dividend_yield >= 0.03:
-            cards.append({"title": "分红能力", "body": "股息率具备一定吸引力，可作为长期研究的辅助项。", "tone": "green", "badge": "Yield"})
+            cards.append({"label": "股息率 (TTM)", "title": _pct_str(dividend_yield), "body": "股息回报具备较好吸引力，提供安全边际。", "tone": "green", "badge": "高股息"})
+        elif dividend_yield > 0:
+            cards.append({"label": "股息率 (TTM)", "title": _pct_str(dividend_yield), "body": "存在一定分红回报，但股息率并不突出。", "tone": "cyan", "badge": "有分红"})
         else:
-            cards.append({"title": "分红能力", "body": "股息率不高，当前研究重点更偏成长、盈利或估值修复。", "tone": "cyan", "badge": "Yield"})
+            cards.append({"label": "股息率 (TTM)", "title": "0.0%", "body": "近期未见分红记录，投资收益完全依赖资本利得。", "tone": "orange", "badge": "铁公鸡"})
+
+        # 7. PE TTM
+        pe_val = _num(pe)
+        if pe_val is None:
+            cards.append({"label": "滚动市盈率 (PE)", "title": "N/A", "body": "估值数据缺失或当前盈利为负。", "tone": "orange", "badge": "数据不足"})
+        elif pe_val <= 0:
+            cards.append({"label": "滚动市盈率 (PE)", "title": "亏损", "body": "处于亏损状态，PE 估值法失效。", "tone": "red", "badge": "不适用"})
+        elif pe_val < 15:
+            cards.append({"label": "滚动市盈率 (PE)", "title": _num_str(pe_val, "x"), "body": "静态市盈率较低，估值可能具备安全边际。", "tone": "green", "badge": "低估值"})
+        elif pe_val < 40:
+            cards.append({"label": "滚动市盈率 (PE)", "title": _num_str(pe_val, "x"), "body": "市盈率处于合理或中等偏高水平。", "tone": "cyan", "badge": "合理"})
+        else:
+            cards.append({"label": "滚动市盈率 (PE)", "title": _num_str(pe_val, "x"), "body": "市盈率较高，估值对未来高增长存在透支预期。", "tone": "orange", "badge": "高溢价"})
+
+        # 8. PB
+        pb_val = _num(pb)
+        if pb_val is None:
+            cards.append({"label": "市净率 (PB)", "title": "N/A", "body": "暂无 PB 估值数据。", "tone": "orange", "badge": "数据不足"})
+        elif pb_val < 1:
+            cards.append({"label": "市净率 (PB)", "title": _num_str(pb_val, "x"), "body": "当前股价破净，需排查资产质量风险或周期底部。", "tone": "green", "badge": "破净"})
+        elif pb_val < 3:
+            cards.append({"label": "市净率 (PB)", "title": _num_str(pb_val, "x"), "body": "市净率处于常规估值水准。", "tone": "cyan", "badge": "合理"})
+        else:
+            cards.append({"label": "市净率 (PB)", "title": _num_str(pb_val, "x"), "body": "PB 偏高，市场对公司轻资产或ROE要求极高。", "tone": "orange", "badge": "高估值"})
 
         return cards
 

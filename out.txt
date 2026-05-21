@@ -1,0 +1,1 @@
+[{'name': '工业富联', 'code': '601138', 'source': 'akshare_spot', 'yahoo_code': '601138.SS', 'query_name': '工业富联', 'score': 0.5333333333333333, 'reason': '名称模糊匹配'}]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,19 @@ def _safe_value(value: Any):
         except Exception:
             pass
     return value
+
+
+def _clean_text(value: Any, limit: int | None = None) -> str:
+    text = str(_safe_value(value) or "").strip()
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if limit and len(text) > limit:
+        return text[:limit].rstrip() + "..."
+    return text
+
+
+def _has_cjk(value: Any) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
 
 
 def _row_value(df: pd.DataFrame, names: list[str], column):
@@ -105,8 +120,9 @@ class FundamentalFetcher:
             return cached
         y = self._fetch_yfinance(yahoo_code, latest_price)
         ak_payload = self._fetch_akshare(ticker)
+        cn_profile = self._fetch_chinese_profile(ticker)
         sector_payload = SectorFetcher(self.config).fetch(ticker)
-        payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, sector_payload, latest_price)
+        payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, cn_profile, sector_payload, latest_price)
         self.cache.set_pickle("fundamentals", cache_key, payload)
         return payload
 
@@ -157,6 +173,133 @@ class FundamentalFetcher:
             out["errors"].append({"source": "akshare", "interface": "stock_individual_info_em", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "yfinance"})
         return out
 
+    def _fetch_chinese_profile(self, ticker: str) -> dict:
+        out = {"info": {}, "errors": [], "sources": []}
+        if ak is None:
+            out["errors"].append({"source": "akshare", "interface": "chinese_profile", "error_type": "ImportError", "message": "AkShare未安装", "fallback_used": "yfinance"})
+            return out
+
+        zyjs, errors = safe_fetch("akshare", "stock_zyjs_ths", lambda: ak.stock_zyjs_ths(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache)
+        out["errors"].extend(errors)
+        zyjs_info = self._parse_zyjs(zyjs)
+        if zyjs_info:
+            out["info"].update(zyjs_info)
+            out["sources"].append("同花顺主营介绍")
+
+        cninfo, errors = safe_fetch("akshare", "stock_profile_cninfo", lambda: ak.stock_profile_cninfo(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache)
+        out["errors"].extend(errors)
+        cninfo_info = self._parse_cninfo_profile(cninfo)
+        if cninfo_info:
+            for key, value in cninfo_info.items():
+                out["info"].setdefault(key, value)
+            out["sources"].append("巨潮公司概况")
+
+        if not _has_cjk(out["info"].get("business")):
+            fallback = self._fetch_sina_or_ths_business(ticker)
+            if fallback.get("business"):
+                out["info"]["business"] = fallback["business"]
+                out["sources"].append(fallback.get("source", "中文网页"))
+            out["errors"].extend(fallback.get("errors", []))
+        return out
+
+    def _apply_chinese_profile(self, profile: dict, cn_profile: dict) -> None:
+        cn_info = cn_profile.get("info", {}) or {}
+        if cn_info.get("name") and not _has_cjk(profile.get("name")):
+            profile["name"] = cn_info["name"]
+        if cn_info.get("industry"):
+            profile["industry"] = cn_info["industry"]
+            profile["industry_cn"] = cn_info["industry"]
+        if cn_info.get("business"):
+            profile["business"] = cn_info["business"]
+        if cn_info.get("list_date"):
+            profile["list_date"] = cn_info["list_date"]
+        if cn_profile.get("sources"):
+            profile["business_source"] = " + ".join(cn_profile.get("sources", []))
+            current = [item for item in str(profile.get("data_source", "")).split(" + ") if item]
+            profile["data_source"] = " + ".join(dict.fromkeys([*current, *cn_profile.get("sources", [])]))
+
+    def _parse_zyjs(self, df: pd.DataFrame | None) -> dict:
+        if df is None or df.empty:
+            return {}
+        info = {}
+        text_fields = []
+        for _, row in df.iterrows():
+            joined = " ".join(_clean_text(v) for v in row.tolist() if _clean_text(v))
+            if not joined:
+                continue
+            if any(key in joined for key in ("主营", "业务", "产品", "经营范围")):
+                text_fields.append(joined)
+        if text_fields:
+            info["business"] = _clean_text("；".join(dict.fromkeys(text_fields)), 1200)
+        return info
+
+    def _parse_cninfo_profile(self, df: pd.DataFrame | None) -> dict:
+        if df is None or df.empty:
+            return {}
+        info = {}
+        for _, row in df.iterrows():
+            values = [_clean_text(v) for v in row.tolist()]
+            for idx, value in enumerate(values):
+                next_value = values[idx + 1] if idx + 1 < len(values) else ""
+                if value in {"公司名称", "证券简称", "股票简称"} and next_value:
+                    info.setdefault("name", next_value)
+                elif value in {"所属行业", "行业"} and next_value:
+                    info.setdefault("industry", next_value)
+                elif value in {"主营业务", "经营范围", "公司简介"} and next_value:
+                    info.setdefault("business", next_value)
+                elif value in {"上市日期", "上市时间"} and next_value:
+                    info.setdefault("list_date", next_value)
+        columns = {str(col): col for col in df.columns}
+        for key, aliases in {
+            "name": ["公司名称", "证券简称", "股票简称"],
+            "industry": ["所属行业", "行业"],
+            "business": ["主营业务", "经营范围", "公司简介"],
+            "list_date": ["上市日期", "上市时间"],
+        }.items():
+            for alias in aliases:
+                if alias in columns:
+                    series = df[columns[alias]].dropna()
+                    if not series.empty:
+                        info.setdefault(key, _clean_text(series.iloc[0], 1200 if key == "business" else None))
+        return {key: value for key, value in info.items() if value}
+
+    def _fetch_sina_or_ths_business(self, ticker: str) -> dict:
+        errors = []
+        for source, url, encoding in [
+            ("新浪公司资料", f"https://vip.stock.finance.sina.com.cn/corp/go.php/vCI_CorpInfo/stockid/{ticker}.phtml", "gb18030"),
+            ("同花顺经营分析", f"https://basic.10jqka.com.cn/{ticker}/operate.html", "gbk"),
+        ]:
+            text, err = safe_fetch(source, "company_business_page", lambda url=url, encoding=encoding: self._request_text(url, encoding), retries=1, min_interval=1.0, cache=self.cache)
+            errors.extend(err)
+            business = self._extract_business_from_html(text or "")
+            if _has_cjk(business):
+                return {"business": business, "source": source, "errors": errors}
+        return {"errors": errors}
+
+    def _request_text(self, url: str, encoding: str) -> str:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 stock-picker-ui", "Referer": "https://finance.sina.com.cn/"})
+        with urllib.request.urlopen(req, timeout=float(self.config.get("data", {}).get("timeout", 12))) as resp:
+            raw = resp.read()
+        for enc in (encoding, "utf-8", "gb18030", "gbk"):
+            try:
+                return raw.decode(enc)
+            except Exception:
+                pass
+        return raw.decode("utf-8", errors="ignore")
+
+    def _extract_business_from_html(self, text: str) -> str:
+        if not text:
+            return ""
+        plain = _clean_text(text)
+        for pattern in (
+            r"(?:主营业务|经营范围|公司简介)[:：]\s*(.{40,900}?)(?:公司名称|所属行业|发行|上市|办公地址|$)",
+            r"(?:主营构成|产品名称|业务名称)[:：]?\s*(.{40,700}?)(?:按行业|按产品|$)",
+        ):
+            match = re.search(pattern, plain)
+            if match:
+                return _clean_text(match.group(1), 900)
+        return ""
+
     def _market_name(self, ticker: str, yahoo_code: str) -> tuple[str, str]:
         if yahoo_code.endswith(".SS"):
             if ticker.startswith("688"):
@@ -166,17 +309,24 @@ class FundamentalFetcher:
             if ticker.startswith("300"):
                 return "深交所", "创业板"
             return "深交所", "深市"
-        return "暂未获取", "当前数据源暂不支持"
+        if yahoo_code.endswith(".HK"):
+            return "港交所", "港股主板"
+        # US markets
+        if yahoo_code.isupper() and yahoo_code.isalpha():
+            return "美股", "纽交所/纳斯达克"
+        return "其它", "海外/全球市场"
 
-    def _merge_payload(self, ticker: str, yahoo_code: str, y: dict, ak_payload: dict, sector_payload: dict, latest_price: float | None) -> dict:
+    def _merge_payload(self, ticker: str, yahoo_code: str, y: dict, ak_payload: dict, cn_profile: dict, sector_payload: dict, latest_price: float | None) -> dict:
         info = y.get("info", {}) or {}
         ak_info = ak_payload.get("info", {}) or {}
+        cn_info = cn_profile.get("info", {}) or {}
         sector_summary = sector_payload.get("summary", {}) or {}
         primary_boards = sector_summary.get("primary_boards", []) or []
         sector_source = sector_summary.get("source") or "sector_fallback"
         data_sources = ["yfinance"]
         if ak_info:
             data_sources.append("akshare")
+        data_sources.extend(cn_profile.get("sources", []))
         if primary_boards:
             data_sources.append(str(sector_source))
         exchange, market = self._market_name(ticker, yahoo_code)
@@ -187,15 +337,16 @@ class FundamentalFetcher:
         profile = {
             "code": ticker,
             "yahoo_code": yahoo_code,
-            "name": ak_info.get("股票简称") or info.get("shortName") or info.get("longName") or ticker,
+            "name": ak_info.get("股票简称") or cn_info.get("name") or info.get("shortName") or info.get("longName") or ticker,
             "exchange": exchange,
             "market": market,
-            "industry": info.get("industry") or "暂未获取",
+            "industry": ak_info.get("所属行业") or cn_info.get("industry") or info.get("industry") or "暂未获取",
             "sector": info.get("sector") or "暂未获取",
-            "industry_cn": primary_boards[0] if primary_boards else "暂未获取",
-            "belong_boards": primary_boards,
-            "business": info.get("longBusinessSummary") or "当前数据源暂不支持",
-            "list_date": ak_info.get("上市时间") or ak_info.get("上市日期") or "暂未获取",
+            "industry_cn": ak_info.get("所属行业") or cn_info.get("industry") or (primary_boards[0] if primary_boards else "暂未获取"),
+            "belong_boards": primary_boards or ([ak_info.get("所属行业")] if ak_info.get("所属行业") else []),
+            "business": cn_info.get("business") or ak_info.get("主营业务") or info.get("longBusinessSummary") or "当前数据源暂不支持",
+            "business_source": " + ".join(cn_profile.get("sources", [])) or ("yfinance" if info.get("longBusinessSummary") else ""),
+            "list_date": ak_info.get("上市时间") or ak_info.get("上市日期") or cn_info.get("list_date") or "暂未获取",
             "market_cap": market_cap,
             "float_market_cap": price * float_shares if price and float_shares else None,
             "shares_outstanding": shares,
@@ -219,7 +370,7 @@ class FundamentalFetcher:
             "currentPrice": price,
             "sharesOutstanding": shares,
         }
-        errors = list(y.get("errors", [])) + list(ak_payload.get("errors", [])) + list(sector_payload.get("errors", []))
+        errors = list(y.get("errors", [])) + list(ak_payload.get("errors", [])) + list(cn_profile.get("errors", [])) + list(sector_payload.get("errors", []))
         return {
             "profile": profile,
             "annual": y.get("annual", pd.DataFrame()),

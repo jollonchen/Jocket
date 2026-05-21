@@ -1,6 +1,6 @@
-# A股智能选股与个股分析工具
+# Jocket A股智能分析工具
 
-这是一个用于研究辅助的 A 股选股和个股分析项目，包含命令行和 Streamlit 可视化界面。
+这是一个用于研究辅助的 A 股智能分析项目，包含命令行个股分析和 Streamlit 可视化界面。
 
 ## 数据源
 
@@ -38,6 +38,8 @@ http://localhost:8501
 
 ## 界面功能
 
+界面入口收敛为三个核心功能：`AI行情`、`个股分析`、`市场情绪`。
+
 ### 个股分析
 
 输入股票代码，例如：
@@ -50,7 +52,7 @@ http://localhost:8501
 
 系统会输出：
 
-- 最新收盘价
+- 实时价（efinance 实时行情可用时会替换当天日线；不可用时默认报错，不静默回落到旧收盘）
 - 短线评分
 - 中长线评分
 - 综合评分
@@ -59,16 +61,30 @@ http://localhost:8501
 - 风险信号
 - 最近行情数据
 
-### 每日选股
+### 市场情绪
 
-可以选择：
+市场情绪页用于复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池。页面支持选择交易日、观察窗口，并可按需强制刷新公共源或补齐历史缓存。
 
-- 综合选股
-- 短线选股
-- 中长线选股
-- Top N
-- 扫描股票数量
-- 数据源：auto / 同花顺 / AkShare / Yahoo Finance
+### AI行情
+
+`AI行情` 页面把项目内的 `Awesome-finance-skills` 能力接入为自然语言对话助手：
+
+- 读取 `alphaear-deepear-lite` 的 DeepEar Lite 实时金融信号。
+- 结合项目已有公开新闻/热点聚合能力生成实时上下文。
+- 使用 Gemini 原生 API 生成回答，并在界面显示当前连接状态。
+
+启动前需要配置 API token。推荐复制 `.env.example` 为 `.env`，再填入本地密钥；`.env` 已被 `.gitignore` 忽略，不会进入 Git。
+
+```bash
+cp .env.example .env
+```
+
+支持的环境变量：
+
+- `GEMINI_API_KEY`：Gemini 原生 API key。
+- `GEMINI_MODEL`：Gemini 模型，默认 `gemini-2.5-flash`。
+
+也可以在 `config.yaml` 的 `ai_market` 段里修改 Gemini 的模型、base URL、温度和输出长度。请不要把真实 API key 写入 `config.yaml`、代码或 README。
 
 ## 评分模型说明 / Scoring Methodology
 
@@ -140,7 +156,7 @@ http://localhost:8501
 
 ### 公司基本信息字段
 
-公司画像展示股票代码、股票名称、交易所、所属市场、行业、Sector、主营业务简介、上市时间、总市值、流通市值、总股本、流通股本、最新收盘价、数据更新时间和数据源。A 股市场类型会根据代码后缀和代码段识别为沪市、深市、创业板、科创板等；无法识别时会标记为当前数据源暂不支持。
+公司画像展示股票代码、股票名称、交易所、所属市场、行业、Sector、主营业务简介、上市时间、总市值、流通市值、总股本、流通股本、实时价/最新收盘价、数据更新时间和数据源。A 股市场类型会根据代码后缀和代码段识别为沪市、深市、创业板、科创板等；无法识别时会标记为当前数据源暂不支持。
 
 ### 财务数据来源
 
@@ -202,12 +218,6 @@ python main.py analyze --code 300750 --provider auto
 python main.py analyze --code 300750 --provider ths
 python main.py analyze --code 300750 --provider akshare
 python main.py analyze --code 300750 --provider yfinance
-```
-
-每日选股：
-
-```bash
-python main.py screen --mode all --top 10 --limit 80 --provider auto
 ```
 
 ## 风险提示

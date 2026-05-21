@@ -37,3 +37,7 @@ dist/
 
 # Logs
 *.log
+
+# Database files
+*.db
+data/*.db

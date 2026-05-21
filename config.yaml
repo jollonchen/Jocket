@@ -2,6 +2,7 @@ data:
   provider: "auto"   # auto / akshare / ths / yfinance
   akshare_adjust: "qfq"  # qfq=前复权, hfq=后复权, 空字符串=不复权
   timeout: 12
+  require_realtime: true  # true=必须拿到实时行情并替换最新日线，否则报错
 
 market:
   default_start_date:
@@ -32,3 +33,12 @@ scoring:
 ui:
   default_top_n: 10
   default_limit: 30
+
+ai_market:
+  default_provider: "gemini"
+  gemini_base_url: "https://generativelanguage.googleapis.com/v1beta"
+  gemini_model: "gemini-2.5-flash"
+  timeout: 45
+  temperature: 0.25
+  max_tokens: 4096
+  skill_dir: "Awesome-finance-skills/skills"

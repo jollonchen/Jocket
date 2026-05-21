@@ -133,7 +133,7 @@ class ValuationEngine:
         shares = _num(shares)
         current_price = _num(current_price)
         if cashflow is None or shares is None or shares <= 0:
-            return {"available": False, "reason": "当前数据源缺少现金流数据，暂无法计算 DCF。"}
+            return {"available": False, "reason": "现金流数据暂不完整，暂无法计算 DCF。"}
         years = int(self.assumptions["years"])
         growth = float(self.assumptions["cashflow_growth"])
         terminal_growth = float(self.assumptions["terminal_growth"])
@@ -173,22 +173,7 @@ class ValuationEngine:
         return current / previous - 1
 
     def _ratings(self, metrics: dict, annual: pd.DataFrame) -> dict:
-        dcf = metrics.get("dcf", {})
-        dcf_score = None
-        if dcf.get("available") and dcf.get("discount_pct") is not None:
-            discount = dcf["discount_pct"]
-            if discount >= 0.30:
-                dcf_score = 5
-            elif discount >= 0.10:
-                dcf_score = 4
-            elif discount >= -0.10:
-                dcf_score = 3
-            elif discount >= -0.30:
-                dcf_score = 2
-            else:
-                dcf_score = 1
         scores = {
-            "DCF": dcf_score,
             "ROE": _score_threshold(metrics.get("roe"), [
                 (lambda x: x > 0.20, 5), (lambda x: x >= 0.15, 4), (lambda x: x >= 0.10, 3), (lambda x: x >= 0.05, 2), (lambda x: True, 1)
             ]),
@@ -229,7 +214,6 @@ class ValuationEngine:
             "估值合理性": {"weight": 0.20, "items": ["P/E", "P/B", "P/S", "Dividend Yield"]},
             "财务稳健性": {"weight": 0.15, "items": ["Debt Ratio", "D/E", "Cashflow Quality"]},
             "股东回报": {"weight": 0.10, "items": ["Dividend Yield"]},
-            "DCF参考": {"weight": 0.10, "items": ["DCF"]},
         }
         category_scores = {}
         weighted = 0
@@ -313,12 +297,10 @@ class ValuationEngine:
             notes.append(metrics.get("dcf", {}).get("reason", "DCF 数据不足"))
         for key, label in [("pe_ttm", "PE"), ("pb", "PB"), ("ps", "PS"), ("roe", "ROE"), ("roa", "ROA"), ("debt_to_equity", "D/E")]:
             if metrics.get(key) is None:
-                notes.append(f"{label} 当前数据源暂不支持或缺失")
+                notes.append(f"{label} 暂不完整")
         for error in payload.get("errors", []):
             if isinstance(error, dict):
-                source = error.get("source", "数据源")
-                interface = error.get("interface", "")
-                notes.append(f"{source} {interface} 暂时不可用，已尝试使用其他数据源或缓存")
+                notes.append("部分字段暂未取得，系统已继续使用可用数据计算")
             else:
-                notes.append(str(error).split("：", 1)[0] + "，已尝试使用其他数据源或缓存")
+                notes.append("部分字段暂未取得，系统已继续使用可用数据计算")
         return notes
