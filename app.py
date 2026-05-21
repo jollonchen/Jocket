@@ -1729,7 +1729,7 @@ if run and page == "个股分析":
                 analysis_result = _fetch_stock_analysis_core(code, name, start_str)
                 score_tmp, hist_tmp, _ = analysis_result
             except Exception as exc:
-                run_error = str(exc)
+                run_error = f"{type(exc).__name__}: {exc}"
         if analysis_result and not run_error:
             fundamental_context_result = _build_fundamental_context(code, hist_tmp, score_tmp, dcf_assumptions)
             score_for_summary = _enrich_score_with_fundamentals(score_tmp, fundamental_context_result) if fundamental_context_result else score_tmp
@@ -1820,7 +1820,9 @@ if page == "AI行情":
 elif run_error:
     with st.container(border=True):
         st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
-        st.error("本次请求没有成功生成结果。请稍后重试，或缩短日期范围/降低扫描数量。")
+        st.error(f"本次请求没有成功生成结果。请稍后重试，或缩短日期范围/降低扫描数量。\n\n**错误详情：** `{run_error}`")
+        with st.expander("调试信息（Streamlit Cloud / Railway 排错用）"):
+            st.code(run_error)
 elif analysis_result:
     score, hist, report_path = analysis_result
     _render_analysis_dashboard(score, hist, report_path, dcf_assumptions, fundamental_context_result)
