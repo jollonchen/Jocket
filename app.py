@@ -1525,7 +1525,7 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
             st.success("本轮没有记录到数据源错误。")
 
 
-def _render_ai_market_dashboard(config: dict) -> None:
+def _render_ai_market_dashboard(config: dict, prompt: str = "", submitted: bool = False) -> None:
     assistant = AIMarketAssistant(config, provider="gemini")
     if "ai_market_messages" not in st.session_state:
         st.session_state["ai_market_messages"] = []
@@ -1569,20 +1569,14 @@ def _render_ai_market_dashboard(config: dict) -> None:
             render_ai_message(message["role"], message["content"])
         st.markdown("</section>", unsafe_allow_html=True)
 
-    prompt_cols = st.columns([0.88, 0.12], vertical_alignment="center")
-    with prompt_cols[0]:
-        prompt = st.text_input("询问 AI行情", placeholder="询问 AI行情", label_visibility="collapsed", key="ai_market_prompt", autocomplete="off")
-    with prompt_cols[1]:
-        submitted = st.button("发送", key="ai_market_submit", use_container_width=True)
-
-    if submitted and prompt.strip():
-        prompt = prompt.strip()
-        st.session_state["ai_market_messages"].append({"role": "user", "content": prompt})
-        render_ai_message("user", prompt)
+    if submitted and prompt and prompt.strip():
+        prompt_text = prompt.strip()
+        st.session_state["ai_market_messages"].append({"role": "user", "content": prompt_text})
+        render_ai_message("user", prompt_text)
 
         keywords = DEFAULT_MARKET_KEYWORDS
         with st.spinner("正在调用 Awesome Finance Skills 并读取实时行情..."):
-            result = assistant.ask(prompt, st.session_state["ai_market_messages"][:-1], keywords)
+            result = assistant.ask(prompt_text, st.session_state["ai_market_messages"][:-1], keywords)
         answer = result.get("answer", "模型没有返回有效内容。")
         render_ai_message("assistant", answer)
         st.session_state["ai_market_messages"].append({"role": "assistant", "content": answer})
@@ -1625,8 +1619,24 @@ sentiment_refresh = False
 sentiment_backfill = False
 start = st.session_state["start_date"]
 run = False
+ai_prompt = ""
+ai_submitted = False
 
-if page in {"个股分析", "市场情绪"}:
+if page == "AI行情":
+    with st.container(border=True):
+        st.markdown('<div class="command-bar-title">AI 行情问答</div>', unsafe_allow_html=True)
+        ai_cols = st.columns([0.88, 0.12], vertical_alignment="center")
+        with ai_cols[0]:
+            ai_prompt = st.text_input(
+                "询问 AI行情",
+                placeholder="询问大盘主线、板块催化、个股消息面...",
+                label_visibility="collapsed",
+                key="ai_market_prompt",
+                autocomplete="off",
+            )
+        with ai_cols[1]:
+            ai_submitted = st.button("发送", key="ai_market_submit", use_container_width=True)
+elif page in {"个股分析", "市场情绪"}:
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">参数与操作</div>', unsafe_allow_html=True)
         if page == "个股分析":
@@ -1806,7 +1816,7 @@ if page in {"个股分析", "市场情绪"}:
 
 # Dashboard Content
 if page == "AI行情":
-    _render_ai_market_dashboard(config)
+    _render_ai_market_dashboard(config, prompt=ai_prompt, submitted=ai_submitted)
 elif run_error:
     with st.container(border=True):
         st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
