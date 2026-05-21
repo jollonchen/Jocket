@@ -264,6 +264,10 @@ textarea {
    --------------------------------------------------- */
 /* 1. Target the main segmented control container directly on the KEY WRAPPER */
 .st-key-analysis_mode_top {
+  display: inline-block !important;
+  width: fit-content !important;
+  max-width: 100% !important;
+  flex: 0 0 auto !important;
   padding: 14px 18px !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   border-radius: 28px !important;
