@@ -505,7 +505,38 @@ class DataFetcher:
             return None, errors + [{"source": "akshare", "interface": "stock_individual_spot_xq", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "daily_only"}]
 
     def _with_realtime_quote(self, df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
-        realtime_row, errors = self._get_efinance_realtime_row(code)
+        realtime_row = None
+        errors = []
+        
+        # 1. Try efinance
+        rt_row, rt_errors = self._get_efinance_realtime_row(code)
+        errors.extend(rt_errors)
+        if rt_row:
+            realtime_row = rt_row
+            
+        # 2. Try akshare
+        if not realtime_row:
+            xq_code = self._to_xq_code(code)
+            ak_row, ak_errors = self._get_akshare_xq_spot_row(xq_code)
+            errors.extend(ak_errors)
+            if ak_row:
+                realtime_row = ak_row
+                realtime_row["quote_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                realtime_row["realtime_price"] = True
+                
+        # 3. Try yfinance as final fallback for realtime
+        if not realtime_row:
+            try:
+                yf_hist = self._get_hist_yfinance(code, start=(datetime.now() - pd.Timedelta(days=5)).strftime('%Y%m%d'), end=end, use_cache=False)
+                if not yf_hist.empty:
+                    last_row = yf_hist.iloc[-1].to_dict()
+                    last_row['data_source'] = 'yfinance:realtime_fallback'
+                    last_row['quote_updated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    last_row['realtime_price'] = True
+                    realtime_row = last_row
+            except Exception as e:
+                errors.append({"source": "yfinance", "interface": "realtime_fallback", "error_type": "Exception", "message": str(e)})
+
         if not realtime_row:
             if self.require_realtime:
                 detail = "；".join(f"{e.get('interface', 'realtime')}失败:{e.get('message', '')}" for e in errors[-3:])

@@ -27,7 +27,7 @@ class FactorEngine:
 
     def score(self, hist: pd.DataFrame) -> dict:
         if hist is None or len(hist) < 60:
-            return self.empty_score('历史数据不足')
+            return self.empty_score('历史数据不足', hist)
 
         row = hist.iloc[-1]
         prev = hist.iloc[-2] if len(hist) > 1 else row
@@ -63,7 +63,11 @@ class FactorEngine:
             'summary': self._summary(short_score, long_score, risk_flags, rating),
         }
 
-    def empty_score(self, reason: str) -> dict:
+    def empty_score(self, reason: str, hist: pd.DataFrame | None = None) -> dict:
+        latest_dict = {}
+        if hist is not None and not hist.empty:
+            latest_dict = hist.iloc[-1].to_dict()
+        
         return {
             'short_score': 0,
             'long_score': 0,
@@ -79,7 +83,7 @@ class FactorEngine:
             'formula': self._formula(),
             'limitations': ['行情历史不足，无法计算完整技术指标', '评分仅用于研究辅助，不构成投资建议'],
             'risk_flags': [reason],
-            'latest': {},
+            'latest': latest_dict,
             'summary': reason,
         }
 
