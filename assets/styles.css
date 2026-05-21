@@ -2162,7 +2162,7 @@ input:-webkit-autofill:active {
    MOBILE NAV: all 3 buttons in one scrollable row
    ------------------------------------------------------- */
 @media (max-width: 768px) {
-  /* On mobile the nav container goes full-width */
+  /* On mobile the nav container goes full-width and allows scroll */
   .st-key-analysis_mode_top {
     width: 100% !important;
     display: block !important;
@@ -2170,6 +2170,20 @@ input:-webkit-autofill:active {
     border-radius: 20px !important;
     margin-bottom: 16px !important;
     box-sizing: border-box !important;
+    overflow: hidden !important; /* Hide scrollbars on the very outer wrapper */
+  }
+
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"] {
+    width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"]::-webkit-scrollbar {
+    display: none !important;
   }
 
   /* Button track: single row, horizontal scroll */
@@ -2178,33 +2192,21 @@ input:-webkit-autofill:active {
   .st-key-analysis_mode_top [role="radiogroup"] {
     display: flex !important;
     flex-wrap: nowrap !important;
-    width: 100% !important;
+    width: max-content !important; /* Allow the track to grow beyond 100% */
+    min-width: 100% !important;
     gap: 6px !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    -webkit-overflow-scrolling: touch !important;
-    scroll-snap-type: x mandatory !important;
-    scrollbar-width: none !important;          /* Firefox */
-    -ms-overflow-style: none !important;       /* IE/Edge */
-  }
-
-  /* Hide scrollbar in Chrome/Safari */
-  .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child::-webkit-scrollbar,
-  .st-key-analysis_mode_top div[role="group"]::-webkit-scrollbar {
-    display: none !important;
   }
 
   /* Each button: equal minimum width, scroll-snap aligned */
   .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child > *,
   .st-key-analysis_mode_top div[role="group"] > button,
   .st-key-analysis_mode_top button {
-    flex: 0 0 auto !important;
-    min-width: 88px !important;
+    flex: 1 0 auto !important; /* Do not shrink, allow growing */
+    min-width: 90px !important;
     width: auto !important;
     padding: 8px 14px !important;
     min-height: 44px !important;
     border-radius: 12px !important;
-    scroll-snap-align: start !important;
   }
 
   /* Prevent button text from wrapping */

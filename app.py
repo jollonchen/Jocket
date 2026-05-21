@@ -236,7 +236,7 @@ def _render_chart_card(title: str, badge: str, fig, container_height: int | None
             f'<div class="chart-title"><span>{title}</span><span class="pill pill-cyan">{badge}</span></div>',
             unsafe_allow_html=True,
         )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"chart_{title}")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
