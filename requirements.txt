@@ -10,3 +10,4 @@ requests>=2.31.0
 urllib3>=2.0.0
 lxml>=5.0.0
 efinance>=0.5.3
+markdown>=3.4.0
