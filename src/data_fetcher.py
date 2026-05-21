@@ -504,18 +504,64 @@ class DataFetcher:
         except Exception as exc:
             return None, errors + [{"source": "akshare", "interface": "stock_individual_spot_xq", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "daily_only"}]
 
+    def _get_sina_spot_row(self, code: str) -> tuple[dict | None, list[dict]]:
+        ticker = display_code(normalize_a_share_code(code))
+        market = 'sh' if ticker.startswith(('5', '6', '9')) else 'sz'
+        if code.endswith('.HK'):
+            market, ticker = 'hk', ticker
+        
+        url = f"http://hq.sinajs.cn/list={market}{ticker}"
+        try:
+            req = urllib.request.Request(url, headers={'Referer': 'http://finance.sina.com.cn'})
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                text = resp.read().decode('gbk')
+            
+            match = re.search(r'="([^"]+)"', text)
+            if not match:
+                return None, [{"source": "sina", "interface": "spot", "error_type": "ValueError", "message": "Sina API returned empty"}]
+            fields = match.group(1).split(',')
+            
+            # HK stocks have a different format in Sina (less fields), handle A-shares mainly
+            if len(fields) < 32 and not code.endswith('.HK'):
+                return None, [{"source": "sina", "interface": "spot", "error_type": "ValueError", "message": "Sina API returned invalid format"}]
+                
+            close_price = float(fields[3])
+            if close_price <= 0:
+                return None, [{"source": "sina", "interface": "spot", "error_type": "ValueError", "message": "Market closed or invalid price"}]
+                
+            prev_close = float(fields[2])
+            pct_chg = (close_price - prev_close) / prev_close * 100 if prev_close > 0 else 0
+            
+            row = {
+                "date": pd.to_datetime(fields[30]).normalize(),
+                "open": float(fields[1]),
+                "high": float(fields[4]),
+                "low": float(fields[5]),
+                "close": close_price,
+                "volume": float(fields[8]), # Shares
+                "amount": float(fields[9]),
+                "turnover_rate": None,
+                "pct_chg": pct_chg,
+                "amount_est": float(fields[9]),
+                "data_source": "sina:spot",
+                "yahoo_code": normalize_a_share_code(code),
+                "quote_updated_at": f"{fields[30]} {fields[31]}",
+                "realtime_price": True,
+            }
+            return row, []
+        except Exception as exc:
+            return None, [{"source": "sina", "interface": "spot", "error_type": exc.__class__.__name__, "message": str(exc)}]
+
+
     def _with_realtime_quote(self, df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
         realtime_row, errors = self._get_efinance_realtime_row(code)
         
-        # Fallback to akshare realtime if efinance fails
+        # Fallback to direct Sina API if efinance fails or is not installed
         if not realtime_row:
-            xq_code = self._to_xq_code(code)
-            ak_spot_row, ak_errors = self._get_akshare_xq_spot_row(xq_code)
-            errors.extend(ak_errors)
-            if ak_spot_row:
-                realtime_row = ak_spot_row
-                realtime_row["quote_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                realtime_row["realtime_price"] = True
+            sina_row, sina_errors = self._get_sina_spot_row(code)
+            errors.extend(sina_errors)
+            if sina_row:
+                realtime_row = sina_row
 
         if not realtime_row:
             if self.require_realtime:
