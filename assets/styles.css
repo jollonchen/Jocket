@@ -2159,7 +2159,7 @@ input:-webkit-autofill:active {
 }
 
 /* -------------------------------------------------------
-   MOBILE NAV: force 3 buttons on ONE single row
+   MOBILE NAV: all 3 buttons in one scrollable row
    ------------------------------------------------------- */
 @media (max-width: 768px) {
   /* On mobile the nav container goes full-width */
@@ -2169,9 +2169,10 @@ input:-webkit-autofill:active {
     padding: 8px 10px !important;
     border-radius: 20px !important;
     margin-bottom: 16px !important;
+    box-sizing: border-box !important;
   }
 
-  /* Button track: no wrapping, distribute evenly */
+  /* Button track: single row, horizontal scroll */
   .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child,
   .st-key-analysis_mode_top div[role="group"],
   .st-key-analysis_mode_top [role="radiogroup"] {
@@ -2179,20 +2180,31 @@ input:-webkit-autofill:active {
     flex-wrap: nowrap !important;
     width: 100% !important;
     gap: 6px !important;
-    overflow: hidden !important;
-    justify-content: stretch !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-snap-type: x mandatory !important;
+    scrollbar-width: none !important;          /* Firefox */
+    -ms-overflow-style: none !important;       /* IE/Edge */
   }
 
-  /* Each button takes equal share of the row */
+  /* Hide scrollbar in Chrome/Safari */
+  .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child::-webkit-scrollbar,
+  .st-key-analysis_mode_top div[role="group"]::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* Each button: equal minimum width, scroll-snap aligned */
   .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child > *,
   .st-key-analysis_mode_top div[role="group"] > button,
   .st-key-analysis_mode_top button {
-    flex: 1 1 0 !important;
-    min-width: 0 !important;
+    flex: 0 0 auto !important;
+    min-width: 88px !important;
     width: auto !important;
-    padding: 8px 4px !important;
+    padding: 8px 14px !important;
     min-height: 44px !important;
     border-radius: 12px !important;
+    scroll-snap-align: start !important;
   }
 
   /* Prevent button text from wrapping */
@@ -2200,10 +2212,8 @@ input:-webkit-autofill:active {
   .st-key-analysis_mode_top button span,
   .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child > * p,
   .st-key-analysis_mode_top [data-testid="stSegmentedControl"] > div:last-child > * span {
-    font-size: 0.82rem !important;
+    font-size: 0.88rem !important;
     white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
   }
 }
 

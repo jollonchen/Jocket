@@ -2,7 +2,7 @@ data:
   provider: "auto"   # auto / akshare / ths / yfinance
   akshare_adjust: "qfq"  # qfq=前复权, hfq=后复权, 空字符串=不复权
   timeout: 12
-  require_realtime: true  # true=必须拿到实时行情并替换最新日线，否则报错
+  require_realtime: false  # false=实时行情失败时自动使用日线历史数据兜底（适用于 Streamlit Cloud 等限制环境）
 
 market:
   default_start_date:
