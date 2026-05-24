@@ -2395,7 +2395,7 @@ if page == "AI洞察":
                     )
             with ai_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
-                ai_submitted = st.form_submit_button("来财来财", use_container_width=True)
+                ai_submitted = st.form_submit_button("来财来财", use_container_width=True, key="ai_market_submit")
         if ai_submitted and ai_prompt.strip():
             st.session_state["pending_prompt"] = ai_prompt.strip()
             st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
