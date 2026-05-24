@@ -14,8 +14,10 @@ import pandas as pd
 import requests
 
 from .news_fetcher import NewsFetcher
+from .providers.a_stock_data_provider import AStockDataProvider
 from .stock_analyzer import StockAnalyzer
 from .stock_lookup import build_stock_directory, resolve_stock_query
+from .stock_signal_cards import build_market_signal_cards, build_stock_signal_cards, signal_cards_to_text
 
 
 DEFAULT_MARKET_KEYWORDS = [
@@ -59,6 +61,7 @@ def _load_local_env() -> None:
             key.startswith("AI_MARKET_")
             or key.startswith("GEMINI_")
             or key.startswith("GOOGLE_")
+            or key.startswith("DEEPSEEK_")
             or key.startswith("OPENAI_")
         ):
             os.environ[key] = value
@@ -87,7 +90,7 @@ def _read_secret(*keys: str) -> str:
 
 
 def provider_label(provider: str) -> str:
-    return {"gemini": "Gemini"}.get(provider, provider)
+    return {"gemini": "Gemini", "deepseek": "DeepSeek"}.get(provider, provider)
 
 
 def resolve_ai_market_settings(config: dict | None = None, provider: str | None = None) -> AIMarketSettings:
@@ -97,13 +100,22 @@ def resolve_ai_market_settings(config: dict | None = None, provider: str | None 
         or os.getenv("AI_MARKET_PROVIDER")
         or _config_value(config, "default_provider", "gemini")
     ).strip().lower()
-    provider = "gemini"
-    api_key = _read_secret("GEMINI_API_KEY", "GOOGLE_API_KEY", "AI_MARKET_GEMINI_API_KEY")
-    base_url = str(
-        os.getenv("GEMINI_BASE_URL")
-        or _config_value(config, "gemini_base_url", "https://generativelanguage.googleapis.com/v1beta")
-    ).rstrip("/")
-    model = str(os.getenv("GEMINI_MODEL") or _config_value(config, "gemini_model", "gemini-3.0-flash"))
+    if provider not in {"gemini", "deepseek"}:
+        provider = "gemini"
+    if provider == "deepseek":
+        api_key = _read_secret("DEEPSEEK_API_KEY", "AI_MARKET_DEEPSEEK_API_KEY")
+        base_url = str(
+            os.getenv("DEEPSEEK_BASE_URL")
+            or _config_value(config, "deepseek_base_url", "https://api.deepseek.com")
+        ).rstrip("/")
+        model = str(os.getenv("DEEPSEEK_MODEL") or _config_value(config, "deepseek_model", "deepseek-v4-flash"))
+    else:
+        api_key = _read_secret("GEMINI_API_KEY", "GOOGLE_API_KEY", "AI_MARKET_GEMINI_API_KEY")
+        base_url = str(
+            os.getenv("GEMINI_BASE_URL")
+            or _config_value(config, "gemini_base_url", "https://generativelanguage.googleapis.com/v1beta")
+        ).rstrip("/")
+        model = str(os.getenv("GEMINI_MODEL") or _config_value(config, "gemini_model", "gemini-2.5-flash"))
 
     base_url = str(
         base_url
@@ -114,7 +126,7 @@ def resolve_ai_market_settings(config: dict | None = None, provider: str | None 
         api_key=api_key,
         base_url=base_url,
         model=model,
-        timeout=float(_config_value(config, "timeout", 45)),
+        timeout=float(_config_value(config, "timeout", 120)),
         temperature=float(_config_value(config, "temperature", 0.25)),
         max_tokens=int(_config_value(config, "max_tokens", 3072)),
         skill_dir=skill_dir,
@@ -134,22 +146,68 @@ class AIMarketAssistant:
     def provider_label(self) -> str:
         return provider_label(self.settings.provider)
 
-    def context_snapshot(self, question: str = "", keywords: list[str] | None = None) -> dict:
+    def deepseek_model_for(self, use_pro: bool = False) -> str:
+        flash_model = str(
+            os.getenv("DEEPSEEK_FLASH_MODEL")
+            or _config_value(self.config, "deepseek_flash_model", "")
+            or "deepseek-v4-flash"
+        )
+        pro_model = str(
+            os.getenv("DEEPSEEK_PRO_MODEL")
+            or _config_value(self.config, "deepseek_pro_model", "")
+            or "deepseek-v4-pro"
+        )
+        return pro_model if use_pro else flash_model
+
+    def context_snapshot(self, question: str = "", history: list[dict] | None = None, keywords: list[str] | None = None, forced_skills: list[str] | None = None) -> dict:
         keywords = [item.strip() for item in (keywords or DEFAULT_MARKET_KEYWORDS) if str(item).strip()]
-        stock_context = self._fetch_stock_skill_context(question)
-        news_context = self._fetch_alphaear_news_context(keywords)
-        return {
+        
+        enriched_question = question or ""
+        if history and len(enriched_question) < 20 and any(word in enriched_question for word in ["允许", "可以", "好的", "同意", "yes", "ok", "获取", "调用", "查"]):
+            for msg in reversed(history[-4:]):
+                if msg.get("content"):
+                    enriched_question += " " + msg["content"]
+
+        route = self._resolve_skill_route(enriched_question, forced_skills)
+        contexts = {name: "本轮未触发。" for name in route["available"]}
+        if "alphaear-stock" in route["selected"]:
+            contexts["alphaear-stock"] = self._fetch_stock_skill_context(enriched_question)
+        if "alphaear-news" in route["selected"]:
+            contexts["alphaear-news"] = self._fetch_alphaear_news_context(keywords)
+        if "alphaear-deepear-lite" in route["selected"]:
+            contexts["alphaear-deepear-lite"] = self._fetch_deepear_signals()
+        if "a-stock-data" in route["selected"]:
+            contexts["a-stock-data"] = self._fetch_a_stock_market_context()
+        if "alphaear-search" in route["selected"]:
+            contexts["alphaear-search"] = self._fetch_search_context(enriched_question)
+        if "alphaear-sentiment" in route["selected"]:
+            contexts["alphaear-sentiment"] = self._fetch_sentiment_skill_context(enriched_question, contexts)
+        if "alphaear-predictor" in route["selected"]:
+            contexts["alphaear-predictor"] = self._fetch_predictor_context(enriched_question, contexts)
+        if "alphaear-signal-tracker" in route["selected"]:
+            contexts["alphaear-signal-tracker"] = self._fetch_signal_tracker_context(enriched_question)
+        if "alphaear-logic-visualizer" in route["selected"]:
+            contexts["alphaear-logic-visualizer"] = self._fetch_framework_context("alphaear-logic-visualizer", "传导链路图生成框架已触发。")
+        if "alphaear-reporter" in route["selected"]:
+            contexts["alphaear-reporter"] = self._fetch_framework_context("alphaear-reporter", "专业研报生成框架已触发。")
+        news_context = contexts.get("alphaear-news", "")
+        stock_context = contexts.get("alphaear-stock", "")
+        snapshot = {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "deepear": self._fetch_deepear_signals(),
+            "skill_route": route,
+            "skill_contexts": contexts,
+            "deepear": contexts.get("alphaear-deepear-lite"),
             "alphaear_news": news_context,
             "alphaear_stock": stock_context,
+            "a_stock_market": contexts.get("a-stock-data"),
             "project_news": self._fetch_market_news(keywords),
-            "sentiment": self._infer_sentiment_context(question, news_context, stock_context),
+            "sentiment": contexts.get("alphaear-sentiment") if "alphaear-sentiment" in route["selected"] else self._infer_sentiment_context(question, news_context, stock_context),
             "skill_catalog": self._skill_catalog(),
             "agentic_frameworks": self._agentic_frameworks(),
         }
+        return snapshot
 
-    def ask(self, question: str, history: list[dict] | None = None, keywords: list[str] | None = None) -> dict:
+    def ask(self, question: str, history: list[dict] | None = None, keywords: list[str] | None = None, forced_skills: list[str] | None = None) -> dict:
         if not self.ready():
             return {
                 "ok": False,
@@ -157,10 +215,10 @@ class AIMarketAssistant:
                 "context": {},
             }
 
-        context = self.context_snapshot(question, keywords)
+        context = self.context_snapshot(question, history, keywords, forced_skills)
         messages = self._build_messages(question, history or [], context)
         try:
-            answer = self._ask_gemini(messages)
+            answer = self._ask_model(messages)
             return {"ok": True, "answer": answer or "模型没有返回有效内容。", "context": context}
         except Exception as exc:
             return {
@@ -169,23 +227,38 @@ class AIMarketAssistant:
                 "context": context,
             }
 
+    def ask_stream(self, question: str, history: list[dict] | None = None, keywords: list[str] | None = None, forced_skills: list[str] | None = None):
+        if not self.ready():
+            yield f"未检测到 {self.provider_label()} API token。请在环境变量或 Streamlit secrets 中配置后重试。"
+            return
+
+        context = self.context_snapshot(question, history, keywords, forced_skills)
+        messages = self._build_messages(question, history or [], context)
+        try:
+            yield from self._ask_model_stream(messages)
+        except Exception as exc:
+            yield f"\n\n{self._format_request_error(exc)}"
+
     def _build_messages(self, question: str, history: list[dict], context: dict) -> list[dict]:
         system_prompt = (
             "你是项目内的智能 AI 行情助手。当前系统时间是 2026 年 5 月。\n"
             "【核心原则】数据至上，客观分析，严控幻觉。\n"
             "【关键指令：强制执行】\n"
             "1. **禁止使用预训练知识**：你的模型内部可能存有 2024 年或更早的股票价格记忆（如亨通光电 15-18 元等），这些数据在 2026 年已完全失效。你必须**彻底忽略**任何关于股价、市值、财务数值的内部记忆，仅使用下方提供的“最新行情数据”进行回答。\n"
-            "2. **严禁捏造数值**：如果上下文显示“最新价：74.99”，你绝对不能说成“18.50”。如果数据缺失，请直接告知“暂无实时行情”，严禁编写任何数字。\n"
+            "2. **严禁捏造数值**：如果上下文显示“最新价：74.99”，你绝对不能说成“18.50”。如果数据缺失，请直接告知“暂无最新行情”，严禁编写任何数字。\n"
             "3. **锚定上下文**：所有分析必须基于提供的 Skill 上下文。如果上下文中的数据与你的常识不符，请以此上下文为准，因为这是 2026 年的实测数据。\n"
-            "4. **回答规范**：逻辑闭环，严禁截断。确保最后一个字是标点符号。回答字数控制在 500 字以内，结论先行。"
+            "4. **回答规范**：逻辑闭环，严禁截断。确保最后一个字是标点符号。回答字数控制在 500 字以内，结论先行。\n"
+            "5. **动态数据请求（主动询问）**：所有可用的数据都在下方的上下文中。如果缺少所需数据（例如未获取到某只股票的最新行情），**请直接在回答中询问用户是否允许你调用对应技能**。例如：'当前未获取到利通电子(SH603629)的最新行情，请问是否允许我调用【Alphaear Stock】技能来获取？' 如果用户回复'允许'或'可以'，系统会自动在下一轮补全数据并继续分析。严禁直接回复“无法判断”来终止对话。"
         )
         context_text = (
             f"上下文生成时间：{context.get('generated_at')}\n\n"
+            f"Skill 路由：{context.get('skill_route')}\n\n"
             f"已加载 Skill 清单：\n{context.get('skill_catalog')}\n\n"
             f"Agentic 分析框架：\n{context.get('agentic_frameworks')}\n\n"
             f"DeepEar Lite 信号：\n{context.get('deepear')}\n\n"
-            f"AlphaEar News 实时热点/预测市场：\n{context.get('alphaear_news')}\n\n"
+            f"AlphaEar News 最新热点/预测市场：\n{context.get('alphaear_news')}\n\n"
             f"AlphaEar Stock 个股行情/基本面：\n{context.get('alphaear_stock')}\n\n"
+            f"a-stock-data 市场信号卡片：\n{context.get('a_stock_market')}\n\n"
             f"项目公开新闻补充：\n{context.get('project_news')}\n\n"
             f"情绪初判：\n{context.get('sentiment')}\n"
         )
@@ -200,6 +273,80 @@ class AIMarketAssistant:
             *clean_history,
             {"role": "user", "content": question},
         ]
+
+    def _ask_model(self, messages: list[dict]) -> str:
+        if self.settings.provider == "deepseek":
+            return self._ask_openai_compatible(messages)
+        return self._ask_gemini(messages)
+
+    def _ask_model_stream(self, messages: list[dict], model_override: str | None = None):
+        if self.settings.provider == "deepseek":
+            yield from self._ask_openai_compatible_stream(messages, model_override=model_override)
+        else:
+            yield from self._ask_gemini_stream(messages, model_override=model_override)
+
+    def _ask_openai_compatible(self, messages: list[dict]) -> str:
+        response = requests.post(
+            f"{self.settings.base_url}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.settings.api_key}",
+            },
+            json={
+                "model": self.settings.model,
+                "messages": messages,
+                "temperature": self.settings.temperature,
+                "max_tokens": self.settings.max_tokens,
+            },
+            timeout=self.settings.timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return str(payload.get("choices", [{}])[0].get("message", {}).get("content", ""))
+
+    def _ask_openai_compatible_stream(self, messages: list[dict], model_override: str | None = None):
+        import json
+        import time
+
+        last_err = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    f"{self.settings.base_url}/chat/completions",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.settings.api_key}",
+                    },
+                    json={
+                        "model": model_override or self.settings.model,
+                        "messages": messages,
+                        "temperature": self.settings.temperature,
+                        "max_tokens": self.settings.max_tokens,
+                        "stream": True,
+                    },
+                    timeout=self.settings.timeout,
+                    stream=True,
+                )
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode("utf-8")
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            data = line[6:]
+                            try:
+                                payload = json.loads(data)
+                                chunk = payload.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if chunk:
+                                    yield chunk
+                            except Exception:
+                                pass
+                return
+            except Exception as exc:
+                last_err = exc
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise last_err
 
     def _ask_gemini(self, messages: list[dict]) -> str:
         import time
@@ -247,6 +394,66 @@ class AIMarketAssistant:
                     continue
                 raise last_err
 
+    def _ask_gemini_stream(self, messages: list[dict], model_override: str | None = None):
+        import json
+        import time
+        system_parts = [item["content"] for item in messages if item.get("role") == "system"]
+        conversation = []
+        for item in messages:
+            role = item.get("role")
+            if role == "system":
+                continue
+            conversation.append(
+                {
+                    "role": "model" if role == "assistant" else "user",
+                    "parts": [{"text": str(item.get("content", ""))}],
+                }
+            )
+
+        max_retries = 3
+        last_err = None
+        model_name = model_override or self.settings.model
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    f"{self.settings.base_url}/models/{model_name}:streamGenerateContent?alt=sse",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self.settings.api_key,
+                    },
+                    json={
+                        "system_instruction": {"parts": [{"text": "\n\n".join(system_parts)}]},
+                        "contents": conversation,
+                        "generationConfig": {
+                            "temperature": self.settings.temperature,
+                            "maxOutputTokens": self.settings.max_tokens,
+                        },
+                    },
+                    timeout=self.settings.timeout,
+                    stream=True
+                )
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if line:
+                        line = line.decode("utf-8")
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            try:
+                                payload = json.loads(data)
+                                parts = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                                chunk = "".join(str(part.get("text", "")) for part in parts)
+                                if chunk:
+                                    yield chunk
+                            except Exception:
+                                pass
+                return
+            except Exception as e:
+                last_err = e
+                if attempt < max_retries - 1:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise last_err
+
 
     def _rule_stock_one_liner(self, code: str, name: str, score: dict) -> str:
         short_score = float(score.get("short_score") or 0)
@@ -286,6 +493,8 @@ class AIMarketAssistant:
         valuation = ((fundamental_context or {}).get("valuation", {}) or {})
         metrics = valuation.get("metrics", {}) or {}
         ratings = valuation.get("ratings", {}) or {}
+        signal_cards = ((fundamental_context or {}).get("a_stock_signal", {}) or {}).get("cards", [])
+        signal_text = signal_cards_to_text(signal_cards[:6], "a-stock-data个股信号")
         business = str(profile.get("business") or "")[:260]
         fundamental_line = (
             f"行业/主业：{profile.get('industry_cn') or profile.get('industry') or '暂未获取'}；"
@@ -298,16 +507,18 @@ class AIMarketAssistant:
             f"价格与评分：最新价 {latest_price:.2f}，今日涨跌幅 {ret_1d:.2f}%，短线 {short_score:.1f}/100，中长线 {long_score:.1f}/100，系统评级：{rating}。\n"
             f"系统解释：{rating_explanation}\n"
             f"基本面：{fundamental_line}\n"
+            f"高价值信号卡片：\n{signal_text}\n"
             f"主营摘要：{business or '暂无'}\n"
             f"新闻摘要：{news_summary[:220]}；最高相关消息：{top_news.get('title', '暂无')}。\n"
             f"风险：{risk_flags or '暂无显著模型内风险'}。\n\n"
             "分析要求：\n"
             "1. 必须综合技术、基本面、新闻和风险，不要只看涨跌幅。\n"
+            "1.1 如存在 a-stock-data 信号卡片，必须引用其中最关键的一条，但不能捏造未给出的数值。\n"
             "2. 不要输出含糊的等待类结论，要给明确结果，例如“偏强观察”“基本面较强，短线暂不追入”“暂不优先”。\n"
             "3. 80字以内，结论完整，以句号结尾。"
         )
         try:
-            return self._ask_gemini([
+            return self._ask_model([
                 {"role": "system", "content": "你是A股投研助手，只基于用户提供的数据做一句话研究评级，不调用外部知识，不输出含糊结论。"},
                 {"role": "user", "content": prompt}
             ])
@@ -375,7 +586,7 @@ class AIMarketAssistant:
 
     def _fetch_market_news(self, keywords: list[str]) -> str:
         try:
-            payload = NewsFetcher(self.config).fetch_topics(keywords, label="AI行情实时热点", max_items=10)
+            payload = NewsFetcher(self.config).fetch_topics(keywords, label="AI行情最新热点", max_items=10)
             if not payload.get("available"):
                 return payload.get("summary") or "暂未获取到匹配热点新闻。"
             lines = [
@@ -391,6 +602,14 @@ class AIMarketAssistant:
             return "\n".join(lines)
         except Exception as exc:
             return f"热点新闻获取失败：{exc}"
+
+    def _fetch_a_stock_market_context(self) -> str:
+        try:
+            bundle = AStockDataProvider(config=self.config).market_signal_bundle()
+            cards = build_market_signal_cards(bundle).get("cards", [])
+            return signal_cards_to_text(cards, "a-stock-data市场信号")
+        except Exception as exc:
+            return f"a-stock-data 市场信号获取失败：{exc}"
 
     def _load_skill_module(self, skill_name: str, module_name: str):
         root = self.settings.skill_dir / skill_name
@@ -448,12 +667,34 @@ class AIMarketAssistant:
             if ticker not in DEFAULT_MARKET_KEYWORDS:
                 results.append({"code": ticker, "name": ticker})
         try:
-            directory = build_stock_directory()
+            directory = build_stock_directory(include_remote=True)
             for item in resolve_stock_query(question, directory)[:3]:
                 code = str(item.get("code") or "").strip()
                 name = str(item.get("name") or "").strip()
                 if code:
                     results.append({"code": code, "name": name or code})
+            
+            if not results:
+                q_clean = str(question or "").upper()
+                # Scan directory for any stock name >= 2 chars that appears in the question
+                for _, row in directory.iterrows():
+                    name = str(row.get("name", "")).strip()
+                    if name and len(name) >= 2 and name.upper() in q_clean:
+                        code = str(row.get("code", "")).strip()
+                        if code:
+                            results.append({"code": code, "name": name})
+                
+                # If local directory is missing the stock (cache failure), try substring remote suggest
+                if not results and len(q_clean) >= 3:
+                    from src.stock_lookup import _suggest_remote
+                    for i in range(len(q_clean) - 2):
+                        chunk = q_clean[i:i+4] if i+4 <= len(q_clean) else q_clean[i:i+3]
+                        try:
+                            for item in _suggest_remote(chunk, limit=2):
+                                if item.get("code") and item.get("name") and item["name"].upper() in q_clean:
+                                    results.append({"code": item["code"], "name": item["name"]})
+                        except Exception:
+                            pass
         except Exception:
             pass
         deduped = {}
@@ -480,7 +721,7 @@ class AIMarketAssistant:
                 # Use nominal prices for the analysis basis
                 score, hist, _ = StockAnalyzer(nominal_config).analyze(code, name=name, start=start_date)
                 if hist is None or hist.empty:
-                    reports.append(f"## {name}（{code}）\n【❌数据缺失】未获取到该股的实时或历史行情数据。")
+                    reports.append(f"## {name}（{code}）\n【❌数据缺失】未获取到该股的最新或历史行情数据。")
                     continue
                 
                 latest = hist.iloc[-1]
@@ -518,6 +759,14 @@ class AIMarketAssistant:
                 tail_str = tail.to_string(index=False)
 
                 integrity_warning = "【⚠️数据警告：行情已过期超过3天】" if is_stale else ""
+                a_stock_text = "暂无"
+                try:
+                    latest_date_for_signal = latest_date if latest_date else None
+                    bundle = AStockDataProvider(config=self.config).stock_signal_bundle(code, latest_date_for_signal)
+                    cards = build_stock_signal_cards(bundle, code, {}, {}).get("cards", [])
+                    a_stock_text = signal_cards_to_text(cards[:8], "a-stock-data个股信号")
+                except Exception as exc:
+                    a_stock_text = f"a-stock-data 个股信号获取失败：{exc}"
                 
                 reports.append(
                     "\n".join(
@@ -525,7 +774,7 @@ class AIMarketAssistant:
                             f"## {name}（{code}）",
                             f"【✅2026年实测行情数据 - 绝对真实 - 严禁忽略】",
                             f"数据状态：{'最新' if not is_stale else '失效/过期'} {integrity_warning}",
-                            f"- 数据来源：项目实时行情接口 (akshare/efinance/yfinance)",
+                            f"- 数据来源：项目最新行情接口 (akshare/efinance/yfinance)",
                             f"- 交易日期：{latest_date}",
                             f"- 最新价(不复权)：{close:.2f} (此为2026年5月真实价格，忽略你记忆中的旧价格)",
                             f"- 当日涨跌：{ret_1d:+.2f}%",
@@ -533,6 +782,7 @@ class AIMarketAssistant:
                             f"- 换手率：{turnover:.2f}%",
                             f"- 区间涨跌(90d)：{change:+.2f}%",
                             f"- 基本面：{skill_fundamentals}",
+                            f"- a-stock-data 信号卡片：\n{a_stock_text}",
                             f"- 技术分析简报：{score.get('summary', '')}",
                             "最近行情流水数据（请务必基于此数据分析，禁止编造）：",
                             tail_str,
@@ -558,7 +808,7 @@ class AIMarketAssistant:
             ret_1d = float(score.get("latest", {}).get("ret_1d", 0) or 0) * 100
             return "\n".join(
                 [
-                    "- 项目实时行情兜底：已获取价格/技术评分。",
+                    "- 项目最新行情兜底：已获取价格/技术评分。",
                     f"- 最新交易日：{latest_date}",
                     f"- 最新收盘：{close:.2f}",
                     f"- 区间涨跌：{change:+.2f}%",
@@ -570,6 +820,119 @@ class AIMarketAssistant:
             )
         except Exception as exc:
             return f"- 项目行情兜底失败：{exc}"
+
+    def _available_router_skills(self) -> list[str]:
+        return [
+            "alphaear-news",
+            "alphaear-stock",
+            "alphaear-sentiment",
+            "alphaear-predictor",
+            "alphaear-signal-tracker",
+            "alphaear-logic-visualizer",
+            "alphaear-reporter",
+            "alphaear-search",
+            "alphaear-deepear-lite",
+            "a-stock-data",
+        ]
+
+    def _resolve_skill_route(self, question: str, forced_skills: list[str] | None = None) -> dict:
+        available = self._available_router_skills()
+        forced = [str(item).strip() for item in (forced_skills or [])]
+        selected = set(item for item in forced if item in available)
+        text = question or ""
+        if not selected:
+            selected.update(["alphaear-news", "a-stock-data"])
+            if any(word in text for word in ["主线", "热点", "隔夜", "美股", "全球", "海外", "风险偏好"]):
+                selected.add("alphaear-deepear-lite")
+            if self._extract_stock_queries(text) or re.search(r"\b\d{5,6}\b", text):
+                selected.add("alphaear-stock")
+            if any(word in text for word in ["情绪", "热度", "舆情", "利好", "利空", "恐慌", "乐观", "悲观"]):
+                selected.add("alphaear-sentiment")
+            if any(word in text for word in ["预测", "未来", "明天", "后市", "目标价", "走势", "forecast", "predict"]):
+                selected.add("alphaear-predictor")
+            if any(word in text for word in ["搜索", "查", "新闻", "公告", "政策", "催化", "来源", "证据", "search"]):
+                selected.add("alphaear-search")
+            if any(word in text for word in ["跟踪", "信号", "增强", "削弱", "验证", "证伪", "tracker"]):
+                selected.add("alphaear-signal-tracker")
+            if any(word in text for word in ["链路", "传导", "逻辑图", "画图", "visual"]):
+                selected.add("alphaear-logic-visualizer")
+            if any(word in text for word in ["研报", "报告", "report", "总结成文"]):
+                selected.add("alphaear-reporter")
+        ordered = [item for item in available if item in selected]
+        return {
+            "mode": "manual" if forced else "auto",
+            "selected": ordered,
+            "available": available,
+            "reason": "手动指定技能" if forced else "按问题语义自动选择技能",
+        }
+
+    def _fetch_search_context(self, question: str) -> str:
+        query = (question or "").strip()
+        if not query:
+            return "alphaear-search 未触发：问题为空。"
+        try:
+            db_mod = self._load_skill_module("alphaear-search", "database_manager")
+            search_mod = self._load_skill_module("alphaear-search", "search_tools")
+            db = db_mod.DatabaseManager("data/alphaear_ai_market.db")
+            tools = search_mod.SearchTools(db)
+            result = tools.search(query, max_results=5)
+            db.close()
+            return result
+        except Exception as exc:
+            return f"alphaear-search 执行失败：{exc}\n\n项目新闻补充：\n{self._fetch_market_news(DEFAULT_MARKET_KEYWORDS)}"
+
+    def _fetch_sentiment_skill_context(self, question: str, contexts: dict[str, str]) -> str:
+        base = "\n".join([question or "", contexts.get("alphaear-news", ""), contexts.get("alphaear-stock", "")])[:3500]
+        try:
+            db_mod = self._load_skill_module("alphaear-sentiment", "database_manager")
+            sent_mod = self._load_skill_module("alphaear-sentiment", "sentiment_tools")
+            db = db_mod.DatabaseManager("data/alphaear_ai_market.db")
+            tools = sent_mod.SentimentTools(db, mode="auto")
+            result = tools.analyze_sentiment(base)
+            db.close()
+            return f"alphaear-sentiment 工具输出：{result}"
+        except Exception as exc:
+            return f"alphaear-sentiment 工具不可用，使用轻量规则：{exc}\n{self._infer_sentiment_context(question, contexts.get('alphaear-news', ''), contexts.get('alphaear-stock', ''))}"
+
+    def _fetch_predictor_context(self, question: str, contexts: dict[str, str]) -> str:
+        stocks = self._extract_stock_queries(question)
+        if not stocks:
+            return "alphaear-predictor 需要明确个股代码或名称；当前问题未匹配到可预测标的。"
+        lines = []
+        for stock in stocks[:2]:
+            code = stock["code"]
+            try:
+                score, hist, _ = StockAnalyzer(self.config).analyze(code, name=stock.get("name"), start=(datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d"))
+                if hist is None or hist.empty:
+                    lines.append(f"{code}: 无可用行情，无法生成基础预测。")
+                    continue
+                latest = hist.iloc[-1]
+                ma20 = latest.get("ma20")
+                close = latest.get("close")
+                ret_20 = (float(close) / float(hist.iloc[-20].get("close")) - 1) * 100 if len(hist) >= 20 and float(hist.iloc[-20].get("close") or 0) else None
+                direction = "偏上行" if score.get("short_score", 0) >= 70 and score.get("long_score", 0) >= 65 else "震荡观察" if score.get("short_score", 0) >= 55 else "偏弱"
+                lines.append(
+                    f"{stock.get('name', code)}({code}) predictor 基础判断：{direction}；最新价 {float(close):.2f}，MA20 {float(ma20):.2f}，20日涨跌 {ret_20:+.2f}%；短线/中长线 {score.get('short_score')}/{score.get('long_score')}。"
+                )
+            except Exception as exc:
+                lines.append(f"{code}: alphaear-predictor 基础预测失败：{exc}")
+        return "\n".join(lines)
+
+    def _fetch_signal_tracker_context(self, question: str) -> str:
+        stocks = self._extract_stock_queries(question)
+        target = "、".join(f"{item.get('name', item['code'])}({item['code']})" for item in stocks) if stocks else "市场主线"
+        return (
+            f"alphaear-signal-tracker 跟踪框架已触发：目标={target}。"
+            "请在回答中按“原始信号、增强证据、削弱证据、证伪条件、下一步观察点”组织结论。"
+        )
+
+    def _fetch_framework_context(self, skill_name: str, lead: str) -> str:
+        path = self.settings.skill_dir / skill_name / "SKILL.md"
+        if not path.exists():
+            return f"{skill_name} 未安装或路径不可用。"
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        body = re.sub(r"---.*?---", "", text, flags=re.S).strip()
+        return f"{lead}\n{body[:1400]}"
 
     def _infer_sentiment_context(self, question: str, news_context: str, stock_context: str) -> str:
         text = f"{question}\n{news_context[:3000]}\n{stock_context[:2000]}"
@@ -588,7 +951,7 @@ class AIMarketAssistant:
             score = 0.0
         return (
             f"alphaear-sentiment 框架初判：{label}，score={score:.2f}。"
-            "该分数基于新闻/行情关键词快速估计，最终情绪请由 Gemini 结合全文重新判断。"
+            "该分数基于新闻/行情关键词快速估计，最终情绪请由模型结合全文重新判断。"
         )
 
     def _skill_catalog(self) -> str:

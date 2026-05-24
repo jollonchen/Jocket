@@ -201,11 +201,20 @@ class MarketSentimentAnalyzer:
                 day_payload = {"metrics": self._empty_day_metrics(day), "limit_up": pd.DataFrame()}
             history_rows.append(day_payload["metrics"])
         history = pd.DataFrame(history_rows).drop_duplicates("date").sort_values("date")
+        history = self._add_derived_scores_to_history(history)
 
         indices = self._fetch_index_snapshot(warnings)
         breadth = self._fetch_market_breadth(warnings, indices)
         boards = self._build_board_ladder(latest, warnings)
         metrics = self._derive_scores(latest["metrics"], history, breadth, boards)
+
+        # Update the last row of history with fully derived metrics for the current day
+        if not history.empty:
+            last_idx = history.index[-1]
+            for col, val in metrics.items():
+                if col in history.columns:
+                    history.loc[last_idx, col] = val
+
         metrics["explanations"] = self._build_metric_explanations(metrics, latest["metrics"], breadth)
         heatmap = self._build_heatmap(history, latest, boards)
         month_stats = self._build_month_stats(history)
@@ -756,6 +765,63 @@ class MarketSentimentAnalyzer:
             "data_quality": self._data_quality(breadth, boards, history),
             "top_board": boards.iloc[0]["board_name"] if boards is not None and not boards.empty else latest.get("top_industry"),
         }
+
+    def _add_derived_scores_to_history(self, history: pd.DataFrame) -> pd.DataFrame:
+        if history is None or history.empty:
+            return history
+
+        emotion_scores = []
+        short_emotions = []
+        big_market_factors = []
+        loss_effects = []
+        divergences = []
+        temperatures = []
+
+        for idx, row in history.iterrows():
+            limit_count = _num(row.get("limit_up_count"), 0) or 0
+            broken_count = _num(row.get("broken_count"), 0) or 0
+            down_count = _num(row.get("limit_down_count"), 0) or 0
+            strong_count = _num(row.get("strong_count"), 0) or 0
+            broken_rate = _num(row.get("broken_rate"), 0) or 0
+            max_streak = _num(row.get("max_streak"), 0) or 0
+            hot_boards = _num(row.get("hot_industry_count"), 0) or 0
+
+            # Historical rows don't have historical breadth, so we use neutral breadth_score = 50, up_ratio = None
+            breadth_score = 50
+            up_ratio = None
+
+            raw_score = (
+                min(30, limit_count / 3)
+                + min(20, max_streak * 4)
+                + min(15, strong_count / 22)
+                + min(10, hot_boards * 2)
+                + breadth_score * 0.18
+                - min(18, broken_rate * 58)
+                - min(16, down_count * 1.7)
+            )
+            emotion = round(_clip(raw_score), 1)
+            short_emotion = round(_clip(emotion + max_streak * 1.2 - broken_rate * 12), 1)
+            big_market = round(_clip(breadth_score), 1)
+            loss_effect = round(_clip(down_count * 6.5 + broken_rate * 62 + (1 - (up_ratio if up_ratio is not None else 0.5)) * 18 - limit_count * 0.06), 1)
+            divergence = round(_clip(abs(short_emotion - big_market) * 0.45 + broken_rate * 38 + down_count * 1.2), 1)
+            temperature = round(_clip(emotion * 0.75 + min(25, limit_count / 5) + min(10, max_streak * 1.4) - down_count * 0.8), 1)
+
+            emotion_scores.append(emotion)
+            short_emotions.append(short_emotion)
+            big_market_factors.append(big_market)
+            loss_effects.append(loss_effect)
+            divergences.append(divergence)
+            temperatures.append(temperature)
+
+        history = history.copy()
+        history["emotion_score"] = emotion_scores
+        history["short_emotion"] = short_emotions
+        history["big_market_factor"] = big_market_factors
+        history["loss_effect"] = loss_effects
+        history["divergence"] = divergences
+        history["temperature"] = temperatures
+        return history
+
 
     @staticmethod
     def _period_label(score: float, broken_rate: float, down_count: float, max_streak: float) -> str:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import pandas as pd
 import yfinance as yf
 
 from .cache_utils import FileCache, safe_fetch
+from .providers.a_stock_data_provider import AStockDataProvider
 from .utils import display_code, ensure_dirs, normalize_a_share_code
 from .sector_fetcher import SectorFetcher
 
@@ -31,6 +33,20 @@ def _safe_value(value: Any):
         except Exception:
             pass
     return value
+
+
+def _as_float(value: Any):
+    try:
+        value = _safe_value(value)
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip().replace(",", "").replace("%", "")
+            if value in {"", "-", "--", "None", "nan"}:
+                return None
+        return float(value)
+    except Exception:
+        return None
 
 
 def _clean_text(value: Any, limit: int | None = None) -> str:
@@ -118,11 +134,21 @@ class FundamentalFetcher:
             cached.setdefault("profile", {})["latest_price"] = latest_price or cached.get("profile", {}).get("latest_price")
             cached.setdefault("profile", {})["data_source"] = str(cached.get("profile", {}).get("data_source", "")) + " + cache"
             return cached
-        y = self._fetch_yfinance(yahoo_code, latest_price)
-        ak_payload = self._fetch_akshare(ticker)
-        cn_profile = self._fetch_chinese_profile(ticker)
-        sector_payload = SectorFetcher(self.config).fetch(ticker)
-        payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, cn_profile, sector_payload, latest_price)
+            
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_y = executor.submit(self._fetch_yfinance, yahoo_code, latest_price)
+            future_ak = executor.submit(self._fetch_akshare, ticker)
+            future_a = executor.submit(self._fetch_a_stock_data, ticker)
+            future_cn = executor.submit(self._fetch_chinese_profile, ticker)
+            future_sec = executor.submit(SectorFetcher(self.config).fetch, ticker)
+            
+            y = future_y.result()
+            ak_payload = future_ak.result()
+            a_stock_payload = future_a.result()
+            cn_profile = future_cn.result()
+            sector_payload = future_sec.result()
+            
+        payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, cn_profile, sector_payload, latest_price, a_stock_payload)
         self.cache.set_pickle("fundamentals", cache_key, payload)
         return payload
 
@@ -173,21 +199,55 @@ class FundamentalFetcher:
             out["errors"].append({"source": "akshare", "interface": "stock_individual_info_em", "error_type": exc.__class__.__name__, "message": str(exc), "fallback_used": "yfinance"})
         return out
 
+    def _fetch_a_stock_data(self, ticker: str) -> dict:
+        provider = AStockDataProvider(self.cache, self.config)
+        out = {"quote": {}, "stock_info": {}, "reports": [], "eps_forecast": pd.DataFrame(), "errors": [], "sources": []}
+        tasks = {
+            "quote": lambda: provider.tencent_quote([ticker]),
+            "stock_info": lambda: provider.eastmoney_stock_info(ticker),
+            "reports": lambda: provider.eastmoney_reports(ticker, max_pages=2),
+            "eps_forecast": lambda: provider.ths_eps_forecast(ticker),
+        }
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(func): key for key, func in tasks.items()}
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    result = future.result()
+                    out[key] = result.data
+                    out["errors"].extend(result.warnings or [])
+                    if result.data is not None and not (hasattr(result.data, "empty") and result.data.empty):
+                        out["sources"].append(f"a-stock-data:{key}")
+                except Exception as exc:
+                    out["errors"].append({"source": "a-stock-data", "interface": key, "error_type": exc.__class__.__name__, "message": str(exc)})
+        return out
+
     def _fetch_chinese_profile(self, ticker: str) -> dict:
         out = {"info": {}, "errors": [], "sources": []}
         if ak is None:
             out["errors"].append({"source": "akshare", "interface": "chinese_profile", "error_type": "ImportError", "message": "AkShare未安装", "fallback_used": "yfinance"})
             return out
 
-        zyjs, errors = safe_fetch("akshare", "stock_zyjs_ths", lambda: ak.stock_zyjs_ths(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache)
-        out["errors"].extend(errors)
+        tasks = {
+            "zyjs": lambda: safe_fetch("akshare", "stock_zyjs_ths", lambda: ak.stock_zyjs_ths(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache),
+            "cninfo": lambda: safe_fetch("akshare", "stock_profile_cninfo", lambda: ak.stock_profile_cninfo(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache),
+        }
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {executor.submit(func): key for key, func in tasks.items()}
+            results = {}
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+
+        zyjs, e_zyjs = results["zyjs"]
+        cninfo, e_cninfo = results["cninfo"]
+
+        out["errors"].extend(e_zyjs + e_cninfo)
+        
         zyjs_info = self._parse_zyjs(zyjs)
         if zyjs_info:
             out["info"].update(zyjs_info)
             out["sources"].append("同花顺主营介绍")
 
-        cninfo, errors = safe_fetch("akshare", "stock_profile_cninfo", lambda: ak.stock_profile_cninfo(symbol=ticker), retries=1, min_interval=1.2, cache=self.cache)
-        out["errors"].extend(errors)
         cninfo_info = self._parse_cninfo_profile(cninfo)
         if cninfo_info:
             for key, value in cninfo_info.items():
@@ -316,39 +376,46 @@ class FundamentalFetcher:
             return "美股", "纽交所/纳斯达克"
         return "其它", "海外/全球市场"
 
-    def _merge_payload(self, ticker: str, yahoo_code: str, y: dict, ak_payload: dict, cn_profile: dict, sector_payload: dict, latest_price: float | None) -> dict:
+    def _merge_payload(self, ticker: str, yahoo_code: str, y: dict, ak_payload: dict, cn_profile: dict, sector_payload: dict, latest_price: float | None, a_stock_payload: dict | None = None) -> dict:
         info = y.get("info", {}) or {}
         ak_info = ak_payload.get("info", {}) or {}
         cn_info = cn_profile.get("info", {}) or {}
+        a_stock_payload = a_stock_payload or {}
+        quote_map = a_stock_payload.get("quote") or {}
+        a_quote = quote_map.get(ticker) if isinstance(quote_map, dict) else {}
+        if not a_quote and isinstance(quote_map, dict) and quote_map:
+            a_quote = next(iter(quote_map.values()), {})
+        a_info = a_stock_payload.get("stock_info") or {}
         sector_summary = sector_payload.get("summary", {}) or {}
         primary_boards = sector_summary.get("primary_boards", []) or []
         sector_source = sector_summary.get("source") or "sector_fallback"
         data_sources = ["yfinance"]
+        data_sources.extend(a_stock_payload.get("sources", []))
         if ak_info:
             data_sources.append("akshare")
         data_sources.extend(cn_profile.get("sources", []))
         if primary_boards:
             data_sources.append(str(sector_source))
         exchange, market = self._market_name(ticker, yahoo_code)
-        market_cap = info.get("marketCap")
+        market_cap = info.get("marketCap") or ((_as_float(a_quote.get("market_cap_yi")) or 0) * 100000000 if a_quote.get("market_cap_yi") else None)
         shares = info.get("sharesOutstanding")
         float_shares = info.get("floatShares")
-        price = latest_price or info.get("currentPrice") or info.get("regularMarketPrice")
+        price = latest_price or a_quote.get("price") or info.get("currentPrice") or info.get("regularMarketPrice")
         profile = {
             "code": ticker,
             "yahoo_code": yahoo_code,
-            "name": ak_info.get("股票简称") or cn_info.get("name") or info.get("shortName") or info.get("longName") or ticker,
+            "name": a_quote.get("name") or ak_info.get("股票简称") or cn_info.get("name") or info.get("shortName") or info.get("longName") or ticker,
             "exchange": exchange,
             "market": market,
-            "industry": ak_info.get("所属行业") or cn_info.get("industry") or info.get("industry") or "暂未获取",
+            "industry": ak_info.get("所属行业") or cn_info.get("industry") or a_info.get("f127") or info.get("industry") or "暂未获取",
             "sector": info.get("sector") or "暂未获取",
-            "industry_cn": ak_info.get("所属行业") or cn_info.get("industry") or (primary_boards[0] if primary_boards else "暂未获取"),
+            "industry_cn": ak_info.get("所属行业") or cn_info.get("industry") or a_info.get("f127") or (primary_boards[0] if primary_boards else "暂未获取"),
             "belong_boards": primary_boards or ([ak_info.get("所属行业")] if ak_info.get("所属行业") else []),
             "business": cn_info.get("business") or ak_info.get("主营业务") or info.get("longBusinessSummary") or "当前数据源暂不支持",
             "business_source": " + ".join(cn_profile.get("sources", [])) or ("yfinance" if info.get("longBusinessSummary") else ""),
             "list_date": ak_info.get("上市时间") or ak_info.get("上市日期") or cn_info.get("list_date") or "暂未获取",
             "market_cap": market_cap,
-            "float_market_cap": price * float_shares if price and float_shares else None,
+            "float_market_cap": ((_as_float(a_quote.get("float_market_cap_yi")) or 0) * 100000000 if a_quote.get("float_market_cap_yi") else (price * float_shares if price and float_shares else None)),
             "shares_outstanding": shares,
             "float_shares": float_shares,
             "latest_price": price,
@@ -358,9 +425,9 @@ class FundamentalFetcher:
         }
         valuation_source = {
             "marketCap": market_cap,
-            "trailingPE": info.get("trailingPE"),
+            "trailingPE": a_quote.get("pe_ttm") or info.get("trailingPE"),
             "forwardPE": info.get("forwardPE"),
-            "priceToBook": info.get("priceToBook"),
+            "priceToBook": a_quote.get("pb") or info.get("priceToBook"),
             "priceToSalesTrailing12Months": info.get("priceToSalesTrailing12Months"),
             "dividendYield": info.get("dividendYield"),
             "returnOnEquity": info.get("returnOnEquity"),
@@ -369,13 +436,18 @@ class FundamentalFetcher:
             "totalRevenue": info.get("totalRevenue"),
             "currentPrice": price,
             "sharesOutstanding": shares,
+            "pe_static": a_quote.get("pe_static"),
+            "turnover_pct": a_quote.get("turnover_pct"),
+            "limit_up": a_quote.get("limit_up"),
+            "limit_down": a_quote.get("limit_down"),
         }
-        errors = list(y.get("errors", [])) + list(ak_payload.get("errors", [])) + list(cn_profile.get("errors", [])) + list(sector_payload.get("errors", []))
+        errors = list(y.get("errors", [])) + list(ak_payload.get("errors", [])) + list(a_stock_payload.get("errors", [])) + list(cn_profile.get("errors", [])) + list(sector_payload.get("errors", []))
         return {
             "profile": profile,
             "annual": y.get("annual", pd.DataFrame()),
             "quarterly": y.get("quarterly", pd.DataFrame()),
             "valuation_source": valuation_source,
+            "a_stock_data": a_stock_payload,
             "sector": sector_payload,
             "errors": errors,
         }

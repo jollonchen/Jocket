@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -38,6 +39,8 @@ class DataSourceError:
 
 
 class FileCache:
+    _lock = threading.Lock()
+
     def __init__(self, base_dir: str | Path = "data/cache"):
         ensure_dirs()
         self.base_dir = Path(base_dir)
@@ -53,24 +56,49 @@ class FileCache:
         return path.exists() and (time.time() - path.stat().st_mtime) <= ttl_seconds
 
     def get_pickle(self, namespace: str, key: str, ttl_seconds: int):
-        path = self.path(namespace, key, "pkl")
-        if not self.fresh(path, ttl_seconds):
-            return None
-        try:
-            with path.open("rb") as f:
-                value = pickle.load(f)
-            if isinstance(value, pd.DataFrame):
-                value.attrs["from_cache"] = True
-            elif isinstance(value, dict):
-                value["_from_cache"] = True
-            return value
-        except Exception:
-            return None
+        with self._lock:
+            path = self.path(namespace, key, "pkl")
+            if not self.fresh(path, ttl_seconds):
+                return None
+            try:
+                with path.open("rb") as f:
+                    value = pickle.load(f)
+                if isinstance(value, pd.DataFrame):
+                    value.attrs["from_cache"] = True
+                elif isinstance(value, dict):
+                    value["_from_cache"] = True
+                return value
+            except Exception:
+                return None
 
     def set_pickle(self, namespace: str, key: str, value: Any) -> None:
-        path = self.path(namespace, key, "pkl")
-        with path.open("wb") as f:
-            pickle.dump(value, f)
+        with self._lock:
+            path = self.path(namespace, key, "pkl")
+            with path.open("wb") as f:
+                pickle.dump(value, f)
+
+    def clear_cache(self) -> dict[str, int]:
+        with self._lock:
+            stats = {}
+            for subdir in ["price", "fundamentals", "profile", "industry", "moneyflow", "news", "logs"]:
+                path = self.base_dir / subdir
+                if path.exists():
+                    count = 0
+                    for item in path.glob("*"):
+                        if item.is_file():
+                            try:
+                                item.unlink()
+                                count += 1
+                            except Exception:
+                                pass
+                    stats[subdir] = count
+            # Also clear Streamlit's built-in caches if needed
+            try:
+                import streamlit as st
+                st.cache_data.clear()
+            except Exception:
+                pass
+            return stats
 
     def log_error(self, error: DataSourceError) -> None:
         path = self.base_dir / "logs" / f"errors_{datetime.now().strftime('%Y%m%d')}.jsonl"

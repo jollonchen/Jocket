@@ -81,20 +81,48 @@ def load_css(path: str = "assets/styles.css") -> None:
                 orb.id = "global-cursor-orb";
                 doc.body.appendChild(orb);
               }
-              const selector = ".hero-meta-item,.metric-card,.insight-card,.rank-card,.chart-card,.section-card,.profile-card";
+              const selector = [
+                ".hero-meta-item",
+                ".metric-card",
+                ".insight-card",
+                ".rank-card",
+                ".chart-card",
+                ".section-card",
+                ".profile-card",
+                ".sentiment-metric-card",
+                ".sentiment-plan-grid > div",
+                ".sentiment-time-row",
+                ".sentiment-index-card",
+                ".sentiment-board-card",
+                ".sentiment-method-card",
+                ".sentiment-alert",
+                ".profile-kv",
+                ".rating-row",
+                ".rating-overall",
+                ".mini-metric",
+                ".ai-message-bubble"
+              ].join(",");
               let active = null;
               const enhanceNav = () => {
-                const navButtons = [...doc.querySelectorAll("button")].filter((button) => {
-                  const text = (button.innerText || button.textContent || "").trim();
-                  return ["AI行情", "个股分析", "市场情绪"].includes(text);
+                const navWrap = doc.querySelector(".st-key-analysis_mode_top");
+                const navScope = navWrap || doc;
+                const navLabels = ["AI洞察", "个股行情", "市场情绪", "投研分析"];
+                const rawItems = [
+                  ...navScope.querySelectorAll('[data-testid="stSegmentedControlOption"], button, label, [role="radio"], [role="button"]')
+                ];
+                const seen = new Set();
+                const navButtons = rawItems.filter((item) => {
+                  const text = (item.innerText || item.textContent || "").trim();
+                  if (!navLabels.includes(text) || seen.has(text)) return false;
+                  seen.add(text);
+                  return true;
                 });
-                if (navButtons.length < 3) return;
+                if (navButtons.length < 4) return;
                 const nav = navButtons[0].parentElement;
                 if (!nav) return;
                 nav.dataset.jocketNavEnhanced = "true";
 
                 // Force nav wrapper to be compact (fit-content) regardless of Streamlit flex layout
-                const navWrap = doc.querySelector(".st-key-analysis_mode_top");
                 if (navWrap) {
                   const vw = window.parent.innerWidth || doc.documentElement.clientWidth || 768;
                   const isMobile = vw <= 768;
@@ -106,7 +134,7 @@ def load_css(path: str = "assets/styles.css") -> None:
                     navWrap.style.setProperty("align-self", "stretch", "important");
                     navWrap.style.setProperty("display", "block", "important");
                   } else {
-                    // Desktop: compact width only as wide as the 3 buttons
+                    // Desktop: compact width only as wide as the 4 buttons
                     navWrap.style.setProperty("width", "fit-content", "important");
                     navWrap.style.setProperty("max-width", "100%", "important");
                     navWrap.style.setProperty("flex", "0 0 auto", "important");
@@ -126,12 +154,507 @@ def load_css(path: str = "assets/styles.css") -> None:
                     item.getAttribute("aria-pressed") === "true" ||
                     item.getAttribute("data-selected") === "true" ||
                     !!item.querySelector("input:checked");
-                  item.dataset.jocketNavActive = selected ? "true" : "false";
+                  const targets = new Set([
+                    item,
+                    item.closest('[data-testid="stSegmentedControlOption"]'),
+                    item.closest("button"),
+                    item.closest("label"),
+                    item.closest('[role="radio"]'),
+                    item.closest('[role="button"]'),
+                  ].filter(Boolean));
+                  targets.forEach((target) => {
+                    target.dataset.jocketNavActive = selected ? "true" : "false";
+                    target.classList.toggle("jocket-nav-active", selected);
+                  });
                 });
               };
+              const enhanceProvider = () => {
+                const pMarker = doc.getElementById("jocket-ai-provider");
+                const pCurrent = pMarker ? pMarker.getAttribute("data-provider") : "";
+                const pButtons = [...doc.querySelectorAll(".st-key-ai_market_provider_label button")];
+                pButtons.forEach((button) => {
+                  const text = (button.innerText || button.textContent || "").trim();
+                  const selected =
+                    text === pCurrent ||
+                    button.getAttribute("aria-checked") === "true" ||
+                    button.getAttribute("aria-selected") === "true" ||
+                    button.getAttribute("aria-pressed") === "true" ||
+                    button.getAttribute("data-selected") === "true" ||
+                    !!button.querySelector("input:checked");
+                  button.dataset.jocketProviderActive = selected ? "true" : "false";
+                });
+                
+                const wMarker = doc.getElementById("jocket-sentiment-window");
+                const wCurrent = wMarker ? wMarker.getAttribute("data-window") : "";
+                const windowLabels = ["14日", "30日", "60日"];
+                let wButtons = [...doc.querySelectorAll(".st-key-sentiment_window_segment button")];
+                if (wButtons.length < 3) {
+                  const seenWindowLabels = new Set();
+                  wButtons = [...doc.querySelectorAll("button")].filter((button) => {
+                    const text = (button.innerText || button.textContent || "").trim();
+                    if (!windowLabels.includes(text) || seenWindowLabels.has(text)) return false;
+                    seenWindowLabels.add(text);
+                    return true;
+                  });
+                }
+                const wWrap = doc.querySelector(".st-key-sentiment_window_segment");
+                const rootsFor = (ancestor) => {
+                  if (!ancestor) return [];
+                  return wButtons.map((button) => {
+                    let node = button;
+                    while (node.parentElement && node.parentElement !== ancestor) {
+                      node = node.parentElement;
+                    }
+                    return node;
+                  });
+                };
+                let wTrack = null;
+                let probe = wButtons.length ? wButtons[0].parentElement : null;
+                while (probe) {
+                  if (wButtons.every((button) => probe.contains(button))) {
+                    const roots = [...new Set(rootsFor(probe))];
+                    if (roots.length === 3) {
+                      wTrack = probe;
+                      break;
+                    }
+                  }
+                  if (wWrap && probe === wWrap) break;
+                  probe = probe.parentElement;
+                }
+                if (!wTrack) {
+                  wTrack = wButtons.length ? wButtons[0].parentElement : null;
+                  while (wTrack && !wButtons.every((button) => wTrack.contains(button))) {
+                    wTrack = wTrack.parentElement;
+                  }
+                }
+                const wShell = wWrap || wTrack;
+                if (wShell) {
+                  wShell.dataset.jocketSentimentWindowEnhanced = "true";
+                  wShell.style.setProperty("display", "block", "important");
+                  wShell.style.setProperty("max-width", "100%", "important");
+                  wShell.style.setProperty("margin", "0 auto 14px", "important");
+                  wShell.style.setProperty("border", "1px solid rgba(55, 232, 255, 0.26)", "important");
+                  wShell.style.setProperty("background", "rgba(255, 255, 255, 0.055)", "important");
+                  wShell.style.setProperty("box-shadow", "inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 14px 34px rgba(0, 0, 0, 0.18)", "important");
+                  wShell.style.setProperty("width", "100%", "important");
+                  wShell.style.setProperty("height", "64px", "important");
+                  wShell.style.setProperty("min-height", "64px", "important");
+                  wShell.style.setProperty("padding", "6px", "important");
+                  wShell.style.setProperty("box-sizing", "border-box", "important");
+                  wShell.style.setProperty("border-radius", "999px", "important");
+                  wShell.style.setProperty("overflow", "visible", "important");
+                }
+                let ancestor = wTrack;
+                let guard = 0;
+                while (ancestor && ancestor !== wShell && guard < 8) {
+                  ancestor.style.setProperty("width", "100%", "important");
+                  ancestor.style.setProperty("max-width", "100%", "important");
+                  ancestor.style.setProperty("min-width", "0", "important");
+                  ancestor.style.setProperty("height", "100%", "important");
+                  ancestor.style.setProperty("min-height", "0", "important");
+                  ancestor.style.setProperty("margin", "0", "important");
+                  ancestor.style.setProperty("padding", "0", "important");
+                  ancestor.style.setProperty("overflow", "visible", "important");
+                  ancestor = ancestor.parentElement;
+                  guard += 1;
+                }
+                if (wTrack) {
+                  const wItems = [...new Set(rootsFor(wTrack))];
+                  wTrack.style.setProperty("display", "grid", "important");
+                  wTrack.style.setProperty("grid-template-columns", "repeat(3, minmax(0, 1fr))", "important");
+                  wTrack.style.setProperty("align-items", "stretch", "important");
+                  wTrack.style.setProperty("align-content", "stretch", "important");
+                  wTrack.style.setProperty("gap", "6px", "important");
+                  wTrack.style.setProperty("width", "100%", "important");
+                  wTrack.style.setProperty("height", "100%", "important");
+                  wTrack.style.setProperty("min-height", "0", "important");
+                  wTrack.style.setProperty("margin", "0", "important");
+                  wTrack.style.setProperty("padding", "0", "important");
+                  wTrack.style.setProperty("overflow", "visible", "important");
+                  wItems.forEach((child) => {
+                    child.style.setProperty("display", "flex", "important");
+                    child.style.setProperty("align-items", "stretch", "important");
+                    child.style.setProperty("justify-content", "stretch", "important");
+                    child.style.setProperty("width", "100%", "important");
+                    child.style.setProperty("min-width", "0", "important");
+                    child.style.setProperty("height", "100%", "important");
+                    child.style.setProperty("min-height", "0", "important");
+                    child.style.setProperty("align-self", "stretch", "important");
+                    child.style.setProperty("margin", "0", "important");
+                    child.style.setProperty("padding", "0", "important");
+                  });
+                }
+                wButtons.forEach((button) => {
+                  const text = (button.innerText || button.textContent || "").trim();
+                  const selected =
+                    text === wCurrent ||
+                    button.getAttribute("aria-checked") === "true" ||
+                    button.getAttribute("aria-selected") === "true" ||
+                    button.getAttribute("aria-pressed") === "true" ||
+                    button.getAttribute("data-selected") === "true" ||
+                    !!button.querySelector("input:checked");
+                  const targets = new Set([
+                    button,
+                    button.closest('[data-testid="stSegmentedControlOption"]'),
+                    button.closest('[role="radio"]'),
+                    button.closest('[role="button"]'),
+                  ].filter(Boolean));
+                  targets.forEach((target) => {
+                    target.dataset.jocketProviderActive = selected ? "true" : "false";
+                    target.classList.toggle("jocket-provider-active", selected);
+                  });
+                  button.style.setProperty("width", "100%", "important");
+                  button.style.setProperty("min-width", "0", "important");
+                  button.style.setProperty("max-width", "none", "important");
+                  button.style.setProperty("height", "52px", "important");
+                  button.style.setProperty("min-height", "52px", "important");
+                  button.style.setProperty("max-height", "52px", "important");
+                  button.style.setProperty("margin", "0", "important");
+                  button.style.setProperty("padding", "0 12px", "important");
+                  button.style.setProperty("border-radius", "999px", "important");
+                  button.style.setProperty("display", "inline-flex", "important");
+                  button.style.setProperty("align-items", "center", "important");
+                  button.style.setProperty("justify-content", "center", "important");
+                  button.style.setProperty("align-self", "stretch", "important");
+                  button.style.setProperty("transform-origin", "center center", "important");
+                  button.style.setProperty("transition", "transform 150ms cubic-bezier(0.2, 0.9, 0.2, 1), filter 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease", "important");
+                  button.style.setProperty(
+                    "transform",
+                    button.dataset.jocketWindowHover === "true" ? "translateY(-2px) scale(1.035)" : selected ? "translateY(-1px)" : "none",
+                    "important"
+                  );
+                  if (!button.dataset.jocketWindowHoverBound) {
+                    button.dataset.jocketWindowHoverBound = "true";
+                    button.addEventListener("pointerenter", () => {
+                      button.dataset.jocketWindowHover = "true";
+                      button.style.setProperty("transform", "translateY(-2px) scale(1.035)", "important");
+                      button.style.setProperty("filter", "brightness(1.12)", "important");
+                    });
+                    button.addEventListener("pointerleave", () => {
+                      button.dataset.jocketWindowHover = "false";
+                      const isActive = button.dataset.jocketProviderActive === "true";
+                      button.style.setProperty("transform", isActive ? "translateY(-1px)" : "none", "important");
+                      button.style.removeProperty("filter");
+                    });
+                  }
+                });
+              };
+
+              // Fix skill buttons layout safely
+              const fixSkillsLayout = () => {
+                const containers = doc.querySelectorAll('.ai-skill-buttons-container');
+                containers.forEach(container => {
+                  const verticalBlock = container.closest('[data-testid="stVerticalBlock"]');
+                  if (verticalBlock) {
+                    verticalBlock.style.display = 'flex';
+                    verticalBlock.style.flexDirection = 'row';
+                    verticalBlock.style.flexWrap = 'wrap';
+                    verticalBlock.style.gap = '12px 16px';
+                    verticalBlock.style.justifyContent = 'flex-start';
+                    verticalBlock.style.alignItems = 'center';
+                  }
+                  // Make element containers inline
+                  if (verticalBlock) {
+                    const els = verticalBlock.querySelectorAll('[data-testid="element-container"]');
+                    els.forEach(el => {
+                      el.style.width = 'auto';
+                      el.style.flex = '0 0 auto';
+                      el.style.margin = '0';
+                    });
+                  }
+                });
+              };
+
+              // Fix history report buttons layout (horizontal row + circular delete buttons)
+              const fixHistoryLayout = () => {
+                const expanderDetails = doc.querySelectorAll('[data-testid="stExpanderDetails"]');
+                expanderDetails.forEach(detail => {
+                  const hasHistBtn = detail.querySelector('[class*="st-key-ta_hist_"]');
+                  if (!hasHistBtn) return;
+                  const vBlock = detail.querySelector('[data-testid="stVerticalBlock"]');
+                  if (vBlock) {
+                    vBlock.style.setProperty('display', 'flex', 'important');
+                    vBlock.style.setProperty('flex-direction', 'row', 'important');
+                    vBlock.style.setProperty('flex-wrap', 'wrap', 'important');
+                    vBlock.style.setProperty('align-items', 'center', 'important');
+                    vBlock.style.setProperty('justify-content', 'flex-start', 'important');
+                    vBlock.style.setProperty('gap', '6px 8px', 'important');
+                    vBlock.querySelectorAll('[data-testid="element-container"]').forEach(el => {
+                      el.style.setProperty('width', 'auto', 'important');
+                      el.style.setProperty('flex', '0 0 auto', 'important');
+                      el.style.setProperty('margin', '0', 'important');
+                      el.style.setProperty('padding', '0', 'important');
+                      // Hide containers that don't contain history/delete buttons (e.g. script injection containers)
+                      if (!el.querySelector('[class*="st-key-ta_hist_"], [class*="st-key-ta_del_"]')) {
+                        el.style.setProperty('display', 'none', 'important');
+                      }
+                    });
+                  }
+                });
+                // Force delete buttons to be tiny 20px solid pink circles
+                doc.querySelectorAll('[class*="st-key-ta_del_"] button').forEach(btn => {
+                  btn.style.setProperty('width', '20px', 'important');
+                  btn.style.setProperty('min-width', '20px', 'important');
+                  btn.style.setProperty('max-width', '20px', 'important');
+                  btn.style.setProperty('height', '20px', 'important');
+                  btn.style.setProperty('min-height', '20px', 'important');
+                  btn.style.setProperty('max-height', '20px', 'important');
+                  btn.style.setProperty('padding', '0', 'important');
+                  btn.style.setProperty('margin', '0', 'important');
+                  btn.style.setProperty('border-radius', '50%', 'important');
+                  btn.style.setProperty('border', 'none', 'important');
+                  btn.style.setProperty('background', 'rgba(255, 92, 122, 0.8)', 'important');
+                  btn.style.setProperty('color', '#fff', 'important');
+                  btn.style.setProperty('display', 'inline-flex', 'important');
+                  btn.style.setProperty('align-items', 'center', 'important');
+                  btn.style.setProperty('justify-content', 'center', 'important');
+                  btn.style.setProperty('overflow', 'hidden', 'important');
+                  btn.style.setProperty('flex-shrink', '0', 'important');
+                  btn.style.setProperty('box-shadow', '0 4px 10px rgba(255, 92, 122, 0.3)', 'important');
+                });
+                // Fix container coupling
+                doc.querySelectorAll('[data-testid="element-container"]').forEach(el => {
+                  const histChild = el.querySelector(':scope > [class*="st-key-ta_hist_"]');
+                  const delChild = el.querySelector(':scope > [class*="st-key-ta_del_"]');
+                  if (histChild) {
+                    el.style.setProperty('margin-right', '-4px', 'important');
+                    el.style.setProperty('z-index', '2', 'important');
+                  }
+                  if (delChild) {
+                    el.style.setProperty('z-index', '1', 'important');
+                    el.style.setProperty('display', 'flex', 'important');
+                    el.style.setProperty('align-items', 'center', 'important');
+                    el.style.setProperty('justify-content', 'center', 'important');
+                  }
+                });
+              };
+
+              const enhanceAiInputLoading = () => {
+                const marker = doc.getElementById("jocket-current-page");
+                const currentPage = marker ? marker.getAttribute("data-page") : "";
+                const inputWrap = doc.querySelector('[class*="st-key-ai_market_prompt"] [data-baseweb="input"]');
+                const inputElem = doc.querySelector('[class*="st-key-ai_market_prompt"] input');
+                const sendBtn = doc.querySelector('[class*="st-key-ai_market_submit"] button')
+                  || doc.querySelector('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] button');
+                const aiProcessing = doc.getElementById("jocket-ai-processing");
+                
+                if (currentPage !== "AI洞察" || !inputWrap) return;
+
+                const hasSpinner = !!doc.querySelector('div[data-testid="stSpinner"]');
+                const isAiRunning = hasSpinner || (aiProcessing && aiProcessing.getAttribute("data-running") === "true");
+                
+                if (isAiRunning) {
+                  inputWrap.setAttribute("data-ai-loading", "true");
+                  if (sendBtn) sendBtn.setAttribute("data-laicai-running", "true");
+                } else if (inputWrap.getAttribute("data-ai-loading") === "true") {
+                  inputWrap.removeAttribute("data-ai-loading");
+                  if (sendBtn) sendBtn.removeAttribute("data-laicai-running");
+                }
+
+                if (sendBtn && !sendBtn.dataset.jocketSubmitBound) {
+                  sendBtn.dataset.jocketSubmitBound = "true";
+                  sendBtn.addEventListener("click", () => {
+                    if (inputElem && inputElem.value.trim()) {
+                      inputWrap.setAttribute("data-ai-loading", "true");
+                      sendBtn.setAttribute("data-laicai-running", "true");
+                    }
+                  });
+                }
+
+                if (inputElem && !inputElem.dataset.jocketEnterBound) {
+                  inputElem.dataset.jocketEnterBound = "true";
+                  inputElem.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" && inputElem.value.trim()) {
+                      e.preventDefault();
+                      inputWrap.setAttribute("data-ai-loading", "true");
+                      if (sendBtn) sendBtn.setAttribute("data-laicai-running", "true");
+                      if (sendBtn) sendBtn.click();
+                    }
+                  });
+                }
+              };
+
+              const animateCommandBarHeight = () => {
+                const container = doc.querySelector('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title)');
+                if (!container) return;
+
+                const block = container.querySelector('[data-testid="stVerticalBlock"]');
+                if (!block) return;
+
+                if (!window.parent._jocketObservedBlocks) {
+                  window.parent._jocketObservedBlocks = new WeakMap();
+                }
+
+                if (!window.parent._jocketObservedBlocks.has(block)) {
+                  container.style.setProperty("transition", "height 500ms cubic-bezier(0.16, 1, 0.3, 1), opacity 500ms cubic-bezier(0.16, 1, 0.3, 1)", "important");
+                  container.style.setProperty("will-change", "height, opacity", "important");
+                  container.style.setProperty("box-sizing", "border-box", "important");
+                  container.style.setProperty("overflow", "hidden", "important");
+
+                  const computed = window.parent.getComputedStyle(container);
+                  const paddingTop = parseFloat(computed.paddingTop) || 26;
+                  const paddingBottom = parseFloat(computed.paddingBottom) || 28;
+                  const borderTop = parseFloat(computed.borderTopWidth) || 1;
+                  const borderBottom = parseFloat(computed.borderBottomWidth) || 1;
+                  const chromeHeight = paddingTop + paddingBottom + borderTop + borderBottom;
+
+                  const lastKnownHeight = window.parent._jocketLastCommandBarHeight;
+                  const targetHeight = block.offsetHeight + chromeHeight;
+
+                  if (lastKnownHeight && Math.abs(lastKnownHeight - targetHeight) > 3) {
+                    container.style.setProperty("height", `${lastKnownHeight}px`, "important");
+                    block.style.setProperty("opacity", "0.4", "important");
+                    block.style.setProperty("transform", "translateY(10px)", "important");
+                    block.style.setProperty("transition", "opacity 300ms ease, transform 350ms cubic-bezier(0.16, 1, 0.3, 1)", "important");
+
+                    container.offsetHeight; // Force reflow
+
+                    container.style.setProperty("height", `${targetHeight}px`, "important");
+                    
+                    setTimeout(() => {
+                      block.style.setProperty("opacity", "1", "important");
+                      block.style.setProperty("transform", "none", "important");
+                    }, 50);
+                  } else {
+                    container.style.setProperty("height", `${targetHeight}px`, "important");
+                  }
+
+                  window.parent._jocketLastCommandBarHeight = targetHeight;
+
+                  const resizeObserver = new window.parent.ResizeObserver((entries) => {
+                    for (let entry of entries) {
+                      const freshComputed = window.parent.getComputedStyle(container);
+                      const pTop = parseFloat(freshComputed.paddingTop) || 26;
+                      const pBottom = parseFloat(freshComputed.paddingBottom) || 28;
+                      const bTop = parseFloat(freshComputed.borderTopWidth) || 1;
+                      const bBottom = parseFloat(freshComputed.borderBottomWidth) || 1;
+                      const chromeH = pTop + pBottom + bTop + bBottom;
+
+                      const naturalHeight = entry.contentRect.height + chromeH;
+                      const currentH = container.offsetHeight;
+
+                      if (Math.abs(naturalHeight - currentH) > 3) {
+                        container.style.setProperty("overflow", "hidden", "important");
+                        container.style.setProperty("height", `${currentH}px`, "important");
+                        container.offsetHeight; // Force reflow
+                        container.style.setProperty("height", `${naturalHeight}px`, "important");
+
+                        window.parent._jocketLastCommandBarHeight = naturalHeight;
+
+                        if (container.dataset.jocketTimeoutId) {
+                          clearTimeout(parseInt(container.dataset.jocketTimeoutId));
+                        }
+                        const timeoutId = setTimeout(() => {
+                          container.style.setProperty("overflow", "visible", "important");
+                          container.style.removeProperty("height");
+                        }, 500);
+                        container.dataset.jocketTimeoutId = timeoutId.toString();
+                      }
+                    }
+                  });
+
+                  resizeObserver.observe(block);
+                  window.parent._jocketObservedBlocks.set(block, resizeObserver);
+
+                  container.addEventListener("transitionend", (e) => {
+                    if (e.propertyName === "height") {
+                      container.style.setProperty("overflow", "visible", "important");
+                      container.style.removeProperty("height");
+                    }
+                  });
+                }
+              };
+
+              const enhanceLaicaiButtons = () => {
+                const buttons = [
+                  ...doc.querySelectorAll('.st-key-run_stock_quote button'),
+                  ...doc.querySelectorAll('.st-key-run_market_sentiment button'),
+                  ...doc.querySelectorAll('.st-key-run_stock_analysis button'),
+                  ...doc.querySelectorAll('.st-key-run_ta_analysis button'),
+                  ...doc.querySelectorAll('.st-key-ai_market_submit button'),
+                  ...doc.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] button')
+                ];
+                const aiProcessing = doc.getElementById("jocket-ai-processing");
+                const hasSpinner = !!doc.querySelector('div[data-testid="stSpinner"]');
+                const isAiRunning = aiProcessing && aiProcessing.getAttribute("data-running") === "true";
+                buttons.forEach(btn => {
+                  const isBtnDisabled = btn.disabled || btn.getAttribute("disabled") !== null;
+                  if (hasSpinner || isAiRunning || isBtnDisabled) {
+                    btn.setAttribute("data-laicai-running", "true");
+                  } else {
+                    btn.removeAttribute("data-laicai-running");
+                  }
+                });
+              };
+
+              const enhanceDetailsTransition = () => {
+                const details = doc.querySelectorAll('.rating-row');
+                details.forEach(detail => {
+                  if (detail.dataset.jocketTransitionBound) return;
+                  detail.dataset.jocketTransitionBound = "true";
+                  
+                  const summary = detail.querySelector('summary');
+                  const content = detail.querySelector('p');
+                  if (!summary || !content) return;
+                  
+                  summary.addEventListener('click', (e) => {
+                    if (detail.classList.contains('collapsing')) {
+                      e.preventDefault();
+                      return;
+                    }
+                    
+                    if (detail.hasAttribute('open')) {
+                      e.preventDefault();
+                      detail.classList.add('collapsing');
+                      
+                      content.style.setProperty('max-height', '0', 'important');
+                      content.style.setProperty('opacity', '0', 'important');
+                      content.style.setProperty('margin-top', '0', 'important');
+                      content.style.setProperty('margin-bottom', '0', 'important');
+                      
+                      setTimeout(() => {
+                        detail.removeAttribute('open');
+                        detail.classList.remove('collapsing');
+                        content.style.removeProperty('max-height');
+                        content.style.removeProperty('opacity');
+                        content.style.removeProperty('margin-top');
+                        content.style.removeProperty('margin-bottom');
+                      }, 300);
+                    } else {
+                      content.style.removeProperty('max-height');
+                      content.style.removeProperty('opacity');
+                      content.style.removeProperty('margin-top');
+                      content.style.removeProperty('margin-bottom');
+                    }
+                  });
+                });
+              };
+
+              enhanceAiInputLoading();
+              animateCommandBarHeight();
               enhanceNav();
-              setInterval(enhanceNav, 120);
-              new MutationObserver(enhanceNav).observe(doc.body, { childList: true, subtree: true });
+              enhanceProvider();
+              fixSkillsLayout();
+              fixHistoryLayout();
+              enhanceLaicaiButtons();
+              enhanceDetailsTransition();
+              setInterval(() => { enhanceNav(); enhanceProvider(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }, 120);
+              new MutationObserver(() => { enhanceNav(); enhanceProvider(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }).observe(doc.body, { childList: true, subtree: true });
+              
+              // Cancel button speed-up listener: closes the modal instantly on client-side!
+              doc.addEventListener("click", (event) => {
+                const cancelBtn = event.target.closest('[class*="st-key-cancel_del_btn"] button');
+                if (cancelBtn) {
+                  const dialog = doc.querySelector('div[role="dialog"]');
+                  const backdrop = doc.querySelector('[data-testid="stDialog"], [data-testid="stModal"]');
+                  if (dialog) dialog.style.setProperty('display', 'none', 'important');
+                  if (backdrop) backdrop.style.setProperty('display', 'none', 'important');
+                  
+                  const closeBtn = doc.querySelector('button[aria-label="Close"], [class*="stDialogHeader"] button, [data-testid="stDialog"] button');
+                  if (closeBtn) closeBtn.click();
+                }
+              }, { passive: true });
+
               doc.addEventListener("pointermove", (event) => {
                 orb.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
                 const card = doc.elementFromPoint(event.clientX, event.clientY)?.closest(selector);
@@ -201,6 +724,11 @@ def format_percent(value, digits: int = 2) -> str:
     return f"{num:+.{digits}f}%"
 
 
+def format_percent_or_na(value, digits: int = 2) -> str:
+    text = format_percent(value, digits)
+    return "N/A" if text == "-" else text
+
+
 def format_price(value, digits: int = 2) -> str:
     value = _safe(value, None)
     if value is None:
@@ -220,15 +748,62 @@ def render_hero(
     subtitle: str | None = None,
     ai_summary: str | None = None,
 ) -> None:
+    import hashlib
     updated_at = updated_at or datetime.now().strftime("%Y-%m-%d %H:%M")
     title = title or "A股智能雷达"
     subtitle = subtitle or "基于最新行情、技术指标和基本面信息生成中文研究视图。"
     
+    # Generate a unique hash of the content to force a new animation keyframe definition
+    # This guarantees that the transition always triggers when switching pages or stocks.
+    content_str = f"{title}_{code}_{latest_date}_{updated_at}"
+    anim_hash = hashlib.md5(content_str.encode("utf-8")).hexdigest()[:8]
+    anim_class = f"hero-anim-{anim_hash}"
+    
     ai_block = ""
     if ai_summary:
-        ai_block = f'<div class="ai-hero-summary"><span class="ai-sparkle">✨</span><span class="ai-summary-text">{escape(str(ai_summary))}</span></div>'
+        ai_block = (
+            f'<div class="ai-hero-summary">'
+            f'<span class="ai-sparkle">✨</span>'
+            f'<span class="ai-summary-text">{escape(str(ai_summary))}</span>'
+            f'</div>'
+        )
 
-    html = f'<section class="hero-shell"><div class="hero-content"><div><div class="eyebrow">A股智能分析仪表盘</div><h1 class="hero-title">{escape(str(title))}</h1><p class="hero-subtitle">{escape(str(subtitle))}</p>{ai_block}</div><div class="hero-meta-grid"><div class="hero-meta-item"><div class="meta-label">股票代码</div><div class="meta-value">{escape(str(code or "-"))}</div></div><div class="hero-meta-item"><div class="meta-label">状态</div><div class="meta-value">{escape(str(data_source or "-"))}</div></div><div class="hero-meta-item"><div class="meta-label">最新交易日</div><div class="meta-value">{escape(str(latest_date or "-"))}</div></div><div class="hero-meta-item"><div class="meta-label">更新时间</div><div class="meta-value">{escape(str(updated_at))}</div></div></div></div></section>'
+    # Use concatenated single-line strings and replace any newlines with space.
+    # This is 100% bulletproof against Markdown code-block parsing in Streamlit st.markdown.
+    html = (
+        f'<style>'
+        f'.{anim_class} {{ animation: fadeUp-{anim_hash} 650ms cubic-bezier(0.16, 1, 0.3, 1) both !important; }}'
+        f'@keyframes fadeUp-{anim_hash} {{ 0% {{ opacity: 0; transform: translateY(16px); filter: blur(4px); }} 100% {{ opacity: 1; transform: translateY(0); filter: blur(0); }} }}'
+        f'</style>'
+        f'<section class="hero-shell {anim_class}">'
+        f'<div class="hero-content">'
+        f'<div>'
+        f'<div class="eyebrow">A股智能分析仪表盘</div>'
+        f'<h1 class="hero-title">{escape(str(title))}</h1>'
+        f'<p class="hero-subtitle">{escape(str(subtitle))}</p>'
+        f'{ai_block}'
+        f'</div>'
+        f'<div class="hero-meta-grid">'
+        f'<div class="hero-meta-item">'
+        f'<div class="meta-label">股票代码</div>'
+        f'<div class="meta-value">{escape(str(code or "-"))}</div>'
+        f'</div>'
+        f'<div class="hero-meta-item">'
+        f'<div class="meta-label">状态</div>'
+        f'<div class="meta-value">{escape(str(data_source or "-"))}</div>'
+        f'</div>'
+        f'<div class="hero-meta-item">'
+        f'<div class="meta-label">最新交易日</div>'
+        f'<div class="meta-value">{escape(str(latest_date or "-"))}</div>'
+        f'</div>'
+        f'<div class="hero-meta-item">'
+        f'<div class="meta-label">更新时间</div>'
+        f'<div class="meta-value">{escape(str(updated_at))}</div>'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+        f'</section>'
+    ).replace('\n', ' ')
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -249,7 +824,24 @@ def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", 
         "orange": "pill-orange",
         "blue": "pill-cyan",
     }.get(tone, "pill-cyan")
-    icon = {"up": "上行", "down": "下行", "neutral": "实时"}.get(indicator, "实时")
+    icon_map = {
+        "up": "上行",
+        "down": "下行",
+        "neutral": "中性",
+        "high": "偏高",
+        "low": "偏低",
+        "good": "较好",
+        "weak": "弱势",
+        "active": "活跃",
+        "strong": "强势",
+        "fresh": "已更新",
+        "mild_strong": "偏强",
+        "mild_weak": "偏弱",
+        "bull_win": "多方胜",
+        "bear_win": "空方胜",
+        "draw": "平手",
+    }
+    icon = icon_map.get(indicator, indicator)
     return (
         f'<div class="metric-card" style="--card-glow:{tone_color}">'
         f'<div class="metric-inner">'
@@ -328,7 +920,7 @@ def render_insight_cards(insights: list[dict]) -> None:
             f'<div class="insight-label">{escape(item.get("label", "观察点"))}</div>'
             f'<div class="insight-title">{escape(item.get("title", "-"))}</div>'
             f'<div class="insight-body">{escape(item.get("body", "-"))}</div>'
-            f'<div style="margin-top:14px"><span class="pill {pill_class}">{escape(item.get("badge", "信号"))}</span></div>'
+            f'<div class="insight-foot"><span class="pill {pill_class}">{escape(item.get("badge", "信号"))}</span></div>'
             f'</div>'
         )
     st.markdown('<div class="insight-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
@@ -457,14 +1049,17 @@ def plot_market_sentiment_cycle(history: pd.DataFrame) -> go.Figure:
     down_count = pd.to_numeric(data.get("limit_down_count", 0), errors="coerce").fillna(0)
     max_streak = pd.to_numeric(data.get("max_streak", 0), errors="coerce").fillna(0)
     broken_rate = pd.to_numeric(data.get("broken_rate", 0), errors="coerce").fillna(0) * 100
-    score = (
-        (limit_count / max(limit_count.max(), 1) * 45)
-        + (max_streak / max(max_streak.max(), 1) * 25)
-        + (pd.to_numeric(data.get("strong_count", 0), errors="coerce").fillna(0) / max(pd.to_numeric(data.get("strong_count", 0), errors="coerce").fillna(0).max(), 1) * 20)
-        - broken_rate * 0.18
-        - down_count * 1.2
-        + 12
-    ).clip(0, 100)
+    if "emotion_score" in data.columns:
+        score = pd.to_numeric(data["emotion_score"], errors="coerce").fillna(0)
+    else:
+        score = (
+            (limit_count / max(limit_count.max(), 1) * 45)
+            + (max_streak / max(max_streak.max(), 1) * 25)
+            + (pd.to_numeric(data.get("strong_count", 0), errors="coerce").fillna(0) / max(pd.to_numeric(data.get("strong_count", 0), errors="coerce").fillna(0).max(), 1) * 20)
+            - broken_rate * 0.18
+            - down_count * 1.2
+            + 12
+        ).clip(0, 100)
     _add_glow_line(fig, x=data["date"], y=score, name="情绪指数", color=RED, width=3.0, mode="lines+markers")
     _add_glow_line(fig, x=data["date"], y=(limit_count / max(limit_count.max(), 1) * 100).clip(0, 100), name="涨停强度", color=PURPLE, width=2.2)
     _add_glow_line(fig, x=data["date"], y=broken_rate.clip(0, 100), name="炸板率", color=ORANGE, width=2.2)
@@ -576,14 +1171,17 @@ def plot_recent_5d_emotion(history: pd.DataFrame) -> go.Figure:
     broken_rate = pd.to_numeric(data.get("broken_rate", 0), errors="coerce").fillna(0) * 100
     down_count = pd.to_numeric(data.get("limit_down_count", 0), errors="coerce").fillna(0)
     
-    emotion = (
-        (limit_count / max(limit_count.max(), 1) * 45)
-        + (max_streak / max(max_streak.max(), 1) * 25)
-        + (strong_count / max(strong_count.max(), 1) * 20)
-        - broken_rate * 0.18
-        - down_count * 1.2
-        + 12
-    ).clip(0, 100)
+    if "emotion_score" in data.columns:
+        emotion = pd.to_numeric(data["emotion_score"], errors="coerce").fillna(0)
+    else:
+        emotion = (
+            (limit_count / max(limit_count.max(), 1) * 45)
+            + (max_streak / max(max_streak.max(), 1) * 25)
+            + (strong_count / max(strong_count.max(), 1) * 20)
+            - broken_rate * 0.18
+            - down_count * 1.2
+            + 12
+        ).clip(0, 100)
     
     _add_glow_line(fig, x=data["date"], y=emotion, name="综合评分", color=RED, width=2.4, mode="lines+markers")
     fig.update_yaxes(title="评分", range=[0, 100])
@@ -1053,34 +1651,76 @@ def render_valuation_metric_cards(metrics: dict) -> None:
 
     def status(value, metric):
         if value is None:
-            return "暂无数据", "orange"
+            return "数据不足", "orange", "数据不足"
         try:
             num = float(value)
         except Exception:
-            return "中性", "cyan"
+            return "数据异常", "cyan", "数据异常"
+        if metric == "market_cap":
+            if num >= 1000_0000_0000:
+                return "大市值", "green", "大市值"
+            if num >= 100_0000_0000:
+                return "中大市值", "cyan", "中大市值"
+            return "中小市值", "orange", "中小市值"
         if metric == "pe":
-            if 10 <= num <= 25:
-                return "有吸引力", "green"
-            if num > 60 or num <= 0:
-                return "风险偏高", "red"
-            if num > 40:
-                return "偏贵", "orange"
+            if 0 < num <= 15:
+                return "极具吸引力", "green", "极低估值"
+            if 15 < num <= 28:
+                return "合理偏低", "green", "合理偏低"
+            if 28 < num <= 45:
+                return "合理偏高", "cyan", "合理偏高"
+            if 45 < num <= 60:
+                return "估值偏贵", "orange", "估值偏贵"
+            return "估值高压" if num > 0 else "亏损异常", "red", "估值高压" if num > 0 else "亏损异常"
         if metric == "pb":
-            if 1 <= num <= 3:
-                return "有吸引力", "green"
-            if num > 5:
-                return "偏贵", "orange"
-        if metric in {"roe", "roa"}:
-            if num >= (0.15 if metric == "roe" else 0.07):
-                return "有吸引力", "green"
-            if num < 0.03:
-                return "风险偏高", "orange"
+            if 0 < num <= 1.5:
+                return "极具吸引力", "green", "极低PB"
+            if 1.5 < num <= 3.2:
+                return "合理区间", "green", "合理PB"
+            if 3.2 < num <= 5.0:
+                return "估值中等", "cyan", "合理偏高"
+            return "估值偏贵", "orange", "估值偏贵"
+        if metric == "ps":
+            if 0 < num <= 1.5:
+                return "低估吸引力", "green", "低估吸引"
+            if 1.5 < num <= 3.5:
+                return "估值合理", "green", "估值合理"
+            if 3.5 < num <= 6.0:
+                return "估值中等", "cyan", "合理偏高"
+            return "估值偏贵", "orange", "估值偏贵"
+        if metric == "dy":
+            if num >= 0.05:
+                return "高股息率", "green", "高股息率"
+            if num >= 0.03:
+                return "股息优秀", "green", "股息优秀"
+            if num >= 0.015:
+                return "分红适中", "cyan", "分红适中"
+            return "低分红率", "orange", "低分红率"
+        if metric == "roe":
+            if num >= 0.20:
+                return "超强盈利", "green", "超强盈利"
+            if num >= 0.12:
+                return "盈利优秀", "green", "盈利优秀"
+            if num >= 0.07:
+                return "盈利适中", "cyan", "盈利适中"
+            return "盈利偏弱", "orange", "盈利偏弱"
+        if metric == "roa":
+            if num >= 0.10:
+                return "高资产回报", "green", "资产高效"
+            if num >= 0.06:
+                return "回报优秀", "green", "回报优秀"
+            if num >= 0.03:
+                return "回报适中", "cyan", "回报适中"
+            return "回报偏弱", "orange", "回报偏弱"
         if metric == "de":
-            if num < 1:
-                return "有吸引力", "green"
-            if num > 2:
-                return "风险偏高", "orange"
-        return "中性", "cyan"
+            if num < 0.6:
+                return "轻资产/无债", "green", "无债健康"
+            if num < 1.2:
+                return "杠杆健康", "green", "杠杆健康"
+            if num < 2.0:
+                return "杠杆适中", "cyan", "杠杆适中"
+            return "债务偏高", "orange", "债务偏高"
+        return "中性", "cyan", "中性"
 
     def metric_note(label, raw, key, base_note, status_label):
         if raw is None:
@@ -1114,7 +1754,7 @@ def render_valuation_metric_cards(metrics: dict) -> None:
                 return "股息提供一定安全垫，更适合耐心跟踪"
             if num >= 0.015:
                 return "分红贡献中等，主要回报仍取决于价格和业绩"
-            return "股息保护较弱，研究重点应放在增长和趋势"
+            return "股息保护较弱，研究重点应放在增长 and 趋势"
         if key == "roe":
             if num >= 0.15:
                 return "ROE 较强，说明权益资本回报对估值有支撑"
@@ -1125,7 +1765,7 @@ def render_valuation_metric_cards(metrics: dict) -> None:
             if num >= 0.07:
                 return "ROA 较强，资产使用效率对质量评分有贡献"
             if num >= 0.03:
-                return "ROA 中性，质量结论还要看杠杆和现金流"
+                return "ROA 中性，质量结论还要看杠杆 and 现金流"
             return "ROA 偏弱，说明资产盈利效率仍需验证"
         if key == "de":
             if num < 1:
@@ -1149,19 +1789,36 @@ def render_valuation_metric_cards(metrics: dict) -> None:
     for label, value, note, key, forced_tone in specs:
         raw_map = {"pe": "pe_ttm", "pb": "pb", "roe": "roe", "roa": "roa", "de": "debt_to_equity", "ps": "ps", "dy": "dividend_yield"}
         raw = metrics.get(raw_map.get(key, key))
-        status_label, tone = status(raw, key)
+        status_label, tone, indicator_label = status(raw, key)
         if forced_tone:
             tone = forced_tone
-        cards.append(metric_card(label, value, metric_note(label, raw, key, note, status_label), tone, "neutral"))
+        cards.append(metric_card(label, value, metric_note(label, raw, key, note, status_label), tone, indicator_label))
     render_bento_grid(cards)
 
 
-def plot_ratings_snapshot(ratings: dict) -> go.Figure:
+def plot_ratings_snapshot(ratings: dict, height: int = 530) -> go.Figure:
     scores = ratings.get("scores", {}) if ratings else {}
     usable = {key: value for key, value in scores.items() if key != "DCF" and value is not None}
     if not usable:
-        return _base_fig(go.Figure(), 390)
-    labels = list(usable.keys())
+        return _base_fig(go.Figure(), height)
+    
+    translation_map = {
+        "ROE": "ROE",
+        "ROA": "ROA",
+        "D/E": "D/E",
+        "P/E": "P/E",
+        "P/B": "P/B",
+        "P/S": "P/S",
+        "Gross Margin": "毛利率",
+        "Net Margin": "净利率",
+        "Debt Ratio": "资产负债率",
+        "Cashflow Quality": "现金流质量",
+        "Dividend Yield": "股息率",
+        "Revenue Growth": "收入增长",
+        "Net Profit Growth": "净利润增长",
+    }
+    
+    labels = [translation_map.get(key, key) for key in usable.keys()]
     values = [float(v) for v in usable.values()]
     labels.append(labels[0])
     values.append(values[0])
@@ -1185,10 +1842,29 @@ def plot_ratings_snapshot(ratings: dict) -> go.Figure:
         ),
         showlegend=False,
     )
-    return _base_fig(fig, 390)
+    return _base_fig(fig, height)
 
 
-def render_ratings_list(ratings: dict) -> None:
+def _rating_basis_sentence(key: str, score: float | None, metrics: dict) -> str:
+    if score is None:
+        return "暂无可比数据，本项不进入综合评分。"
+    level = "高" if score >= 4 else "中等" if score >= 3 else "偏低"
+    ref_map = {
+        "ROE": f"参考 ROE={format_percent_or_na(metrics.get('roe'))}，盈利能力越强得分越高。",
+        "ROA": f"参考 ROA={format_percent_or_na(metrics.get('roa'))}，资产使用效率越强得分越高。",
+        "D/E": f"参考 D/E={format_ratio(metrics.get('debt_to_equity'))}，杠杆越低、财务弹性越好得分越高。",
+        "P/E": f"参考 PE TTM={format_ratio(metrics.get('pe_ttm'))}，盈利估值压力越可解释得分越高。",
+        "P/B": f"参考 PB={format_ratio(metrics.get('pb'))}，需结合 ROE 判断资产估值是否合理。",
+        "P/S": f"参考 PS={format_ratio(metrics.get('ps'))}，收入估值越克制且增长可验证得分越高。",
+        "Dividend Yield": f"参考股息率={format_percent_or_na(metrics.get('dividend_yield'))}，现金分红保护越强得分越高。",
+        "Revenue Growth": f"参考最近可比营收增长，增长越稳定得分越高。",
+        "Net Profit Growth": f"参考最近可比净利润增长，利润兑现越好得分越高。",
+    }
+    return f"本项评分{level}：{ref_map.get(key, '参考可得财务与估值数据进行 1-5 分映射。')}"
+
+
+def render_ratings_list(ratings: dict, metrics: dict | None = None) -> None:
+    metrics = metrics or {}
     scores = ratings.get("scores", {}) if ratings else {}
     label_map = {
         "ROE": "净资产收益率",
@@ -1196,6 +1872,7 @@ def render_ratings_list(ratings: dict) -> None:
         "D/E": "债务权益比",
         "P/E": "市盈率",
         "P/B": "市净率",
+        "P/S": "市销率",
         "Dividend Yield": "股息率",
         "Revenue Growth": "收入增长",
         "Net Profit Growth": "净利润增长",
@@ -1204,8 +1881,13 @@ def render_ratings_list(ratings: dict) -> None:
     for key, label in label_map.items():
         value = scores.get(key)
         value_text = "N/A" if value is None else f"{float(value):.1f}"
+        reason = _rating_basis_sentence(key, None if value is None else float(value), metrics)
+        row_class = "rating-row muted" if value is None else "rating-row"
         rows.append(
-            f'<div class="rating-row"><span>{escape(label)}</span><strong>{escape(value_text)}</strong></div>'
+            f'<details class="{row_class}">'
+            f'<summary><span>{escape(label)}</span><strong>{escape(value_text)}</strong></summary>'
+            f'<p>{escape(reason)}</p>'
+            f'</details>'
         )
     overall = ratings.get("overall")
     rating = ratings.get("rating", "数据受限")

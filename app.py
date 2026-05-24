@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape
 
@@ -14,9 +15,12 @@ from src.config import load_config
 from src.fundamental_analyzer import FundamentalAnalyzer
 from src.fundamental_fetcher import FundamentalFetcher
 from src.news_fetcher import NewsFetcher, news_items_to_frame
+from src.cache_utils import FileCache
+from src.providers.a_stock_data_provider import AStockDataProvider
 from src.report_generator import ReportGenerator
 from src.market_sentiment import MarketSentimentAnalyzer
 from src.stock_analyzer import StockAnalyzer
+from src.stock_signal_cards import build_market_signal_cards, build_stock_signal_cards, signal_cards_to_text
 from src.stock_lookup import build_stock_directory, resolve_stock_query
 from src.ui_components import (
     format_number_cn,
@@ -61,6 +65,7 @@ from src.ui_components import (
 )
 from src.utils import display_code
 from src.valuation_engine import ValuationEngine
+from src.tradingagents_ui import render_tradingagents_dashboard
 
 
 st.set_page_config(page_title="Jocket", page_icon=None, layout="wide", initial_sidebar_state="collapsed")
@@ -78,6 +83,11 @@ def _start_date_for_trading_days(days: int) -> pd.Timestamp:
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def _stock_directory() -> pd.DataFrame:
     return build_stock_directory()
+
+
+@st.cache_resource(show_spinner=False)
+def _analysis_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=2, thread_name_prefix="jocket-analysis")
 
 
 def _latest_date(hist: pd.DataFrame | None) -> str:
@@ -249,6 +259,16 @@ def _fetch_stock_news_payload(code: str, name: str | None = None, boards: tuple[
     return NewsFetcher(config).fetch(code, name=name, boards=list(boards))
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_a_stock_signal_bundle(code: str, trade_date: str | None = None) -> dict:
+    return AStockDataProvider(config=config).stock_signal_bundle(code, trade_date=trade_date)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_a_stock_market_bundle(trade_date: str | None = None) -> dict:
+    return AStockDataProvider(config=config).market_signal_bundle(trade_date=trade_date)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_stock_analysis_core(code: str, name: str | None) -> tuple[dict, pd.DataFrame, str]:
     return StockAnalyzer(config).analyze(code, name=name, include_news=False)
@@ -268,31 +288,23 @@ def _generate_stock_ai_summary(code: str, name: str, score: dict, hist: pd.DataF
     if cached:
         return cached
 
-    score_for_ai = copy.deepcopy(score)
-    if not score_for_ai.get("news"):
-        score_for_ai["news"] = _fetch_stock_news_payload(code, name)
-
     with st.spinner("正在生成当日个股趋势评级..."):
-        summary = AIMarketAssistant(config, provider="gemini").generate_stock_one_liner(
-            code,
-            name or code,
-            score_for_ai,
-            hist,
-            fundamental_context,
-        )
+        summary = _generate_stock_ai_summary_core(code, name, score, hist, fundamental_context)
     st.session_state[summary_key] = summary
     return summary
 
 
-def _metric_value(metrics: dict, key: str, kind: str = "ratio") -> str:
-    value = metrics.get(key)
-    if value is None:
-        return "N/A"
-    if kind == "percent":
-        return format_percent(value)
-    if kind == "money":
-        return format_number_cn(value)
-    return format_price(value, 2)
+def _generate_stock_ai_summary_core(code: str, name: str, score: dict, hist: pd.DataFrame, fundamental_context: dict | None) -> str:
+    score_for_ai = copy.deepcopy(score)
+    if not score_for_ai.get("news"):
+        score_for_ai["news"] = NewsFetcher(config).fetch(code, name=name)
+    return AIMarketAssistant(config, provider="gemini").generate_stock_one_liner(
+        code,
+        name or code,
+        score_for_ai,
+        hist,
+        fundamental_context,
+    )
 
 
 def _render_dcf_card(metrics: dict, assumptions: dict) -> None:
@@ -302,11 +314,17 @@ def _render_dcf_card(metrics: dict, assumptions: dict) -> None:
         if not dcf.get("available"):
             st.warning("当前现金流口径不足，暂无法计算 DCF。")
         else:
+            discount_pct = float(dcf.get("discount_pct") or 0)
+            dcf_val_ind = "good" if discount_pct > 0 else "weak"
+            price_ind = "low" if discount_pct > 0 else "high"
+            discount_ind = "strong" if discount_pct > 0 else "weak"
+            margin_ind = "strong" if discount_pct >= assumptions.get("margin_of_safety", 0.20) else "neutral"
+
             cards = [
-                metric_card("DCF 每股估值", format_price(dcf.get("intrinsic_per_share")), "基于现金流折现", "cyan", "neutral"),
-                metric_card("当前价格", format_price(dcf.get("current_price")), "行情最新收盘价", "blue", "neutral"),
-                metric_card("折价 / 溢价", format_percent(dcf.get("discount_pct")), "正值代表低于估算值", "green" if (dcf.get("discount_pct") or 0) > 0 else "orange", "neutral"),
-                metric_card("安全边际价", format_price(dcf.get("margin_price")), "扣除安全边际后", "purple", "neutral"),
+                metric_card("DCF 每股估值", format_price(dcf.get("intrinsic_per_share")), "基于现金流折现", "cyan", dcf_val_ind),
+                metric_card("当前价格", format_price(dcf.get("current_price")), "行情最新收盘价", "blue", price_ind),
+                metric_card("折价 / 溢价", format_percent(dcf.get("discount_pct")), "正值代表低于估算值", "green" if discount_pct > 0 else "orange", discount_ind),
+                metric_card("安全边际价", format_price(dcf.get("margin_price")), "扣除安全边际后", "purple", margin_ind),
             ]
             render_bento_grid(cards)
         st.caption(
@@ -328,11 +346,21 @@ def _render_sector_heat_card(sector_payload: dict) -> None:
         if boards is None or boards.empty:
             st.info("当前所属板块/概念数据不足，行业/题材评分暂以价格动量辅助判断。")
             return
+        
+        top_pct = float(summary.get("top_board_pct") or 0)
+        top_ind = "strong" if top_pct >= 2.0 else "active" if top_pct >= 0.8 else "mild_strong" if top_pct > 0 else "mild_weak" if top_pct >= -1.5 else "weak"
+
+        avg3_pct = float(summary.get('avg_top3_pct') or 0)
+        avg3_ind = "strong" if avg3_pct >= 1.5 else "active" if avg3_pct >= 0.5 else "mild_strong" if avg3_pct > 0 else "mild_weak" if avg3_pct >= -1.0 else "weak"
+
+        pos_count = int(summary.get("positive_count") or 0)
+        pos_ind = "strong" if pos_count >= 8 else "active" if pos_count >= 4 else "mild_strong" if pos_count >= 2 else "weak" if pos_count == 0 else "mild_weak"
+
         cards = [
-            metric_card("最强板块", str(summary.get("top_board") or "N/A"), "所属板块中涨幅最高", "green" if (summary.get("top_board_pct") or 0) > 0 else "orange", "neutral"),
-            metric_card("最强涨幅", f"{float(summary.get('top_board_pct') or 0):+.2f}%", "板块即时强度", "green" if (summary.get("top_board_pct") or 0) > 0 else "red", "neutral"),
-            metric_card("前三均涨幅", f"{float(summary.get('avg_top3_pct') or 0):+.2f}%", "板块扩散强度", "green" if (summary.get("avg_top3_pct") or 0) > 0 else "orange", "neutral"),
-            metric_card("上涨板块数", str(summary.get("positive_count") or 0), "所属方向扩散", "cyan", "neutral"),
+            metric_card("最强板块", str(summary.get("top_board") or "N/A"), "所属板块中涨幅最高", "green" if top_pct > 0 else "orange", top_ind),
+            metric_card("最强涨幅", f"{top_pct:+.2f}%", "板块即时强度", "green" if top_pct > 0 else "red", top_ind),
+            metric_card("前三均涨幅", f"{avg3_pct:+.2f}%", "板块扩散强度", "green" if avg3_pct > 0 else "orange", avg3_ind),
+            metric_card("上涨板块数", str(pos_count), "所属方向扩散", "cyan", pos_ind),
         ]
         render_bento_grid(cards)
         view = boards.head(10).copy()
@@ -369,12 +397,22 @@ def _render_news_panel(news_payload: dict | None, title: str = "公开新闻与�
         items = news_payload.get("items") or []
         top_item = items[0] if items else {}
         source_count = len({item.get("source") for item in items if item.get("source")})
+
+        heat_score = float(news_payload.get("heat_score") or 0)
+        heat_ind = "strong" if heat_score >= 80 else "active" if heat_score >= 60 else "mild_strong" if heat_score >= 40 else "mild_weak" if heat_score >= 20 else "weak"
+
+        rel_score = int(top_item.get('relevance_score', 0) or 0)
+        rel_ind = "strong" if rel_score >= 85 else "active" if rel_score >= 65 else "mild_strong" if rel_score >= 45 else "mild_weak" if rel_score >= 25 else "weak"
+
+        news_count = len(items)
+        count_ind = "high" if news_count >= 15 else "active" if news_count >= 6 else "mild_strong" if news_count >= 2 else "mild_weak" if news_count >= 1 else "weak"
+
         render_bento_grid(
             [
-                metric_card("消息热度", format_price(news_payload.get("heat_score"), 1), "按关联度与覆盖度聚合", "green" if float(news_payload.get("heat_score") or 0) >= 60 else "cyan", "neutral"),
-                metric_card("最高关联度", f"{top_item.get('relevance_score', 0)} / 100", top_item.get("source", "公开源"), "green" if int(top_item.get("relevance_score") or 0) >= 60 else "orange", "neutral"),
-                metric_card("命中消息数", str(len(items)), f"{source_count} 个来源", "purple", "neutral"),
-                metric_card("更新", str(news_payload.get("updated_at", "-"))[-8:], news_payload.get("source", "公开信息源"), "blue", "neutral"),
+                metric_card("消息热度", format_price(news_payload.get("heat_score"), 1), "按关联度与覆盖度聚合", "green" if heat_score >= 60 else "cyan", heat_ind),
+                metric_card("最高关联度", f"{rel_score} / 100", top_item.get("source", "公开源"), "green" if rel_score >= 60 else "orange", rel_ind),
+                metric_card("命中消息数", str(news_count), f"{source_count} 个来源", "purple", count_ind),
+                metric_card("更新", str(news_payload.get("updated_at", "-"))[-8:], news_payload.get("source", "公开信息源"), "blue", "fresh"),
             ]
         )
         summary_text = news_payload.get("summary", "暂无摘要")
@@ -398,19 +436,142 @@ def _render_news_panel(news_payload: dict | None, title: str = "公开新闻与�
                 render_glass_dataframe(pd.DataFrame([e if isinstance(e, dict) else {"message": str(e)} for e in news_payload.get("errors", [])[:20]]))
 
 
+def _render_research_signal_cards(cards: list[dict], title: str, subtitle: str, *, empty: str = "当前暂无可升级为独立卡片的高价值信号。") -> None:
+    render_section_title(title, subtitle)
+    if not cards:
+        with st.container(border=True):
+            st.info(empty)
+        return
+    ui_cards = []
+    for card in cards:
+        note = (
+            f"{card.get('level', '待判断')}：{card.get('decision_note', '')} "
+            f"阈值：{card.get('threshold_note', '')} 来源：{card.get('source', '-')}"
+        )
+        card_tone = str(card.get("tone") or "cyan")
+        card_indicator = "neutral"
+        if card_tone == "green":
+            card_indicator = "strong"
+        elif card_tone == "cyan":
+            card_indicator = "active"
+        elif card_tone == "orange":
+            card_indicator = "mild_weak"
+        elif card_tone == "red":
+            card_indicator = "weak"
+        ui_cards.append(
+            metric_card(
+                str(card.get("label") or "-"),
+                str(card.get("value") or "N/A"),
+                note[:260],
+                card_tone,
+                card_indicator,
+            )
+        )
+    render_bento_grid(ui_cards)
+
+
+def _render_signal_detail_tables(signal_payload: dict | None) -> None:
+    if not signal_payload:
+        return
+    details = signal_payload.get("details", {}) or {}
+    with st.expander("a-stock-data 原始明细与来源诊断", expanded=False):
+        tabs = st.tabs(["研报", "公告", "资金流", "龙虎榜", "事件数据"])
+        with tabs[0]:
+            reports = pd.DataFrame(details.get("reports") or [])
+            if reports.empty:
+                st.info("暂无研报明细。")
+            else:
+                cols = [c for c in ["publishDate", "orgSName", "title", "emRatingName", "predictThisYearEps", "predictNextYearEps"] if c in reports.columns]
+                render_glass_dataframe(reports[cols].head(30) if cols else reports.head(30), height=520)
+        with tabs[1]:
+            anns = pd.DataFrame(details.get("announcements") or [])
+            if anns.empty:
+                st.info("暂无公告明细。")
+            else:
+                render_glass_dataframe(anns[[c for c in ["date", "category", "title", "url"] if c in anns.columns]].head(30), height=520)
+        with tabs[2]:
+            flow = details.get("fund_flow_120d")
+            if isinstance(flow, pd.DataFrame) and not flow.empty:
+                render_glass_dataframe(flow.tail(60), height=520)
+            else:
+                st.info("暂无资金流明细。")
+        with tabs[3]:
+            lhb = details.get("dragon_tiger")
+            if isinstance(lhb, pd.DataFrame) and not lhb.empty:
+                render_glass_dataframe(lhb.head(50), height=520)
+            else:
+                st.info("暂无龙虎榜明细。")
+        with tabs[4]:
+            frames = []
+            for key in ["lockup", "margin", "block_trade", "holders"]:
+                df = details.get(key)
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    tmp = df.head(10).copy()
+                    tmp.insert(0, "source_table", key)
+                    frames.append(tmp)
+            if frames:
+                render_glass_dataframe(pd.concat(frames, ignore_index=True, sort=False), height=520)
+            else:
+                st.info("暂无解禁、两融、大宗交易或股东户数明细。")
+
+
 def _build_fundamental_context(code: str, hist: pd.DataFrame, score: dict, dcf_assumptions: dict) -> dict | None:
+    with st.spinner("正在获取公司基本信息、财务数据和估值指标..."):
+        return _build_fundamental_context_common(
+            code,
+            hist,
+            score,
+            dcf_assumptions,
+            fetch_payload=_fetch_fundamental_payload,
+            fetch_signal=_fetch_a_stock_signal_bundle,
+            fetch_news=_fetch_stock_news_payload,
+        )
+
+
+def _build_fundamental_context_core(code: str, hist: pd.DataFrame, score: dict, dcf_assumptions: dict) -> dict | None:
+    return _build_fundamental_context_common(
+        code,
+        hist,
+        score,
+        dcf_assumptions,
+        fetch_payload=lambda c, p: FundamentalFetcher(config).fetch(c, latest_price=p),
+        fetch_signal=lambda c, d: AStockDataProvider(config=config).stock_signal_bundle(c, trade_date=d),
+        fetch_news=lambda c, n, b: NewsFetcher(config).fetch(c, name=n, boards=list(b)),
+    )
+
+
+def _build_fundamental_context_common(
+    code: str,
+    hist: pd.DataFrame,
+    score: dict,
+    dcf_assumptions: dict,
+    *,
+    fetch_payload,
+    fetch_signal,
+    fetch_news,
+) -> dict | None:
     latest_price = None
     if hist is not None and not hist.empty and "close" in hist.columns:
         latest_price = float(hist["close"].iloc[-1])
-
-    with st.spinner("正在获取公司基本信息、财务数据和估值指标..."):
+    try:
+        payload = fetch_payload(code, latest_price)
+        valuation = ValuationEngine(dcf_assumptions).analyze(payload)
+        analysis = FundamentalAnalyzer().analyze(payload, valuation, score)
+        trade_date = _latest_date(hist)
+        signal_bundle = fetch_signal(code, trade_date if trade_date != "-" else None)
+        signal_payload = build_stock_signal_cards(signal_bundle, display_code(code), payload.get("profile", {}), valuation.get("metrics", {}))
+        boards = tuple((payload.get("sector", {}) or {}).get("summary", {}).get("primary_boards", []) or payload.get("profile", {}).get("belong_boards", []) or [])
         try:
-            payload = _fetch_fundamental_payload(code, latest_price)
-            valuation = ValuationEngine(dcf_assumptions).analyze(payload)
-            analysis = FundamentalAnalyzer().analyze(payload, valuation, score)
-        except Exception as exc:
+            news_payload = fetch_news(code, payload.get("profile", {}).get("name"), boards)
+        except Exception as news_exc:
+            news_payload = {"available": False, "items": [], "heat_score": None, "errors": [{"source": "news", "message": str(news_exc)}]}
+    except Exception as exc:
+        signal_bundle = {"warnings": [{"source": "a-stock-data", "interface": "stock_signal_bundle", "message": str(exc)}]}
+        signal_payload = {"cards": [], "valuation_cards": [], "event_cards": [], "details": {}}
+        news_payload = score.get("news", {})
+        if "payload" not in locals() or "valuation" not in locals() or "analysis" not in locals():
             return None
-    return {"payload": payload, "valuation": valuation, "analysis": analysis}
+    return {"payload": payload, "valuation": valuation, "analysis": analysis, "a_stock_signal": signal_payload, "a_stock_bundle": signal_bundle, "news": news_payload}
 
 
 def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf_assumptions: dict, fundamental_context: dict | None) -> dict | None:
@@ -443,15 +604,26 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
     boards = tuple((payload.get("sector", {}) or {}).get("summary", {}).get("primary_boards", []) or profile.get("belong_boards", []) or [])
     news_payload = _fetch_stock_news_payload(profile.get("code") or code, profile.get("name"), boards) or score.get("news")
     _render_news_panel(news_payload, "公司公开新闻与消息面")
+    signal_payload = fundamental_context.get("a_stock_signal", {}) or {}
+    _render_research_signal_cards(
+        signal_payload.get("valuation_cards", []),
+        "预期与估值验证",
+        "只展示能改变估值判断的信号：估值压力、业绩兑现难度和预期消化。",
+    )
+    _render_research_signal_cards(
+        signal_payload.get("event_cards", []),
+        "资金与事件信号",
+        "把资金流、龙虎榜、解禁、筹码、融资、公告和热点归因压缩成可判断的研究卡片。",
+    )
     render_valuation_metric_cards(metrics)
 
     rating_col, list_col = st.columns([1.2, 0.8])
     with rating_col:
-        _render_chart_card("基本面评级快照", "1-5 分", plot_ratings_snapshot(ratings))
+        _render_chart_card("基本面评级快照", "1-5 分", plot_ratings_snapshot(ratings, height=560))
     with list_col:
         with st.container(border=True):
             st.markdown('<div class="chart-title"><span>核心财务与估值维度评分</span><span class="pill pill-cyan">综合</span></div>', unsafe_allow_html=True)
-            render_ratings_list(ratings)
+            render_ratings_list(ratings, metrics)
             st.caption("不可得指标显示 N/A，且不纳入综合评分。")
 
     _render_dcf_card(metrics, valuation.get("assumptions", dcf_assumptions))
@@ -480,6 +652,7 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
         st.info(analysis.get("research_view"))
         for note in analysis.get("limitations", []):
             st.caption(f"限制：{note}")
+    _render_signal_detail_tables(signal_payload)
     return fundamental_context
 
 
@@ -529,10 +702,75 @@ def _top_driver(items: list[dict], reverse: bool = True) -> str:
     return f"{picked.get('dimension')} {format_price(picked.get('score'), 1)}/{format_price(picked.get('max_score'), 0)}，{factor}"
 
 
+def _dashboard_card_indicator(label: str, score: dict, hist: pd.DataFrame, amount) -> str:
+    latest = score.get("latest", {}) or {}
+    if label == "最新价":
+        close = _num(latest.get("close"))
+        ma20 = _num(latest.get("ma20"))
+        if close is not None and ma20:
+            gap = close / ma20 - 1
+            if gap >= 0.08:
+                return "偏高"
+            if gap >= 0.02:
+                return "偏强"
+            if gap > 0:
+                return "活跃"
+            if gap <= -0.08:
+                return "偏低"
+            if gap <= -0.02:
+                return "偏弱"
+            return "偏弱"
+        return "中性"
+    if label == "成交量":
+        ratio = _num(latest.get("vol_ratio_20"))
+        if ratio is not None:
+            if ratio >= 1.8:
+                return "强势"
+            if ratio >= 1.2:
+                return "活跃"
+            if ratio >= 0.9:
+                return "偏强"
+            if ratio < 0.7:
+                return "偏弱"
+            return "偏弱"
+        return "中性"
+    if label == "估算成交额":
+        amt = _num(amount)
+        if amt is not None:
+            if amt >= 1_000_000_000:
+                return "强势"
+            if amt >= 500_000_000:
+                return "活跃"
+            if amt >= 200_000_000:
+                return "偏强"
+            if amt < 100_000_000:
+                return "偏弱"
+            return "偏弱"
+        return "中性"
+    if label == "中长线评分":
+        return _score_band(score.get("long_score")).split("，")[0]
+    if label == "短线评分":
+        return _score_band(score.get("short_score")).split("，")[0]
+    return ""
+
+
+def _metric_indicator_key(label: str, score: dict, hist: pd.DataFrame, amount, fallback: str = "neutral") -> str:
+    text = _dashboard_card_indicator(label, score, hist, amount)
+    if text in {"偏高", "承载弱", "偏弱", "弱势或风险偏高"}:
+        return "high" if text == "偏高" else "mild_weak" if text == "偏弱" else "weak"
+    if text in {"偏低"}:
+        return "low"
+    if text in {"活跃", "承载强", "偏强"}:
+        return "active" if text == "活跃" else "mild_strong"
+    if text in {"强势"}:
+        return "strong"
+    return fallback
+
+
 def _dashboard_card_note(label: str, score: dict, hist: pd.DataFrame, amount) -> str:
     latest = score.get("latest", {}) or {}
     close = _num(latest.get("close"))
-    if label in {"实时价", "最新收盘价"}:
+    if label == "最新价":
         ma20 = _num(latest.get("ma20"))
         if close is not None and ma20:
             gap = close / ma20 - 1
@@ -620,11 +858,77 @@ def _replace_breakdown_item(items: list[dict], old_names: set[str], new_item: di
     return out
 
 
+def _find_signal_card(signal_payload: dict, label: str) -> dict:
+    for group in ("cards", "valuation_cards", "event_cards"):
+        for card in signal_payload.get(group, []) or []:
+            if card.get("label") == label:
+                return card
+    return {}
+
+
+def _money_flow_evidence(bundle: dict, signal_payload: dict) -> dict:
+    card = _find_signal_card(signal_payload, "资金流验证")
+    rows = bundle.get("fund_flow_120d") or bundle.get("fund_flow_minute") or []
+    frame = pd.DataFrame(rows if isinstance(rows, list) else [])
+    evidence = {
+        "available": bool(card) or not frame.empty,
+        "card_score": _num(card.get("score")) if card else None,
+        "card_level": card.get("level") if card else None,
+        "card_value": card.get("value") if card else None,
+        "latest_main_net_inflow": None,
+        "main_net_inflow_20d": None,
+        "positive_flow_days_20d": None,
+    }
+    if not frame.empty and "main_net_inflow" in frame.columns:
+        series = pd.to_numeric(frame["main_net_inflow"], errors="coerce").dropna()
+        recent = series.tail(20)
+        if not recent.empty:
+            evidence["latest_main_net_inflow"] = float(recent.iloc[-1])
+            evidence["main_net_inflow_20d"] = float(recent.sum())
+            evidence["positive_flow_days_20d"] = int((recent > 0).sum())
+    return evidence
+
+
+def _recompute_score_totals(score: dict, *, fundamental_context: dict | None = None, preserve_fundamental_bonus: bool = False) -> None:
+    short_breakdown = score.get("short_breakdown", []) or []
+    long_breakdown = score.get("long_breakdown", []) or []
+    score["short_parts"] = {item["dimension"]: item["score"] for item in short_breakdown}
+    score["long_parts"] = {item["dimension"]: item["score"] for item in long_breakdown}
+    score["short_score"] = min(100, max(0, round(sum(score["short_parts"].values()), 1)))
+    score["long_score"] = min(100, max(0, round(sum(score["long_parts"].values()), 1)))
+    if preserve_fundamental_bonus and fundamental_context:
+        overall = ((fundamental_context.get("valuation", {}) or {}).get("ratings", {}) or {}).get("overall") or 0
+        score["composite_score"] = round(float(score.get("short_score", 0) or 0) * 0.55 + score["long_score"] * 0.30 + float(overall) / 5 * 15, 1)
+    else:
+        score["composite_score"] = round(score["short_score"] * 0.6 + score["long_score"] * 0.4, 1)
+
+
+def _external_signal_status(fundamental_context: dict) -> dict:
+    payload = fundamental_context.get("payload", {}) or {}
+    sector_summary = ((payload.get("sector", {}) or {}).get("summary", {}) or {})
+    signal_payload = fundamental_context.get("a_stock_signal", {}) or {}
+    bundle = fundamental_context.get("a_stock_bundle", {}) or {}
+    news_payload = fundamental_context.get("news", {}) or {}
+    flow_ev = _money_flow_evidence(bundle, signal_payload)
+    return {
+        "sector_available": bool(sector_summary.get("available")),
+        "sector_flow_available": _num(sector_summary.get("net_flow_sum")) is not None,
+        "stock_flow_available": bool(flow_ev.get("available")),
+        "news_available": bool(news_payload.get("available")) or _num(news_payload.get("heat_score")) is not None,
+        "news_heat_score": _num(news_payload.get("heat_score")),
+        "money_flow": flow_ev,
+    }
+
+
 def _enrich_sector_proxy_item(score: dict, fundamental_context: dict) -> None:
     payload = fundamental_context.get("payload", {})
     profile = payload.get("profile", {})
     sector_payload = payload.get("sector", {}) or {}
     sector_summary = sector_payload.get("summary", {}) or {}
+    signal_payload = fundamental_context.get("a_stock_signal", {}) or {}
+    bundle = fundamental_context.get("a_stock_bundle", {}) or {}
+    news_payload = fundamental_context.get("news", {}) or {}
+    money_flow = _money_flow_evidence(bundle, signal_payload)
     industry = profile.get("industry") or "暂未获取"
     industry_cn = profile.get("industry_cn") or "暂未获取"
     sector = profile.get("sector") or "暂未获取"
@@ -634,45 +938,77 @@ def _enrich_sector_proxy_item(score: dict, fundamental_context: dict) -> None:
     avg_top3 = _num(sector_summary.get("avg_top3_pct"))
     positive_count = int(sector_summary.get("positive_count") or 0)
     net_flow_sum = _num(sector_summary.get("net_flow_sum"))
+    news_heat = _num(news_payload.get("heat_score"))
+    hot_card = _find_signal_card(signal_payload, "热点归因匹配")
     source = sector_summary.get("source", "efinance")
     short_breakdown = score.get("short_breakdown", [])
     for item in short_breakdown:
         if item.get("dimension") != "行业/题材代理":
             continue
+        item["dimension"] = "行业/题材/资金催化"
+        sector_score = 0
+        positives, negatives = [], []
         if sector_summary.get("available"):
-            sector_score = 0
-            positives, negatives = [], []
             if top_pct is not None:
                 if top_pct >= 3:
-                    sector_score += 5; positives.append(f"最强所属板块 {top_board} 涨幅 {top_pct:.2f}%")
+                    sector_score += 3; positives.append(f"最强所属板块 {top_board} 涨幅 {top_pct:.2f}%")
                 elif top_pct >= 1:
-                    sector_score += 3; positives.append(f"最强所属板块 {top_board} 涨幅为正")
+                    sector_score += 2; positives.append(f"最强所属板块 {top_board} 涨幅为正")
                 elif top_pct < 0:
                     negatives.append(f"最强所属板块 {top_board} 仍为下跌，板块强度不足")
             if avg_top3 is not None:
                 if avg_top3 >= 1:
-                    sector_score += 4; positives.append(f"前三所属板块平均涨幅 {avg_top3:.2f}%")
+                    sector_score += 2; positives.append(f"前三所属板块平均涨幅 {avg_top3:.2f}%")
                 elif avg_top3 < 0:
                     negatives.append(f"前三所属板块平均涨幅 {avg_top3:.2f}%，板块联动偏弱")
             if positive_count >= 4:
-                sector_score += 3; positives.append(f"所属板块中 {positive_count} 个为上涨，扩散度较好")
+                sector_score += 2; positives.append(f"所属板块中 {positive_count} 个为上涨，扩散度较好")
             elif positive_count > 0:
-                sector_score += 2; positives.append(f"所属板块中 {positive_count} 个为上涨")
+                sector_score += 1; positives.append(f"所属板块中 {positive_count} 个为上涨")
             if net_flow_sum is not None:
                 if net_flow_sum > 0:
-                    sector_score += 3; positives.append(f"已匹配板块资金净流入合计 {net_flow_sum:.2f}")
+                    sector_score += 2; positives.append(f"已匹配板块资金净流入合计 {net_flow_sum:.2f}")
                 else:
                     negatives.append(f"已匹配板块资金净流出合计 {net_flow_sum:.2f}")
             else:
                 negatives.append("板块资金流暂未完全匹配，资金项不参与本次加分")
-            item["score"] = round(max(0, min(15, sector_score)), 1)
-            item["score_rate"] = round(item["score"] / 15, 3)
-            item["positive_factors"] = positives or ["所属板块数据已获取，但强度信号不突出"]
-            item["negative_factors"] = negatives or ["暂无明显板块扣分项"]
         else:
-            item["negative_factors"] = [
-                "所属板块数据不足，暂以个股价格动量和成交活跃度辅助判断。",
-            ]
+            negatives.append("所属板块数据不足，暂以个股价格动量和成交活跃度辅助判断")
+        flow_card_score = _num(money_flow.get("card_score"))
+        flow_20d = _num(money_flow.get("main_net_inflow_20d"))
+        latest_flow = _num(money_flow.get("latest_main_net_inflow"))
+        if money_flow.get("available"):
+            if flow_card_score is not None and flow_card_score >= 70:
+                sector_score += 3; positives.append(f"主力资金卡片为{money_flow.get('card_level') or '资金确认'}")
+            elif flow_20d is not None and flow_20d > 0:
+                sector_score += 2; positives.append(f"近20条主力资金净流入合计 {format_number_cn(flow_20d)}")
+            elif latest_flow is not None and latest_flow > 0:
+                sector_score += 1; positives.append(f"最新主力资金净流入 {format_number_cn(latest_flow)}")
+            else:
+                negatives.append("主力资金净流入未形成确认")
+        else:
+            negatives.append("个股主力资金流暂未取得，本项不加分")
+        if news_heat is not None:
+            if news_heat >= 70:
+                sector_score += 2; positives.append(f"新闻/公告热度 {news_heat:.1f}，催化强")
+            elif news_heat >= 45:
+                sector_score += 1; positives.append(f"新闻/公告热度 {news_heat:.1f}，有跟踪价值")
+            elif news_payload.get("available"):
+                negatives.append(f"新闻/公告热度 {news_heat:.1f}，催化不强")
+        elif news_payload.get("available"):
+            sector_score += 1; positives.append("已取得相关公开新闻/公告，作为催化验证")
+        else:
+            negatives.append("新闻/公告催化未取得，本项不加分")
+        if hot_card:
+            hot_score = _num(hot_card.get("score"))
+            if hot_score is not None and hot_score >= 60:
+                sector_score += 1; positives.append(f"同花顺热点归因为{hot_card.get('level') or '可用'}")
+            else:
+                negatives.append("热点归因匹配度一般")
+        item["score"] = round(max(0, min(15, sector_score)), 1)
+        item["score_rate"] = round(item["score"] / 15, 3)
+        item["positive_factors"] = positives or ["所属板块、资金和新闻数据已接入，但强度信号不突出"]
+        item["negative_factors"] = negatives or ["暂无明显外部信号扣分项"]
         data_points = item.get("data_points", {}) or {}
         data_points.update({
             "industry": industry,
@@ -684,12 +1020,19 @@ def _enrich_sector_proxy_item(score: dict, fundamental_context: dict) -> None:
             "avg_top3_board_pct": avg_top3 / 100 if avg_top3 is not None else None,
             "positive_board_count": positive_count,
             "board_net_flow_sum": net_flow_sum,
+            "main_net_inflow_latest": latest_flow,
+            "main_net_inflow_20d": flow_20d,
+            "positive_flow_days_20d": money_flow.get("positive_flow_days_20d"),
+            "money_flow_card_score": flow_card_score,
+            "news_heat_score": news_heat,
+            "news_source": news_payload.get("source"),
+            "hot_reason_score": _num(hot_card.get("score")) if hot_card else None,
             "board_source": source,
         })
         item["data_points"] = data_points
         item["logic"] = (
-            "自动识别个股所属行业/概念板块及板块涨幅，并匹配板块资金流；"
-            "板块数据不足时使用价格动量和成交活跃度辅助判断。"
+            "自动识别行业/概念板块强度、板块资金流、个股主力资金流、新闻/公告热度与热点归因；"
+            "缺失项只做扣分/不加分，不再用旧的纯价格代理冒充外部信号。"
         )
         positives = list(item.get("positive_factors", []))
         if industry_cn not in {"暂未获取", "当前数据源暂不支持", ""}:
@@ -700,7 +1043,7 @@ def _enrich_sector_proxy_item(score: dict, fundamental_context: dict) -> None:
             positives.insert(1, f"已识别 Sector：{sector}")
         item["positive_factors"] = positives or item.get("positive_factors", [])
         item["decision_impact"] = (
-            "该分数现在反映所属板块/概念的即时涨幅和可用资金流；新闻热度、涨停家数和更细概念强度仍需后续补充。"
+            "该分数反映所属板块/概念强度、主力资金确认和新闻催化质量；分数低时代表外部验证不足，而不是数据被忽略。"
         )
         break
 
@@ -844,7 +1187,20 @@ def _enrich_score_with_fundamentals(score: dict, fundamental_context: dict | Non
     if not fundamental_context:
         return score
     enriched = copy.deepcopy(score)
+    if fundamental_context.get("news"):
+        enriched["news"] = fundamental_context.get("news")
     _enrich_sector_proxy_item(enriched, fundamental_context)
+    formula = copy.deepcopy(enriched.get("formula", {}))
+    formula.setdefault("short", {})["行业/题材/资金催化"] = [
+        "所属板块涨幅/前三板块均值/上涨扩散度最高 +8",
+        "匹配板块资金净流入最高 +2",
+        "个股主力资金流确认最高 +3",
+        "新闻公告热度或热点归因最高 +2",
+        "缺失项不加分，负向资金或板块走弱进入扣分说明",
+    ]
+    formula.get("short", {}).pop("行业/题材代理", None)
+    enriched["formula"] = formula
+    _recompute_score_totals(enriched)
     new_items, fundamental_limitations, integrated = _build_integrated_long_items(fundamental_context)
     if integrated and new_items:
         long_breakdown = enriched.get("long_breakdown", [])
@@ -856,11 +1212,10 @@ def _enrich_score_with_fundamentals(score: dict, fundamental_context: dict | Non
         for old_names, new_item in replacements:
             long_breakdown = _replace_breakdown_item(long_breakdown, old_names, new_item)
         enriched["long_breakdown"] = long_breakdown
-        enriched["long_parts"] = {item["dimension"]: item["score"] for item in long_breakdown}
-        enriched["long_score"] = min(100, max(0, round(sum(enriched["long_parts"].values()), 1)))
-        enriched["composite_score"] = round(float(enriched.get("short_score", 0) or 0) * 0.55 + enriched["long_score"] * 0.30 + (fundamental_context["valuation"]["ratings"].get("overall") or 0) / 5 * 15, 1)
+        _recompute_score_totals(enriched, fundamental_context=fundamental_context, preserve_fundamental_bonus=True)
         enriched["fundamental_integrated"] = True
     else:
+        _recompute_score_totals(enriched)
         enriched["fundamental_integrated"] = False
 
     rating, explanation = _rating_with_fundamentals(enriched, fundamental_context, enriched["fundamental_integrated"])
@@ -871,11 +1226,27 @@ def _enrich_score_with_fundamentals(score: dict, fundamental_context: dict | Non
         note for note in enriched.get("limitations", [])
         if "未接入完整财务数据" not in note and "质量/成长/估值为占位分" not in note
         and "若基本面模块未能返回财务/估值数据" not in note
+        and "行业热度、概念强度和主力资金流尚未接入评分" not in note
+        and "行业热度、概念强度和主力资金流向未接入评分" not in note
+        and "未取得基本面增强上下文时，行业/题材维度使用价格动量代理" not in note
     ]
+    external = _external_signal_status(fundamental_context)
     if enriched["fundamental_integrated"]:
-        base_limitations.append("财务和非 DCF 估值指标已参与中长线评分；DCF 仅作单独估值参考，行业热度、主力资金和新闻催化仍未接入。")
+        base_limitations.append("财务和非 DCF 估值指标已参与中长线评分；DCF 仅作单独估值参考。")
     else:
         base_limitations.append("基本面数据不足，财务/成长/估值仍未完整参与评分。")
+    if external["sector_available"]:
+        base_limitations.append("行业/概念强度已参与短线评分；若只能取得板块归属而缺少实时涨幅或资金流，则对应子项不加分。")
+    else:
+        base_limitations.append("行业/概念归属暂未取得，外部信号维度退回保守口径。")
+    if external["stock_flow_available"]:
+        base_limitations.append("个股主力资金流已参与短线外部信号评分。")
+    else:
+        base_limitations.append("个股主力资金流暂未取得，资金确认子项不加分。")
+    if external["news_available"]:
+        base_limitations.append("新闻/公告热度已参与短线外部信号评分。")
+    else:
+        base_limitations.append("新闻/公告催化暂未取得，催化子项不加分。")
     base_limitations.extend(fundamental_limitations)
     enriched["limitations"] = list(dict.fromkeys(base_limitations + ["评分仅用于研究辅助，不构成投资建议"]))
     enriched["score_explanations"] = _score_explanations_with_context(enriched, fundamental_context)
@@ -883,9 +1254,120 @@ def _enrich_score_with_fundamentals(score: dict, fundamental_context: dict | Non
     return enriched
 
 
+def _stock_job_signature(code: str, dcf_assumptions: dict) -> tuple:
+    return (str(code or ""), tuple(sorted((dcf_assumptions or {}).items())))
+
+
+def _market_job_signature(trade_date, window_days: int) -> tuple:
+    return (pd.to_datetime(trade_date).strftime("%Y-%m-%d"), int(window_days or 60))
+
+
+def _set_job_stage(progress: dict | None, stage: str) -> None:
+    if progress is not None:
+        progress["stage"] = stage
+
+
+def _run_stock_analysis_job(code: str, name: str, dcf_assumptions: dict, progress: dict | None = None) -> dict:
+    _set_job_stage(progress, "fetch")
+    base_result = StockAnalyzer(config).analyze(code, name=name, include_news=False)
+    score_tmp, hist_tmp, report_path = base_result
+    _set_job_stage(progress, "compute")
+    fundamental_context = _build_fundamental_context_core(code, hist_tmp, score_tmp, copy.deepcopy(dcf_assumptions))
+    score_for_summary = _enrich_score_with_fundamentals(score_tmp, fundamental_context) if fundamental_context else score_tmp
+    stock_name_for_summary = name or code
+    _set_job_stage(progress, "view")
+    try:
+        ai_summary = _generate_stock_ai_summary_core(code, stock_name_for_summary, score_for_summary, hist_tmp, fundamental_context)
+    except Exception as exc:
+        ai_summary = f"AI 摘要暂未生成：{type(exc).__name__}: {exc}"
+    _set_job_stage(progress, "done")
+    return {
+        "code": code,
+        "name": stock_name_for_summary,
+        "dcf_assumptions": copy.deepcopy(dcf_assumptions),
+        "analysis_result": (score_for_summary, hist_tmp, report_path),
+        "fundamental_context_result": fundamental_context,
+        "ai_stock_summary": ai_summary,
+    }
+
+
+def _run_market_sentiment_job(trade_date, window_days: int, progress: dict | None = None) -> dict:
+    _set_job_stage(progress, "fetch")
+    sentiment_result = MarketSentimentAnalyzer(config).analyze(
+        trade_date,
+        window_days=int(window_days or 60),
+        force_refresh=False,
+        backfill_history=False,
+    )
+    _set_job_stage(progress, "compute")
+    trade_date_text = pd.to_datetime(trade_date).strftime("%Y-%m-%d")
+    market_bundle = AStockDataProvider(config=config).market_signal_bundle(trade_date=trade_date_text)
+    _set_job_stage(progress, "view")
+    sentiment_result["a_stock_market_bundle"] = market_bundle
+    sentiment_result["a_stock_market_signal"] = build_market_signal_cards(market_bundle)
+    _set_job_stage(progress, "done")
+    return {
+        "trade_date": pd.to_datetime(trade_date).date(),
+        "window_days": int(window_days or 60),
+        "sentiment_result": sentiment_result,
+    }
+
+
+def _job_step_class(stage: str, step: str) -> str:
+    order = {"fetch": 1, "compute": 2, "view": 3, "done": 4}
+    step_order = {"fetch": 1, "compute": 2, "view": 3}
+    current = order.get(stage, 1)
+    target = step_order[step]
+    if current > target:
+        return "is-complete"
+    if current == target:
+        return "is-active"
+    return "is-pending"
+
+
+def _render_background_job_panel(title: str, description: str, stage: str = "fetch") -> None:
+    fetch_class = _job_step_class(stage, "fetch")
+    compute_class = _job_step_class(stage, "compute")
+    view_class = _job_step_class(stage, "view")
+    st.markdown(
+        f"""
+        <section class="jocket-job-panel" aria-live="polite">
+          <div class="jocket-job-head">
+            <div>
+              <div class="jocket-job-kicker">I'm Jocketing</div>
+              <div class="jocket-job-title">{escape(title)}</div>
+            </div>
+            <span>后台运行</span>
+          </div>
+          <p>{escape(description)}</p>
+          <div class="jocket-job-track" aria-hidden="true">
+            <i></i>
+          </div>
+          <div class="jocket-job-steps" aria-hidden="true">
+            <b class="{fetch_class}">取数</b>
+            <b class="{compute_class}">计算</b>
+            <b class="{view_class}">生成视图</b>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.fragment(run_every="2s")
+def _render_background_job_fragment(job_state_key: str, title: str, description: str) -> None:
+    job = st.session_state.get(job_state_key) or {}
+    future = job.get("future")
+    if future is not None and future.done():
+        st.rerun()
+    progress = job.get("progress") or {}
+    _render_background_job_panel(title, description, str(progress.get("stage") or "fetch"))
+
+
 def _score_explanations_with_context(score: dict, fundamental_context: dict) -> list[str]:
     ratings = fundamental_context.get("valuation", {}).get("ratings", {})
     metrics = fundamental_context.get("valuation", {}).get("metrics", {})
+    external = _external_signal_status(fundamental_context)
     overall = ratings.get("overall")
     short_score = _num(score.get("short_score")) or 0
     long_score = _num(score.get("long_score")) or 0
@@ -895,6 +1377,14 @@ def _score_explanations_with_context(score: dict, fundamental_context: dict) -> 
     text.append(
         f"短线评分 {format_price(short_score, 1)} / 100，属于“{_score_band(short_score)}”。"
         f"本轮最主要正向驱动是 {_top_driver(short_items, True)}；最需要警惕的是 {_top_driver(short_items, False)}。"
+    )
+    text.append(
+        "外部信号已接入短线评分："
+        f"行业/概念{'可用' if external['sector_available'] else '不可用'}，"
+        f"板块资金{'可用' if external['sector_flow_available'] else '不可用'}，"
+        f"个股主力资金{'可用' if external['stock_flow_available'] else '不可用'}，"
+        f"新闻/公告热度{'可用' if external['news_available'] else '不可用'}。"
+        "不可用项只是不加分，不再被当作“已接入但忽略”。"
     )
     if score.get("fundamental_integrated"):
         roe = metrics.get("roe")
@@ -915,7 +1405,7 @@ def _score_explanations_with_context(score: dict, fundamental_context: dict) -> 
         best = "、".join(f"{item['dimension']}({item['score']}/{item['max_score']})" for item in long_items[:3])
         weak = "、".join(f"{item['dimension']}({item['score']}/{item['max_score']})" for item in sorted(long_items, key=lambda x: x.get("score_rate", 0))[:3])
         text.append(f"中长线贡献最大的维度是 {best}；拖累项是 {weak}。因此结论应围绕强项确认、弱项排雷，而不是只看总分。")
-    text.append("执行建议：强趋势但风险分低时优先等回踩或缩量确认；基本面评分低时只做短线观察；只有趋势、资金活跃度和财务质量同时改善，才提高研究优先级。")
+    text.append("执行建议：强趋势但风险分低时优先等回踩或缩量确认；基本面评分低时只做短线观察；只有趋势、行业/概念强度、资金确认和财务质量同时改善，才提高研究优先级。")
     return text
 
 
@@ -955,12 +1445,23 @@ def _render_explainable_scoring(score: dict) -> None:
     risk_text = f"{format_price(risk_control.get('score'), 1)} / {format_price(risk_control.get('max_score'), 0)}"
 
     render_section_title("可解释评分", "评分不是黑盒：每个维度都能展开查看公式、触发条件、底层数据、加分项和扣分项。")
+    sh_score = float(score.get('short_score', 0) or 0)
+    sh_indicator = "strong" if sh_score >= 85 else "mild_strong" if sh_score >= 70 else "mild_weak" if sh_score >= 55 else "weak"
+
+    ln_score = float(score.get('long_score', 0) or 0)
+    ln_indicator = "strong" if ln_score >= 85 else "mild_strong" if ln_score >= 70 else "mild_weak" if ln_score >= 55 else "weak"
+
+    rating_indicator = "strong" if any(w in rating for w in ["优先", "重点", "强势"]) else "weak" if any(w in rating for w in ["回避", "风险", "警告"]) else "mild_weak" if "谨慎" in rating else "active"
+
+    risk_val = float(risk_control.get('score', 0) or 0)
+    risk_indicator = "good" if risk_val >= 12 else "active" if risk_val >= 8 else "mild_weak" if risk_val >= 5 else "weak"
+
     render_bento_grid(
         [
-            metric_card("短线评分", f"{format_price(score.get('short_score'), 1)} / 100", "信号强度，不等于买入指令", "green" if score.get("short_score", 0) >= 80 else "cyan", "up" if score.get("short_score", 0) >= 70 else "neutral"),
-            metric_card("中长线评分", f"{format_price(score.get('long_score'), 1)} / 100", "趋势 + 财务/成长/估值" if score.get("fundamental_integrated") else "趋势代理 + 基本面待验证", "cyan", "neutral"),
-            metric_card("综合评级", rating, score.get("rating_explanation", ""), rating_tone, "neutral"),
-            metric_card("风险状态", risk_text, "风险控制分越高，技术风险越低", "green" if risk_control.get("score", 0) >= 10 else "orange", "neutral"),
+            metric_card("短线评分", f"{format_price(score.get('short_score'), 1)} / 100", "信号强度，不等于买入指令", "green" if sh_score >= 80 else "cyan", sh_indicator),
+            metric_card("中长线评分", f"{format_price(score.get('long_score'), 1)} / 100", "趋势 + 财务/成长/估值" if score.get("fundamental_integrated") else "趋势代理 + 基本面待验证", "cyan", ln_indicator),
+            metric_card("综合评级", rating, score.get("rating_explanation", ""), rating_tone, rating_indicator),
+            metric_card("风险状态", risk_text, "风险控制分越高，技术风险越低", "green" if risk_control.get("score", 0) >= 10 else "orange", risk_indicator),
         ]
     )
     with st.container(border=True):
@@ -1022,17 +1523,66 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     short_tone = "green" if float(score.get("short_score", 0) or 0) >= 75 else "cyan" if float(score.get("short_score", 0) or 0) >= 60 else "orange"
     long_tone = "green" if float(score.get("long_score", 0) or 0) >= 65 else "cyan" if float(score.get("long_score", 0) or 0) >= 50 else "orange"
 
-    price_label = "实时价" if latest.get("realtime_price") else "最新收盘价"
+    price_label = "最新价"
     render_bento_grid(
         [
-            metric_card(price_label, format_price(latest.get("close")), _dashboard_card_note(price_label, score, hist, amount), "cyan", "neutral"),
+            metric_card(price_label, format_price(latest.get("close")), _dashboard_card_note(price_label, score, hist, amount), "cyan", _metric_indicator_key(price_label, score, hist, amount)),
             metric_card("当日涨跌幅", format_percent(ret_1d), _dashboard_card_note("当日涨跌幅", score, hist, amount), ret_tone, ret_indicator),
-            metric_card("成交量", format_number_cn(latest.get("volume"), 2), _dashboard_card_note("成交量", score, hist, amount), "purple", "neutral"),
-            metric_card("估算成交额", format_number_cn(amount, 2), _dashboard_card_note("估算成交额", score, hist, amount), "blue", "neutral"),
-            metric_card("短线评分", format_price(score.get("short_score"), 1), _dashboard_card_note("短线评分", score, hist, amount), short_tone, "up" if score.get("short_score", 0) >= 60 else "neutral"),
-            metric_card("中长线评分", format_price(score.get("long_score"), 1), _dashboard_card_note("中长线评分", score, hist, amount), long_tone, "up" if score.get("long_score", 0) >= 50 else "neutral"),
+            metric_card("成交量", format_number_cn(latest.get("volume"), 2), _dashboard_card_note("成交量", score, hist, amount), "purple", _metric_indicator_key("成交量", score, hist, amount)),
+            metric_card("估算成交额", format_number_cn(amount, 2), _dashboard_card_note("估算成交额", score, hist, amount), "blue", _metric_indicator_key("估算成交额", score, hist, amount)),
+            metric_card("短线评分", format_price(score.get("short_score"), 1), _dashboard_card_note("短线评分", score, hist, amount), short_tone, _metric_indicator_key("短线评分", score, hist, amount)),
+            metric_card("中长线评分", format_price(score.get("long_score"), 1), _dashboard_card_note("中长线评分", score, hist, amount), long_tone, _metric_indicator_key("中长线评分", score, hist, amount)),
         ]
     )
+
+    # Dynamic badges for charts based on quantitative calculations
+    close_val = float(latest.get("close", 0) or 0)
+    ma20_val = float(latest.get("ma20", 0) or 0)
+    ma60_val = float(latest.get("ma60", 0) or 0)
+    if close_val > ma20_val > ma60_val:
+        trend_badge = "多头排列 (偏强)"
+    elif close_val < ma20_val < ma60_val:
+        trend_badge = "空头排列 (偏弱)"
+    elif close_val > ma20_val:
+        trend_badge = "站上MA20 (反弹)"
+    elif close_val < ma20_val:
+        trend_badge = "跌破MA20 (整理)"
+    else:
+        trend_badge = "K线 + 均线"
+
+    vol_ratio_val = float(latest.get("vol_ratio_20", 0) or 0)
+    if vol_ratio_val >= 1.8:
+        vol_badge = f"显著放量 ({vol_ratio_val:.2f}x)"
+    elif vol_ratio_val >= 1.2:
+        vol_badge = f"温和放量 ({vol_ratio_val:.2f}x)"
+    elif vol_ratio_val > 0 and vol_ratio_val < 0.8:
+        vol_badge = f"缩量运行 ({vol_ratio_val:.2f}x)"
+    else:
+        vol_badge = f"成交平稳 ({vol_ratio_val:.2f}x)"
+
+    ret_1d_val = float(latest.get("ret_1d", 0) or 0)
+    if ret_1d_val > 0 and vol_ratio_val >= 1.2:
+        pv_badge = "量价齐升 (买盘强)"
+    elif ret_1d_val < 0 and vol_ratio_val >= 1.2:
+        pv_badge = "放量下跌 (抛压重)"
+    elif ret_1d_val > 0 and vol_ratio_val < 0.8:
+        pv_badge = "缩量上涨 (动量弱)"
+    elif ret_1d_val < 0 and vol_ratio_val < 0.8:
+        pv_badge = "缩量下跌 (正常整理)"
+    else:
+        pv_badge = "量价平衡"
+
+    rsi_val = float(latest.get("rsi14", 0) or 0)
+    if rsi_val >= 80:
+        tech_badge = "RSI 超买 (警惕)"
+    elif rsi_val <= 20:
+        tech_badge = "RSI 超卖 (超跌)"
+    elif rsi_val >= 55:
+        tech_badge = "RSI 偏强震荡"
+    elif rsi_val <= 45:
+        tech_badge = "RSI 偏弱震荡"
+    else:
+        tech_badge = "RSI 中性整理"
 
     render_section_title("市场解读", "关键发现由价格结构、量能、动量指标和模型风险信号自动归纳。")
     render_insight_cards(_build_insights(score, hist, warning))
@@ -1040,16 +1590,16 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     render_section_title("核心图表", "图表替代表格成为主叙事：价格、成交量、量价关系与技术指标分层展示。")
     top_left, top_right = st.columns([1.45, 1])
     with top_left:
-        _render_chart_card("价格趋势", "K线 + 均线", plot_price_trend(hist))
+        _render_chart_card("价格趋势", trend_badge, plot_price_trend(hist))
     with top_right:
-        _render_chart_card("成交量", "成交量", plot_volume(hist))
+        _render_chart_card("成交量", vol_badge, plot_volume(hist))
 
     lower_left, lower_right = st.columns([1, 1])
     with lower_left:
-        _render_chart_card("量价关系", "收盘价 x 成交额", plot_price_volume_scatter(hist), container_height=560)
+        _render_chart_card("量价关系", pv_badge, plot_price_volume_scatter(hist), container_height=560)
     with lower_right:
         with st.container(border=True, height=560):
-            st.markdown('<div class="chart-title"><span>技术指标</span><span class="pill pill-purple">分页</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chart-title"><span>技术指标</span><span class="pill pill-purple">{tech_badge}</span></div>', unsafe_allow_html=True)
             tab_rsi, tab_macd, tab_kdj = st.tabs(["RSI", "MACD", "KDJ"])
             with tab_rsi:
                 st.plotly_chart(plot_rsi(hist), use_container_width=True, config={"displayModeBar": False})
@@ -1058,11 +1608,16 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
             with tab_kdj:
                 st.plotly_chart(plot_kdj(hist), use_container_width=True, config={"displayModeBar": False})
 
-    if fundamental_context is None:
-        fundamental_context = _build_fundamental_context(score.get("code") or code, hist, score, dcf_assumptions)
+    dashboard_code = str(
+        score.get("code")
+        or ((fundamental_context or {}).get("payload", {}) or {}).get("profile", {}).get("code")
+        or ""
+    )
+    if fundamental_context is None and dashboard_code:
+        fundamental_context = _build_fundamental_context(dashboard_code, hist, score, dcf_assumptions)
     if fundamental_context:
         score = _enrich_score_with_fundamentals(score, fundamental_context)
-    fundamental_context = _render_fundamental_snapshot(score.get("code") or code, hist, score, dcf_assumptions, fundamental_context)
+    fundamental_context = _render_fundamental_snapshot(score.get("code") or dashboard_code, hist, score, dcf_assumptions, fundamental_context)
 
     _render_explainable_scoring(score)
 
@@ -1160,7 +1715,7 @@ def _render_sentiment_metric_grid(metrics: dict, history: pd.DataFrame) -> None:
 
     emotion_status, emotion_tone = _semantic_tone(emotion, (35, 55, 70))
     broken_status, broken_tone = _semantic_tone((broken or 0) * 100, (15, 25, 35), higher_is_risk=True)
-    premium_status, premium_tone = ("承接强", "good") if (prev_premium or 0) > 8 else ("承接弱", "warning") if (prev_premium or 0) < 0 else ("中性", "watch")
+    premium_status, premium_tone = ("承接强", "good") if (prev_premium or 0) > 8 else ("承接弱", "warning") if (prev_premium or 0) < 0 else ("平稳溢价", "watch")
     streak_status, streak_tone = ("高标强", "danger") if (max_streak or 0) >= 7 else ("空间打开", "good") if (max_streak or 0) >= 4 else ("空间低", "watch")
 
     core_cards = [
@@ -1182,6 +1737,53 @@ def _render_sentiment_metric_grid(metrics: dict, history: pd.DataFrame) -> None:
         _sentiment_metric_card("三维分歧度", format_price(divergence, 1), divergence, "大盘、超短和炸板率分歧越高，越需要控仓。", div_status, div_tone),
     ]
     st.markdown('<div class="sentiment-metric-grid secondary">' + "".join(secondary_cards) + "</div>", unsafe_allow_html=True)
+
+
+def _render_market_signal_verification(payload: dict) -> None:
+    signal_payload = payload.get("a_stock_market_signal", {}) or {}
+    cards = signal_payload.get("cards", []) or []
+    render_section_title("主线与资金验证", "同花顺热点、北向资金、龙虎榜、行业轮动和指数 ETF 风险偏好。")
+    if not cards:
+        with st.container(border=True):
+            st.info("当前 a-stock-data 市场信号暂未生成，市场情绪仍使用涨跌停生态与板块梯队。")
+        return
+    html_cards = []
+    for card in cards:
+        tone_map = {"green": "good", "cyan": "watch", "blue": "watch", "purple": "watch", "orange": "warning", "red": "danger"}
+        tone = tone_map.get(str(card.get("tone") or "cyan"), "watch")
+        html_cards.append(
+            _sentiment_metric_card(
+                str(card.get("label") or "-"),
+                str(card.get("value") or "N/A"),
+                _sent_num(card.get("score"), 0),
+                f"{card.get('decision_note', '')} 阈值：{card.get('threshold_note', '')} 来源：{card.get('source', '-')}",
+                str(card.get("level") or "待判断"),
+                tone,
+                cap=100,
+            )
+        )
+    st.markdown('<div class="sentiment-metric-grid secondary">' + "".join(html_cards) + "</div>", unsafe_allow_html=True)
+    details = signal_payload.get("details", {}) or {}
+    with st.expander("a-stock-data 市场信号明细", expanded=False):
+        tabs = st.tabs(["热点", "龙虎榜", "行业"])
+        with tabs[0]:
+            hot = details.get("hot_reason")
+            if isinstance(hot, pd.DataFrame) and not hot.empty:
+                render_glass_dataframe(hot.head(80), height=520)
+            else:
+                st.info("暂无热点明细。")
+        with tabs[1]:
+            lhb = details.get("daily_dragon_tiger")
+            if isinstance(lhb, pd.DataFrame) and not lhb.empty:
+                render_glass_dataframe(lhb.head(80), height=520)
+            else:
+                st.info("暂无全市场龙虎榜明细。")
+        with tabs[2]:
+            industry = details.get("industry")
+            if isinstance(industry, pd.DataFrame) and not industry.empty:
+                render_glass_dataframe(industry.head(80), height=520)
+            else:
+                st.info("暂无行业轮动明细。")
 
 
 def _sentiment_data_status_label(data_quality: str | None) -> str:
@@ -1446,6 +2048,7 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
     _render_index_monitor(payload)
 
     _render_sentiment_metric_grid(metrics, payload.get("history", pd.DataFrame()))
+    _render_market_signal_verification(payload)
     _render_metric_explanations(metrics)
 
     st.markdown('<div class="chart-title" style="margin-bottom:16px;"><span>情绪周期定位</span><span class="pill pill-cyan">综合研判</span></div>', unsafe_allow_html=True)
@@ -1520,19 +2123,66 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
     with tabs[4]:
         warnings = payload.get("warnings", []) or []
         if warnings:
-            render_glass_dataframe(pd.DataFrame([w if isinstance(w, dict) else {"message": str(w)} for w in warnings[:60]]), height=520)
+            render_glass_dataframe(pd.DataFrame([w if isinstance(w, dict) else {"message": str(w)} for w in warnings[:60]]), height=420)
         else:
             st.success("本轮没有记录到数据源错误。")
+            
+        st.markdown("<div style='margin-top: 32px; margin-bottom: 16px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 24px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="chart-title"><span>缓存与数据生命周期管理</span><span class="pill pill-orange">系统级操作</span></div>', unsafe_allow_html=True)
+        
+        col_info, col_btn = st.columns([0.76, 0.24], vertical_alignment="center")
+        with col_info:
+            st.markdown(
+                '<div style="color: var(--text-muted, #A7ADBA); font-size: 0.9rem; line-height: 1.5;">'
+                '系统目前缓存了包括价格序列、公开新闻快讯、龙虎榜公告以及基本面分析等各类多源数据以保证极速加载体验。'
+                '如果遇到数据接口获取异常、数据偏差或想要即刻同步最新数据，您可以使用右侧的一键清空缓存操作。'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        with col_btn:
+            if st.button("一键清除所有缓存", key="btn_clear_global_cache", type="primary", use_container_width=True):
+                try:
+                    cache_stats = FileCache().clear_cache()
+                    total_cleared = sum(cache_stats.values())
+                    st.toast(f"✨ 缓存清空成功！共释放了 {total_cleared} 个文件", icon="✅")
+                    st.success(
+                        f"**成功清理以下数据接口缓存：**  \n"
+                        f"📁 价格数据: {cache_stats.get('price', 0)} 个 | "
+                        f"📁 财务基本面: {cache_stats.get('fundamentals', 0)} 个 | "
+                        f"📁 公开新闻: {cache_stats.get('news', 0)} 个  \n"
+                        f"📁 行业题材: {cache_stats.get('industry', 0)} 个 | "
+                        f"📁 错误日志: {cache_stats.get('logs', 0)} 个"
+                    )
+                except Exception as ex:
+                    st.error(f"清除缓存失败：{ex}")
 
 
-def _render_ai_market_dashboard(config: dict, prompt: str = "", submitted: bool = False) -> None:
-    assistant = AIMarketAssistant(config, provider="gemini")
+def _render_ai_market_dashboard(config: dict) -> None:
+    provider_options = ["Gemini", "DeepSeek"]
+    selected_label = st.segmented_control(
+        "AI模型",
+        provider_options,
+        default=st.session_state.get("ai_market_provider_label", "DeepSeek"),
+        key="ai_market_provider_label",
+        label_visibility="collapsed",
+    )
+    provider = "deepseek" if selected_label == "DeepSeek" else "gemini"
+    st.markdown(f'<div id="jocket-ai-provider" data-provider="{escape(str(selected_label))}"></div>', unsafe_allow_html=True)
+    assistant = AIMarketAssistant(config, provider=provider)
     if "ai_market_messages" not in st.session_state:
         st.session_state["ai_market_messages"] = []
+    has_pending_prompt = bool(st.session_state.get("pending_prompt"))
+    if not has_pending_prompt:
+        st.session_state["ai_market_processing"] = False
+    is_processing = bool(st.session_state.get("ai_market_processing") or has_pending_prompt)
+    st.markdown(
+        f'<div id="jocket-ai-processing" data-running="{str(is_processing).lower()}"></div>',
+        unsafe_allow_html=True,
+    )
 
     def render_ai_message(role: str, content: str) -> None:
         role_class = "user" if role == "user" else "assistant"
-        label = "你" if role_class == "user" else "AI行情"
+        label = "你" if role_class == "user" else "AI洞察"
         safe_content = markdown.markdown(str(content or ""), extensions=['fenced_code', 'tables', 'nl2br'])
         st.markdown(
             f"""
@@ -1547,7 +2197,103 @@ def _render_ai_market_dashboard(config: dict, prompt: str = "", submitted: bool 
             unsafe_allow_html=True,
         )
 
-    if not st.session_state["ai_market_messages"]:
+    if st.session_state.get("pending_prompt"):
+        prompt_text = st.session_state.pop("pending_prompt")
+        keywords = st.session_state.pop("pending_keywords", DEFAULT_MARKET_KEYWORDS)
+        forced_skills_pending = st.session_state.pop("pending_forced_skills", [])
+
+        st.session_state["ai_market_messages"].append({"role": "user", "content": prompt_text})
+        st.session_state["ai_market_processing"] = True
+
+        with st.container(height=600, border=False):
+            st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
+            placeholder = st.empty()
+            for message in reversed(st.session_state["ai_market_messages"]):
+                render_ai_message(message["role"], message["content"])
+            st.markdown("</section>", unsafe_allow_html=True)
+
+            full_answer = ""
+            safe_content = markdown.markdown("I'm Jocketing... 正在检索多维行情数据 ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+            placeholder.markdown(
+                f"""
+                <div class="ai-message-row assistant">
+                  <div class="ai-message-avatar">AI</div>
+                  <div class="ai-message-bubble">
+                    <div class="ai-message-name">AI洞察</div>
+                    <div class="ai-message-content">{safe_content}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if not assistant.ready():
+                full_answer = f"未检测到 {assistant.provider_label()} API token。请配置后重试。"
+                safe_content = markdown.markdown(full_answer, extensions=['fenced_code', 'tables', 'nl2br'])
+                placeholder.markdown(
+                    f"""
+                    <div class="ai-message-row assistant">
+                      <div class="ai-message-avatar">AI</div>
+                      <div class="ai-message-bubble">
+                        <div class="ai-message-name">AI洞察</div>
+                        <div class="ai-message-content">{safe_content}</div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                try:
+                    context = assistant.context_snapshot(prompt_text, st.session_state["ai_market_messages"][:-1], keywords, forced_skills_pending)
+
+                    pro_keywords = ["深度", "逻辑", "分析", "研究", "估值", "基本面", "财报", "资金", "怎么看", "为什么"]
+                    use_pro = any(kw in prompt_text for kw in pro_keywords) or (len(str(context.get("alphaear_stock", ""))) > 100)
+
+                    if assistant.settings.provider == "deepseek":
+                        model_override = assistant.deepseek_model_for(use_pro)
+                    else:
+                        model_override = "gemini-2.5-pro" if use_pro else "gemini-2.5-flash"
+
+                    messages = assistant._build_messages(prompt_text, st.session_state["ai_market_messages"][:-1], context)
+
+                    for chunk in assistant._ask_model_stream(messages, model_override=model_override):
+                        full_answer += chunk
+                        safe_content = markdown.markdown(full_answer + " ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+                        placeholder.markdown(
+                            f"""
+                            <div class="ai-message-row assistant">
+                              <div class="ai-message-avatar">AI</div>
+                              <div class="ai-message-bubble">
+                                <div class="ai-message-name">AI洞察</div>
+                                <div class="ai-message-content">{safe_content}</div>
+                              </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                except Exception as e:
+                    full_answer += f"\n\n**流式输出发生异常:** {e}"
+
+            if not full_answer:
+                full_answer = "模型没有返回有效内容。"
+
+            safe_content = markdown.markdown(full_answer, extensions=['fenced_code', 'tables', 'nl2br'])
+            placeholder.markdown(
+                f"""
+                <div class="ai-message-row assistant">
+                  <div class="ai-message-avatar">AI</div>
+                  <div class="ai-message-bubble">
+                    <div class="ai-message-name">AI洞察</div>
+                    <div class="ai-message-content">{safe_content}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.session_state["ai_market_messages"].append({"role": "assistant", "content": full_answer})
+            st.session_state["ai_market_processing"] = False
+            st.rerun()
+
+    elif not st.session_state["ai_market_messages"]:
         st.markdown(
             f"""
             <section class="ai-empty-state ai-chat-shell">
@@ -1556,7 +2302,7 @@ def _render_ai_market_dashboard(config: dict, prompt: str = "", submitted: bool 
                 <div class="ai-chat-shell-text" style="display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1;">
                   <h1>今天想看什么行情？</h1>
                   <p>询问市场主线、板块催化、个股消息面或盘前观察清单。</p>
-                  <div class="ai-provider-line" style="margin-top: 10px;">Gemini · {"已连接" if assistant.ready() else "未配置"}</div>
+                  <div class="ai-provider-line" style="margin-top: 10px;">{escape(assistant.provider_label())} · {"已连接" if assistant.ready() else "未配置"}</div>
                 </div>
               </div>
             </section>
@@ -1564,34 +2310,30 @@ def _render_ai_market_dashboard(config: dict, prompt: str = "", submitted: bool 
             unsafe_allow_html=True,
         )
     else:
-        st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
-        for message in st.session_state["ai_market_messages"]:
-            render_ai_message(message["role"], message["content"])
-        st.markdown("</section>", unsafe_allow_html=True)
-
-    if submitted and prompt and prompt.strip():
-        prompt_text = prompt.strip()
-        st.session_state["ai_market_messages"].append({"role": "user", "content": prompt_text})
-        render_ai_message("user", prompt_text)
-
-        keywords = DEFAULT_MARKET_KEYWORDS
-        with st.spinner("正在调用 Awesome Finance Skills 并读取实时行情..."):
-            result = assistant.ask(prompt_text, st.session_state["ai_market_messages"][:-1], keywords)
-        answer = result.get("answer", "模型没有返回有效内容。")
-        render_ai_message("assistant", answer)
-        st.session_state["ai_market_messages"].append({"role": "assistant", "content": answer})
-        st.rerun()
+        with st.container(height=600, border=False):
+            st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
+            for message in reversed(st.session_state["ai_market_messages"]):
+                render_ai_message(message["role"], message["content"])
+            st.markdown("</section>", unsafe_allow_html=True)
 
 
 st.markdown('<div class="product-masthead"><span>Jocket</span></div>', unsafe_allow_html=True)
 page = st.segmented_control(
     "核心功能",
-    ["AI行情", "个股分析", "市场情绪"],
-    default="AI行情",
+    ["AI洞察", "个股行情", "市场情绪", "投研分析"],
+    default="AI洞察",
     key="analysis_mode_top",
     label_visibility="collapsed",
 )
-st.markdown(f'<div id="jocket-current-page" data-page="{escape(str(page or "AI行情"))}"></div>', unsafe_allow_html=True)
+if page is None:
+    page = "AI洞察"
+st.markdown(f'<div id="jocket-current-page" data-page="{escape(str(page))}"></div>', unsafe_allow_html=True)
+_mode_info = {
+    "AI洞察": ("AI洞察", "询问大盘主线、板块催化或个股消息面，获取结合最新信号的深度研判。"),
+    "个股行情": ("个股行情", "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图。"),
+    "市场情绪": ("市场情绪", "复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池。"),
+    "投研分析": ("深度投研", "多智能体协作完成高质量A股研报分析，提供全面的个股深度剖析。"),
+}
 config.setdefault("data", {})["provider"] = "auto"
 
 code = ""
@@ -1612,39 +2354,101 @@ sentiment_backfill = False
 run = False
 ai_prompt = ""
 ai_submitted = False
+ai_forced_skills = []
+AI_SKILL_BUTTONS = [
+    ("alphaear-news", "实时财经新闻与热点趋势"),
+    ("alphaear-stock", "A股/港股/美股行情与基本面"),
+    ("alphaear-sentiment", "FinBERT / LLM 情感分析"),
+    ("alphaear-predictor", "Kronos 时序预测模型，结合新闻情绪动态调整"),
+    ("alphaear-signal-tracker", "投资信号演化追踪"),
+    ("alphaear-logic-visualizer", "传导链路图生成"),
+    ("alphaear-reporter", "专业研报生成"),
+    ("alphaear-search", "全网搜索与本地 RAG"),
+]
 
-if page == "AI行情":
+if page == "AI洞察":
+    def _queue_ai_market_prompt():
+        prompt = st.session_state.get("ai_market_prompt", "").strip()
+        if prompt:
+            st.session_state["pending_prompt"] = prompt
+            st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
+            st.session_state["pending_forced_skills"] = st.session_state.get("ai_market_forced_skill_names", [])
+            st.session_state["clear_ai_market_prompt"] = True
+
+    if st.session_state.pop("clear_ai_market_prompt", False):
+        st.session_state["ai_market_prompt"] = ""
+
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">AI 行情问答</div>', unsafe_allow_html=True)
-        ai_cols = st.columns([0.88, 0.12], vertical_alignment="center")
-        with ai_cols[0]:
-            ai_prompt = st.text_input(
-                "询问 AI行情",
-                placeholder="询问大盘主线、板块催化、个股消息面...",
-                label_visibility="collapsed",
-                key="ai_market_prompt",
-                autocomplete="off",
-            )
-        with ai_cols[1]:
-            ai_submitted = st.button("发送", key="ai_market_submit", use_container_width=True)
-elif page in {"个股分析", "市场情绪"}:
+        with st.form("ai_market_prompt_form", clear_on_submit=True, border=False):
+            ai_cols = st.columns([0.76, 0.24], vertical_alignment="top")
+            with ai_cols[0]:
+                inner_cols = st.columns(1)
+                with inner_cols[0]:
+                    _command_label("询问内容 / 提示词")
+                    ai_prompt = st.text_input(
+                        "询问 AI洞察",
+                        placeholder="询问大盘主线、板块催化、个股消息面...",
+                        label_visibility="collapsed",
+                        key="ai_market_prompt",
+                        autocomplete="off",
+                    )
+            with ai_cols[1]:
+                st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
+                ai_submitted = st.form_submit_button("来财来财", use_container_width=True)
+        if ai_submitted and ai_prompt.strip():
+            st.session_state["pending_prompt"] = ai_prompt.strip()
+            st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
+            st.session_state["pending_forced_skills"] = st.session_state.get("ai_market_forced_skill_names", [])
+            st.session_state["clear_ai_market_prompt"] = True
+            st.rerun()
+        if "ai_market_forced_skill_names" not in st.session_state:
+            st.session_state["ai_market_forced_skill_names"] = []
+            
+        def _toggle_ai_skill(s_name):
+            skills = set(st.session_state.get("ai_market_forced_skill_names", []))
+            if s_name in skills:
+                skills.remove(s_name)
+            else:
+                skills.add(s_name)
+            st.session_state["ai_market_forced_skill_names"] = [name for name, _ in AI_SKILL_BUTTONS if name in skills]
+
+        with st.expander("请选择Skill", expanded=False):
+            st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
+            selected_skills = set(st.session_state.get("ai_market_forced_skill_names", []))
+            
+            for skill_name, help_text in AI_SKILL_BUTTONS:
+                display_name = skill_name.replace("alphaear-", "").title()
+                st.button(
+                    display_name,
+                    key=f"ai_skill_{skill_name.replace('-', '_')}",
+                    help=help_text,
+                    type="primary" if skill_name in selected_skills else "secondary",
+                    use_container_width=False,
+                    on_click=_toggle_ai_skill,
+                    args=(skill_name,)
+                )
+        ai_forced_skills = st.session_state.get("ai_market_forced_skill_names", [])
+elif page in {"个股行情", "市场情绪"}:
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">参数与操作</div>', unsafe_allow_html=True)
-        if page == "个股分析":
+        if page == "个股行情":
             command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
             with command_cols[0]:
-                _command_label("股票代码 / 名称")
-                stock_query = st.text_input(
-                    "股票代码 / 名称",
-                    placeholder="输入 600519、贵州茅台、茅台等",
-                    help="支持 6 位股票代码、完整中文名和中文名称模糊匹配。",
-                    key="stock_query",
-                    autocomplete="off",
-                    label_visibility="collapsed",
-                )
+                inner_cols = st.columns(2)
+                with inner_cols[0]:
+                    _command_label("股票代码 / 名称")
+                    stock_query = st.text_input(
+                        "股票代码 / 名称",
+                        placeholder="输入 600519、贵州茅台、茅台等",
+                        help="支持 6 位股票代码、完整中文名和中文名称模糊匹配。",
+                        key="stock_query",
+                        autocomplete="off",
+                        label_visibility="collapsed",
+                    )
             with command_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
-                run = st.button("启动雷达", type="primary", use_container_width=True, key="run_个股分析")
+                run = st.button("来财来财", type="primary", use_container_width=True, key="run_stock_quote")
     
             matches = resolve_stock_query(stock_query, _stock_directory()) if stock_query.strip() else []
             if matches:
@@ -1656,34 +2460,41 @@ elif page in {"个股分析", "市场情绪"}:
                 st.warning("没有匹配到股票。可以尝试输入 6 位代码、完整名称或更短的名称关键词。")
     
             with st.expander("DCF 估值假设", expanded=False):
-                dcf_cols = st.columns(5, vertical_alignment="bottom")
+                dcf_cols = st.columns(5, vertical_alignment="top")
                 with dcf_cols[0]:
                     dcf_years = st.number_input("DCF 年数", min_value=1, max_value=10, value=5, step=1)
                 with dcf_cols[1]:
-                    dcf_growth = st.slider("现金流增长率", min_value=-20.0, max_value=30.0, value=5.0, step=0.5)
+                    dcf_growth = st.slider("现金流增长率", min_value=-20.0, max_value=30.0, value=5.0, step=0.5, format="%.2f%%")
                 with dcf_cols[2]:
-                    dcf_terminal_growth = st.slider("永续增长率", min_value=-5.0, max_value=6.0, value=2.0, step=0.25)
+                    dcf_terminal_growth = st.slider("永续增长率", min_value=-5.0, max_value=6.0, value=2.0, step=0.25, format="%.2f%%")
                 with dcf_cols[3]:
-                    dcf_discount = st.slider("折现率", min_value=4.0, max_value=20.0, value=10.0, step=0.5)
+                    dcf_discount = st.slider("折现率", min_value=4.0, max_value=20.0, value=10.0, step=0.5, format="%.2f%%")
                 with dcf_cols[4]:
-                    dcf_margin = st.slider("安全边际", min_value=0.0, max_value=50.0, value=20.0, step=1.0)
+                    dcf_margin = st.slider("安全边际", min_value=0.0, max_value=50.0, value=20.0, step=1.0, format="%.2f%%")
         elif page == "市场情绪":
-            sentiment_cols = st.columns([0.36, 0.09, 0.09, 0.28, 0.18], vertical_alignment="top")
-            with sentiment_cols[0]:
-                _command_label("交易日")
-                sentiment_date = st.date_input("交易日", value=sentiment_date, key="sentiment_date", label_visibility="collapsed")
-            with sentiment_cols[1]:
-                _command_label("强制刷新")
-                sentiment_refresh = st.toggle("强制刷新", value=False, help="打开后会跳过页面级缓存，重新拉取公共接口。", label_visibility="collapsed")
-            with sentiment_cols[2]:
-                _command_label("补齐历史")
-                sentiment_backfill = st.toggle("补齐历史", value=False, help="默认只拉交易日当日数据；打开后会尝试补齐观察窗口内历史涨跌停池。", label_visibility="collapsed")
-            with sentiment_cols[3]:
-                _command_label("观察窗口")
-                sentiment_window = _window_buttons("sentiment_window_segment", int(st.session_state.get("sentiment_window_segment", 60) or 60))
-            with sentiment_cols[4]:
+            command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
+            with command_cols[0]:
+                inner_cols = st.columns(2)
+                with inner_cols[0]:
+                    _command_label("交易日")
+                    sentiment_date = st.date_input("交易日", value=sentiment_date, key="sentiment_date", label_visibility="collapsed")
+                with inner_cols[1]:
+                    _command_label("观察窗口")
+                    sentiment_window = st.segmented_control(
+                        "观察窗口",
+                        options=[14, 30, 60],
+                        default=60,
+                        format_func=lambda x: f"{x}日",
+                        key="sentiment_window_segment",
+                        label_visibility="collapsed"
+                    )
+                    st.markdown(f'<div id="jocket-sentiment-window" data-window="{sentiment_window}日"></div>', unsafe_allow_html=True)
+            with command_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
-                run = st.button("启动雷达", type="primary", use_container_width=True, key="run_市场情绪")
+                run = st.button("来财来财", type="primary", use_container_width=True, key="run_market_sentiment")
+            
+            sentiment_refresh = False
+            sentiment_backfill = False
 
 dcf_assumptions = {
     "years": int(dcf_years),
@@ -1698,52 +2509,130 @@ sentiment_result = None
 run_error = None
 ai_stock_summary = None
 fundamental_context_result = None
+stock_result_cache_key = "stock_analysis_result_cache"
+market_result_cache_key = "market_sentiment_result_cache"
+stock_job_state_key = "stock_analysis_background_job"
+market_job_state_key = "market_sentiment_background_job"
+stock_job_running = False
+market_job_running = False
 
-if run and page == "个股分析":
+if "ai_market_messages" not in st.session_state:
+    st.session_state["ai_market_messages"] = []
+
+stock_job = st.session_state.get(stock_job_state_key) or {}
+stock_future = stock_job.get("future")
+if stock_future is not None:
+    if stock_future.done():
+        try:
+            stock_payload = stock_future.result()
+            st.session_state[stock_result_cache_key] = stock_payload
+            if stock_payload.get("analysis_result"):
+                latest_date = _latest_date(stock_payload["analysis_result"][1])
+                summary_key = _stock_ai_summary_key(stock_payload.get("code", ""), latest_date, stock_payload["analysis_result"][0])
+                st.session_state[summary_key] = stock_payload.get("ai_stock_summary")
+            if page == "个股行情":
+                if not code or _stock_job_signature(code, dcf_assumptions) == stock_job.get("signature"):
+                    code = code or str(stock_payload.get("code") or "")
+                    name = name or str(stock_payload.get("name") or "")
+                    analysis_result = stock_payload.get("analysis_result")
+                    fundamental_context_result = stock_payload.get("fundamental_context_result")
+                    ai_stock_summary = stock_payload.get("ai_stock_summary")
+        except Exception as exc:
+            if page == "个股行情":
+                run_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            st.session_state.pop(stock_job_state_key, None)
+    else:
+        stock_job_running = page == "个股行情"
+
+market_job = st.session_state.get(market_job_state_key) or {}
+market_future = market_job.get("future")
+if market_future is not None:
+    if market_future.done():
+        try:
+            market_payload = market_future.result()
+            st.session_state[market_result_cache_key] = market_payload
+            st.session_state["market_sentiment_result"] = market_payload.get("sentiment_result")
+            st.session_state["market_sentiment_window_days"] = int(market_payload.get("window_days") or 60)
+            if page == "市场情绪" and _market_job_signature(sentiment_date, int(sentiment_window or 60)) == market_job.get("signature"):
+                sentiment_result = market_payload.get("sentiment_result")
+                sentiment_window = int(market_payload.get("window_days") or sentiment_window or 60)
+        except Exception as exc:
+            if page == "市场情绪":
+                run_error = str(exc)
+        finally:
+            st.session_state.pop(market_job_state_key, None)
+    else:
+        market_job_running = page == "市场情绪"
+
+if run and page == "个股行情":
     if not code:
         run_error = "请先输入股票代码或股票名称，并从匹配结果中选择一个个股。"
     else:
-        with st.spinner("正在拉取行情并计算技术指标..."):
-            try:
-                analysis_result = _fetch_stock_analysis_core(code, name)
-                score_tmp, hist_tmp, _ = analysis_result
-            except Exception as exc:
-                run_error = f"{type(exc).__name__}: {exc}"
-        if analysis_result and not run_error:
-            fundamental_context_result = _build_fundamental_context(code, hist_tmp, score_tmp, dcf_assumptions)
-            score_for_summary = _enrich_score_with_fundamentals(score_tmp, fundamental_context_result) if fundamental_context_result else score_tmp
-            stock_name_for_summary = name or _chinese_name_for_code(code, code)
-            ai_stock_summary = _generate_stock_ai_summary(code, stock_name_for_summary, score_for_summary, hist_tmp, fundamental_context_result)
+        signature = _stock_job_signature(code, dcf_assumptions)
+        progress = {"stage": "fetch"}
+        st.session_state[stock_job_state_key] = {
+            "signature": signature,
+            "code": code,
+            "name": name,
+            "progress": progress,
+            "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "future": _analysis_executor().submit(_run_stock_analysis_job, code, name, copy.deepcopy(dcf_assumptions), progress),
+        }
+        stock_job_running = True
 elif run and page == "市场情绪":
-    with st.spinner("正在拉取涨停池、炸板池、跌停池并计算市场情绪..."):
-        try:
-            sentiment_result = MarketSentimentAnalyzer(config).analyze(
-                sentiment_date,
-                window_days=int(sentiment_window),
-                force_refresh=bool(sentiment_refresh),
-                backfill_history=bool(sentiment_backfill),
-            )
-            st.session_state["market_sentiment_result"] = sentiment_result
-            st.session_state["market_sentiment_window_days"] = int(sentiment_window)
-        except Exception as exc:
-            run_error = str(exc)
+    signature = _market_job_signature(sentiment_date, int(sentiment_window or 60))
+    progress = {"stage": "fetch"}
+    st.session_state[market_job_state_key] = {
+        "signature": signature,
+        "trade_date": pd.to_datetime(sentiment_date).date(),
+        "window_days": int(sentiment_window or 60),
+        "progress": progress,
+        "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "future": _analysis_executor().submit(_run_market_sentiment_job, sentiment_date, int(sentiment_window or 60), progress),
+    }
+    market_job_running = True
 
-if page == "市场情绪" and sentiment_result is None and not run_error:
-    sentiment_result = st.session_state.get("market_sentiment_result")
-    sentiment_window = int(st.session_state.get("market_sentiment_window_days", sentiment_window))
+if page == "个股行情" and analysis_result is None and not run_error and not stock_job_running:
+    cached_stock_result = st.session_state.get(stock_result_cache_key) or {}
+    cached_code = str(cached_stock_result.get("code") or "")
+    cached_dcf = cached_stock_result.get("dcf_assumptions") or {}
+    if cached_stock_result.get("analysis_result") and (not code or cached_code == code) and cached_dcf == dcf_assumptions:
+        code = code or cached_code
+        name = name or str(cached_stock_result.get("name") or "")
+        analysis_result = cached_stock_result.get("analysis_result")
+        fundamental_context_result = cached_stock_result.get("fundamental_context_result")
+        ai_stock_summary = cached_stock_result.get("ai_stock_summary")
+
+if page == "市场情绪" and sentiment_result is None and not run_error and not market_job_running:
+    cached_market_result = st.session_state.get(market_result_cache_key) or {}
+    cached_market_date = cached_market_result.get("trade_date")
+    cached_market_window = int(cached_market_result.get("window_days") or 0)
+    current_market_date = pd.to_datetime(sentiment_date).date()
+    current_market_window = int(sentiment_window or 60)
+    if (
+        cached_market_result.get("sentiment_result")
+        and cached_market_date == current_market_date
+        and cached_market_window == current_market_window
+    ):
+        sentiment_result = cached_market_result.get("sentiment_result")
+        sentiment_window = cached_market_window
+    elif "market_sentiment_result" in st.session_state and not cached_market_result:
+        sentiment_result = st.session_state.get("market_sentiment_result")
+        sentiment_window = int(st.session_state.get("market_sentiment_window_days", sentiment_window or 60))
 
 
 # Mode Info for Hero
 _mode_info = {
-    "AI行情": ("AI行情", "询问大盘主线、板块催化或个股消息面，获取结合实时信号的深度研判。"),
-    "个股分析": ("个股分析", "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图。"),
+    "AI洞察": ("AI洞察", "询问大盘主线、板块催化或个股消息面，获取结合最新信号的深度研判。"),
+    "个股行情": ("个股行情", "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图。"),
     "市场情绪": ("市场情绪", "复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池。"),
 }
 
 # Default Hero Values
 hero_code = (
     "自然语言"
-    if page == "AI行情"
+    if page == "AI洞察"
     else ("全市场" if page == "市场情绪" else (f"{name} {code}".strip() if code else "未选择个股"))
 )
 hero_source = INTERNAL_DATA_LABEL
@@ -1755,7 +2644,7 @@ if analysis_result:
     hero_latest = _latest_date(hist_for_hero)
     profile = ((fundamental_context_result or {}).get("payload", {}) or {}).get("profile", {}) or {}
     profile_name = profile.get("name")
-    stock_name = _chinese_name_for_code(profile.get("code") or code, name or profile_name or code or "个股分析")
+    stock_name = _chinese_name_for_code(profile.get("code") or code, name or profile_name or code or "个股行情")
     stock_code = profile.get("code") or score_for_hero.get("code") or code
     exchange = profile.get("exchange")
     industry = profile.get("industry_cn") or profile.get("industry")
@@ -1781,8 +2670,8 @@ elif sentiment_result:
     )
 
 # Render Global Hero (Page-Aware)
-if page in {"个股分析", "市场情绪"}:
-    ai_summary_to_pass = ai_stock_summary if page == "个股分析" else None
+if page in {"个股行情", "市场情绪"}:
+    ai_summary_to_pass = ai_stock_summary if page == "个股行情" else None
     render_hero(
         hero_code,
         hero_source,
@@ -1794,19 +2683,33 @@ if page in {"个股分析", "市场情绪"}:
     )
 
 # Dashboard Content
-if page == "AI行情":
-    _render_ai_market_dashboard(config, prompt=ai_prompt, submitted=ai_submitted)
+if page == "AI洞察":
+    _render_ai_market_dashboard(config)
+elif stock_job_running:
+    _render_background_job_fragment(
+        stock_job_state_key,
+        "个股查询进行中",
+        "正在拉取行情、基本面、资金和消息面信号。可以先切到其他功能页；任务完成后会自动接上结果。",
+    )
+elif market_job_running:
+    _render_background_job_fragment(
+        market_job_state_key,
+        "市场情绪分析进行中",
+        "正在拉取涨停生态、板块梯队、资金验证和观察池信号。可以先切到其他功能页；任务完成后会自动接上结果。",
+    )
 elif run_error:
     with st.container(border=True):
         st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
-        st.error(f"本次请求没有成功生成结果。请稍后重试，或更换个股验证实时行情源。\n\n**错误详情：** `{run_error}`")
+        st.error(f"本次请求没有成功生成结果。请稍后重试，或更换个股验证最新行情源。\n\n**错误详情：** `{run_error}`")
         with st.expander("调试信息（Streamlit Cloud / Railway 排错用）"):
             st.code(run_error)
 elif analysis_result:
     score, hist, report_path = analysis_result
     _render_analysis_dashboard(score, hist, report_path, dcf_assumptions, fundamental_context_result)
 elif sentiment_result:
-    _render_market_sentiment_dashboard(sentiment_result, int(sentiment_window))
+    _render_market_sentiment_dashboard(sentiment_result, int(sentiment_window or 60))
+elif page == "投研分析":
+    render_tradingagents_dashboard()
 else:
     # Empty state handled by dynamic hero above
     pass

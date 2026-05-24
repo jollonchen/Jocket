@@ -1,5 +1,5 @@
 data:
-  provider: "auto"   # auto / akshare / ths / yfinance
+  provider: "auto"   # auto / baidu / akshare / efinance / ths / yfinance
   akshare_adjust: "qfq"  # qfq=前复权, hfq=后复权, 空字符串=不复权
   timeout: 12
   require_realtime: true  # true=必须拿到实时行情并替换最新日线，否则报错
@@ -38,7 +38,20 @@ ai_market:
   default_provider: "gemini"
   gemini_base_url: "https://generativelanguage.googleapis.com/v1beta"
   gemini_model: "gemini-2.5-flash"
+  deepseek_base_url: "https://api.deepseek.com"
+  deepseek_model: "deepseek-v4-flash"
+  deepseek_flash_model: "deepseek-v4-flash"
+  deepseek_pro_model: "deepseek-v4-pro"
   timeout: 45
   temperature: 0.25
   max_tokens: 4096
   skill_dir: "Awesome-finance-skills/skills"
+
+a_stock_data:
+  enabled: true
+  timeout: 12
+  ttl_seconds: 1800
+  max_signal_cards:
+    stock: 10
+    market: 8
+  optional_iwencai: true

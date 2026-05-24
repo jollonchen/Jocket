@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import pandas as pd
 
 from .cache_utils import FileCache, safe_fetch
+from .providers.a_stock_data_provider import AStockDataProvider
 from .utils import display_code, ensure_dirs, normalize_a_share_code
 
 try:
@@ -163,6 +164,13 @@ class NewsFetcher:
         )
         errors.extend(err)
         entries.extend(self._normalize_stock_news_em(em_news))
+        try:
+            provider = AStockDataProvider(self.cache, self.config)
+            result = provider.eastmoney_stock_news(ticker)
+            errors.extend(result.warnings or [])
+            entries.extend(self._normalize_a_stock_em_news(result.data))
+        except Exception as exc:
+            errors.append({"source": "a-stock-data", "interface": "eastmoney_stock_news", "error_type": exc.__class__.__name__, "message": str(exc)})
 
         base_url = f"https://stockpage.10jqka.com.cn/{ticker}/"
         text, err = safe_fetch(
@@ -264,6 +272,16 @@ class NewsFetcher:
             df, err = safe_fetch("akshare", interface, func, retries=1, min_interval=1.0, cache=self.cache)
             errors.extend(err)
             entries.extend(self._normalize_global_news(df, source_name))
+        try:
+            provider = AStockDataProvider(self.cache, self.config)
+            cls_result = provider.cls_telegraph(50)
+            em_result = provider.eastmoney_global_news(50)
+            errors.extend(cls_result.warnings or [])
+            errors.extend(em_result.warnings or [])
+            entries.extend(self._normalize_a_stock_cls(cls_result.data))
+            entries.extend(self._normalize_a_stock_global_news(em_result.data))
+        except Exception as exc:
+            errors.append({"source": "a-stock-data", "interface": "global_news", "error_type": exc.__class__.__name__, "message": str(exc)})
         entries.extend(self._fetch_extra_public_feeds(errors))
         payload = {"items": self._dedupe(entries), "errors": errors}
         self.cache.set_pickle("news", cache_key, payload)
@@ -330,6 +348,75 @@ class NewsFetcher:
                     "kind": _classify(str(row.get("新闻链接") or ""), title),
                     "date": _parse_any_date(row.get("发布时间")),
                     "source": str(row.get("文章来源") or "东方财富个股新闻"),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_a_stock_em_news(items) -> list[dict]:
+        rows = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            title = _clean_text(item.get("title") or item.get("Title") or item.get("artTitle") or item.get("newsTitle"), 160)
+            content = _clean_text(item.get("content") or item.get("summary") or item.get("digest") or item.get("Art_ShowTime"), 320)
+            if not title and not content:
+                continue
+            rows.append(
+                {
+                    "title": title or content[:80],
+                    "content": content,
+                    "url": str(item.get("url") or item.get("Url") or item.get("artUrl") or item.get("link") or ""),
+                    "kind": "新闻",
+                    "date": _parse_any_date(item.get("date") or item.get("showTime") or item.get("publishTime") or item.get("Art_ShowTime")),
+                    "source": str(item.get("source") or item.get("mediaName") or "东财个股新闻"),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_a_stock_cls(items) -> list[dict]:
+        rows = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            title = _clean_text(item.get("title") or item.get("content") or item.get("descr"), 180)
+            content = _clean_text(item.get("content") or item.get("descr") or title, 360)
+            if not title:
+                continue
+            ts = item.get("ctime") or item.get("time") or item.get("created_at")
+            if isinstance(ts, (int, float)) and ts > 1000000000:
+                ts = pd.to_datetime(ts, unit="s", errors="coerce")
+            rows.append(
+                {
+                    "title": title,
+                    "content": content,
+                    "url": str(item.get("shareurl") or item.get("url") or ""),
+                    "kind": "财联社电报",
+                    "date": _parse_any_date(ts),
+                    "source": "财联社直连",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _normalize_a_stock_global_news(items) -> list[dict]:
+        rows = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            title = _clean_text(item.get("title") or item.get("newsTitle") or item.get("digest"), 180)
+            content = _clean_text(item.get("summary") or item.get("digest") or item.get("content") or title, 360)
+            if not title:
+                continue
+            rows.append(
+                {
+                    "title": title,
+                    "content": content,
+                    "url": str(item.get("url") or item.get("newsUrl") or ""),
+                    "kind": "7x24",
+                    "date": _parse_any_date(item.get("showTime") or item.get("time") or item.get("publishTime")),
+                    "source": "东财全球资讯直连",
                 }
             )
         return rows

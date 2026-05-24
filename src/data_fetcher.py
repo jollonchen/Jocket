@@ -6,7 +6,6 @@ import json
 import os
 import re
 import signal
-import ssl
 import threading
 import urllib.request
 import urllib3
@@ -19,9 +18,8 @@ from .utils import normalize_a_share_code, display_code, ensure_dirs
 from .universe import DEFAULT_UNIVERSE
 
 # Some macOS/Python environments fail on Eastmoney SSL through AkShare, and
-# local proxy tools can break Eastmoney requests. Keep this patch so AkShare can
-# be used where possible, while the app can still fall back to yfinance.
-ssl._create_default_https_context = ssl._create_unverified_context
+# local proxy tools can break Chinese quote endpoints. Keep bypass helpers
+# scoped to market-data calls instead of patching global requests behavior.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _PROXY_ENV_KEYS = (
@@ -35,6 +33,8 @@ _PROXY_ENV_KEYS = (
 
 
 def _disable_process_proxies() -> None:
+    if os.getenv("JOCKET_DISABLE_PROCESS_PROXIES", "").lower() not in {"1", "true", "yes"}:
+        return
     for key in _PROXY_ENV_KEYS:
         os.environ.pop(key, None)
     os.environ["NO_PROXY"] = "*"
@@ -43,25 +43,10 @@ def _disable_process_proxies() -> None:
 
 _disable_process_proxies()
 
-_original_request = requests.request
-_original_session_request = requests.sessions.Session.request
-
-
-def _request_no_verify(method, url, **kwargs):
+def _market_request_kwargs(**kwargs):
     kwargs.setdefault("verify", False)
     kwargs.setdefault("proxies", {"http": None, "https": None, "all": None})
-    return _original_request(method, url, **kwargs)
-
-
-def _session_request_no_verify(self, method, url, **kwargs):
-    self.trust_env = False
-    kwargs.setdefault("verify", False)
-    kwargs.setdefault("proxies", {"http": None, "https": None, "all": None})
-    return _original_session_request(self, method, url, **kwargs)
-
-
-requests.request = _request_no_verify
-requests.sessions.Session.request = _session_request_no_verify
+    return kwargs
 
 try:
     import akshare as ak
@@ -78,7 +63,8 @@ class DataFetcher:
     """Market data fetcher with selectable providers.
 
     provider:
-    - auto: try AkShare first, then Tonghuashun and yfinance fallback
+    - auto: try direct public A-share feeds, AkShare, efinance, Tonghuashun and yfinance fallback
+    - baidu: Baidu Gushitong K-line with MA fields
     - ths: only Tonghuashun
     - akshare: only AkShare
     - yfinance: only Yahoo Finance
@@ -123,6 +109,8 @@ class DataFetcher:
             return self._with_realtime_quote(self._get_hist_yfinance(code, start, end, use_cache), code, end)
         if provider == 'efinance':
             return self._with_realtime_quote(self._get_hist_efinance(code, start, end, use_cache), code, end)
+        if provider == 'baidu':
+            return self._with_realtime_quote(self._get_hist_baidu(code, start, end, use_cache), code, end)
 
         # auto mode: routing based on code pattern
         is_hk = code.endswith('.HK')
@@ -139,6 +127,12 @@ class DataFetcher:
                 if is_us: raise RuntimeError('US股票获取失败：' + str(exc))
 
         # Route 2: AkShare / efinance / ths (best for A/HK)
+        if not is_hk and self._is_a_share(code):
+            try:
+                return self._with_realtime_quote(self._get_hist_baidu(code, start, end, use_cache), code, end)
+            except Exception as exc:
+                errors.append(f'百度股市通失败：{exc}')
+
         try:
             return self._with_realtime_quote(self._get_hist_akshare(code, start, end, use_cache), code, end)
         except Exception as exc:
@@ -376,6 +370,85 @@ class DataFetcher:
         df['yahoo_code'] = normalize_a_share_code(code)
         if use_cache:
             df.to_csv(cache_path, index=False, encoding='utf-8-sig')
+        return df
+
+    def _get_hist_baidu(self, code: str, start: str, end: str, use_cache: bool = True) -> pd.DataFrame:
+        ticker = display_code(normalize_a_share_code(code))
+        cache_path = self._cache_path('baidu', ticker, start, end)
+        if use_cache:
+            cached = self._read_price_cache('baidu', ticker, start, end, ttl_seconds=1800)
+            if cached is not None:
+                return cached
+
+        def fetch():
+            url = "https://finance.pae.baidu.com/selfselect/getstockquotation"
+            params = {
+                "all": "1",
+                "isIndex": "false",
+                "isBk": "false",
+                "isBlock": "false",
+                "isFutures": "false",
+                "isStock": "true",
+                "newFormat": "1",
+                "group": "quotation_kline_ab",
+                "finClientType": "pc",
+                "code": ticker,
+                "ktype": "1",
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                "Accept": "application/vnd.finance-web.v1+json",
+                "Origin": "https://gushitong.baidu.com",
+                "Referer": "https://gushitong.baidu.com/",
+            }
+            response = requests.get(url, params=params, headers=headers, timeout=self.timeout, **_market_request_kwargs())
+            response.raise_for_status()
+            return response.json()
+
+        payload, errors = safe_fetch("baidu", "getstockquotation_kline", fetch, retries=1, min_interval=0.8, cache=self.file_cache)
+        if payload is None:
+            raise RuntimeError("百度股市通 K 线接口暂不可用：" + "；".join(str(e.get("message", e)) for e in errors[-2:]))
+        md = ((payload.get("Result") or {}).get("newMarketData") or {})
+        keys = md.get("keys") or []
+        rows = []
+        for raw in str(md.get("marketData") or "").split(";"):
+            vals = raw.split(",")
+            if len(vals) != len(keys):
+                continue
+            rows.append(dict(zip(keys, vals)))
+        if not rows:
+            raise ValueError(f"百度股市通没有获取到行情数据：{ticker}")
+        df = pd.DataFrame(rows).rename(
+            columns={
+                "time": "date",
+                "volume": "volume",
+                "amount": "amount",
+                "ma5avgprice": "ma5_baidu",
+                "ma10avgprice": "ma10_baidu",
+                "ma20avgprice": "ma20_baidu",
+            }
+        )
+        for col in ["date", "open", "high", "low", "close", "volume", "amount", "ma5_baidu", "ma10_baidu", "ma20_baidu"]:
+            if col not in df.columns:
+                continue
+            if col == "date":
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+            else:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["date", "close"]).sort_values("date")
+        start_ts = pd.to_datetime(start)
+        end_ts = pd.to_datetime(end)
+        df = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
+        if df.empty:
+            raise ValueError(f"百度股市通没有获取到指定区间行情数据：{ticker}")
+        if "amount" not in df.columns:
+            df["amount"] = df["close"] * df.get("volume", 0)
+        df["pct_chg"] = df["close"].pct_change() * 100
+        df["amount_est"] = df["amount"]
+        df["data_source"] = "baidu:gushitong_kline"
+        df["yahoo_code"] = normalize_a_share_code(code)
+        if use_cache:
+            df.to_csv(cache_path, index=False, encoding="utf-8-sig")
         return df
 
     def _get_hist_akshare(self, code: str, start: str, end: str, use_cache: bool = True) -> pd.DataFrame:
