@@ -508,7 +508,7 @@ class MarketSentimentAnalyzer:
                         target,
                         params=params,
                         timeout=float(self.config.get("data", {}).get("timeout", 12)),
-                        headers={"User-Agent": "Mozilla/5.0 (stock-picker-ui)", "Referer": "https://quote.eastmoney.com/"},
+                        headers={"User-Agent": "Mozilla/5.0 (Jocket)", "Referer": "https://quote.eastmoney.com/"},
                         verify=False,
                         proxies={"http": None, "https": None, "all": None},
                     )

@@ -18,7 +18,7 @@
 ## 安装
 
 ```bash
-cd /Users/jollonchen/Documents/Codex/stock-picker-ui
+cd /Users/jollonchen/Documents/Codex/Jocket
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

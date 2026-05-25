@@ -111,7 +111,7 @@ def _suggest_remote(query: str, limit: int) -> list[dict]:
         payload = _request_json(
             "https://searchapi.eastmoney.com/api/suggest/get",
             params={"input": query, "type": 14, "count": limit},
-            headers={"User-Agent": "Mozilla/5.0 (stock-picker-ui)"},
+            headers={"User-Agent": "Mozilla/5.0 (Jocket)"},
             timeout=5,
         )
     except Exception:

@@ -316,7 +316,7 @@ class DataFetcher:
         req = urllib.request.Request(
             url,
             headers={
-                'User-Agent': 'Mozilla/5.0 (stock-picker-ui)',
+                'User-Agent': 'Mozilla/5.0 (Jocket)',
                 'Referer': 'https://q.10jqka.com.cn/',
             },
         )
@@ -396,7 +396,7 @@ class DataFetcher:
                 "ktype": "1",
             }
             headers = {
-                "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                "User-Agent": "Mozilla/5.0 Jocket",
                 "Accept": "application/vnd.finance-web.v1+json",
                 "Origin": "https://gushitong.baidu.com",
                 "Referer": "https://gushitong.baidu.com/",
@@ -708,7 +708,7 @@ class DataFetcher:
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                    "User-Agent": "Mozilla/5.0 Jocket",
                     "Referer": "http://finance.sina.com.cn",
                 },
             )
@@ -756,7 +756,7 @@ class DataFetcher:
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 stock-picker-ui",
+                    "User-Agent": "Mozilla/5.0 Jocket",
                     "Referer": "https://finance.qq.com/",
                 },
             )

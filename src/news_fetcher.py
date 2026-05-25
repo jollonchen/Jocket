@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
     ak = None
 
 
-UA = "Mozilla/5.0 (stock-picker-ui news reference)"
+UA = "Mozilla/5.0 (Jocket news reference)"
 
 EVENT_KEYWORDS = (
     "公告", "业绩", "预告", "净利润", "营收", "订单", "合同", "中标", "签署", "合作",

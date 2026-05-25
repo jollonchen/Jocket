@@ -559,7 +559,7 @@ class AIMarketAssistant:
             response = requests.get(
                 url,
                 headers={
-                    "User-Agent": "stock-picker-ui AlphaEar integration",
+                    "User-Agent": "Jocket AlphaEar integration",
                     "Referer": "https://deepear.vercel.app/lite",
                 },
                 timeout=12,

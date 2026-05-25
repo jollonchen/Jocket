@@ -337,7 +337,7 @@ class FundamentalFetcher:
         return {"errors": errors}
 
     def _request_text(self, url: str, encoding: str) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 stock-picker-ui", "Referer": "https://finance.sina.com.cn/"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Jocket", "Referer": "https://finance.sina.com.cn/"})
         with urllib.request.urlopen(req, timeout=float(self.config.get("data", {}).get("timeout", 12))) as resp:
             raw = resp.read()
         for enc in (encoding, "utf-8", "gb18030", "gbk"):

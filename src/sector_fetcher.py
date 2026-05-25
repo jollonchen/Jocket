@@ -225,7 +225,7 @@ class SectorFetcher:
             url,
             timeout=float(self.config.get("data", {}).get("timeout", 12)),
             headers={
-                "User-Agent": "Mozilla/5.0 (stock-picker-ui)",
+                "User-Agent": "Mozilla/5.0 (Jocket)",
                 "Referer": "https://finance.sina.com.cn/",
             },
             verify=False,
