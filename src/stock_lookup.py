@@ -139,7 +139,7 @@ def _suggest_remote(query: str, limit: int) -> list[dict]:
     return out
 
 
-def resolve_stock_query(query: str, directory: pd.DataFrame, limit: int = 8) -> list[dict]:
+def resolve_stock_query(query: str, directory: pd.DataFrame, limit: int = 8, include_remote_suggest: bool = True) -> list[dict]:
     raw = str(query or "").strip()
     clean = _clean_query(raw)
     if not clean:
@@ -188,7 +188,7 @@ def resolve_stock_query(query: str, directory: pd.DataFrame, limit: int = 8) -> 
         add_row(row, 0.95, "名称/代码包含匹配")
 
     # 4. Remote suggest only when local data is missing, keeping typing responsive.
-    if not rows:
+    if include_remote_suggest and not rows:
         for item in _suggest_remote(raw, limit):
             add_row(item, float(item.get("score", 1.0)), str(item.get("reason") or "远程检索"))
 

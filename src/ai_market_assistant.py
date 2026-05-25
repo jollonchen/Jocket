@@ -139,6 +139,7 @@ class AIMarketAssistant:
     def __init__(self, config: dict | None = None, provider: str | None = None):
         self.config = config or {}
         self.settings = resolve_ai_market_settings(config, provider=provider)
+        self._stock_query_cache: dict[str, list[dict]] = {}
 
     def ready(self) -> bool:
         return bool(self.settings.api_key)
@@ -658,6 +659,9 @@ class AIMarketAssistant:
             return f"alphaear-news 执行失败，使用项目新闻补充：{exc}\n\n{fallback}"
 
     def _extract_stock_queries(self, question: str) -> list[dict]:
+        cache_key = str(question or "").strip()
+        if cache_key in self._stock_query_cache:
+            return [dict(item) for item in self._stock_query_cache[cache_key]]
         results: list[dict] = []
         # Support A-share (6 digits) and HK (5 digits)
         for code in re.findall(r"\b\d{5,6}\b", question or ""):
@@ -667,8 +671,11 @@ class AIMarketAssistant:
             if ticker not in DEFAULT_MARKET_KEYWORDS:
                 results.append({"code": ticker, "name": ticker})
         try:
-            directory = build_stock_directory(include_remote=True)
-            for item in resolve_stock_query(question, directory)[:3]:
+            # Keep chat startup responsive. Pulling the full remote A/HK
+            # directory can take 60s+ on Streamlit Cloud; use the local/cache
+            # directory first, then fall back to lightweight suggest queries.
+            directory = build_stock_directory(include_remote=False)
+            for item in resolve_stock_query(question, directory, include_remote_suggest=False)[:3]:
                 code = str(item.get("code") or "").strip()
                 name = str(item.get("name") or "").strip()
                 if code:
@@ -684,11 +691,17 @@ class AIMarketAssistant:
                         if code:
                             results.append({"code": code, "name": name})
                 
-                # If local directory is missing the stock (cache failure), try substring remote suggest
+                # If local directory is missing the stock, try a few targeted
+                # remote suggestions instead of scanning every character window.
                 if not results and len(q_clean) >= 3:
                     from src.stock_lookup import _suggest_remote
-                    for i in range(len(q_clean) - 2):
-                        chunk = q_clean[i:i+4] if i+4 <= len(q_clean) else q_clean[i:i+3]
+                    candidates = [
+                        token
+                        for token in re.split(r"[，,、\s]|和|还有|应该|今天|走势|都有|分化|买|哪个|哪个更|这几个|的", str(question or ""))
+                        if 2 <= len(token.strip()) <= 10
+                    ]
+                    candidates = list(dict.fromkeys(candidates))[:6]
+                    for chunk in candidates:
                         try:
                             for item in _suggest_remote(chunk, limit=2):
                                 if item.get("code") and item.get("name") and item["name"].upper() in q_clean:
@@ -700,7 +713,10 @@ class AIMarketAssistant:
         deduped = {}
         for item in results:
             deduped[item["code"]] = item
-        return list(deduped.values())[:3]
+        resolved = list(deduped.values())[:3]
+        if cache_key:
+            self._stock_query_cache[cache_key] = [dict(item) for item in resolved]
+        return resolved
 
     def _fetch_stock_skill_context(self, question: str) -> str:
         stocks = self._extract_stock_queries(question)
@@ -719,7 +735,7 @@ class AIMarketAssistant:
             
             try:
                 # Use nominal prices for the analysis basis
-                score, hist, _ = StockAnalyzer(nominal_config).analyze(code, name=name, start=start_date)
+                score, hist, _ = StockAnalyzer(nominal_config).analyze(code, name=name, start=start_date, include_news=False)
                 if hist is None or hist.empty:
                     reports.append(f"## {name}（{code}）\n【❌数据缺失】未获取到该股的最新或历史行情数据。")
                     continue
@@ -738,17 +754,10 @@ class AIMarketAssistant:
                 days_diff = (datetime.now() - pd.to_datetime(latest_date)).days
                 is_stale = days_diff > 3
 
-                # Fetch skill fundamentals
-                skill_fundamentals = "暂无"
-                try:
-                    db_mod = self._load_skill_module("alphaear-stock", "database_manager")
-                    stock_mod = self._load_skill_module("alphaear-stock", "stock_tools")
-                    db = db_mod.DatabaseManager("data/alphaear_ai_market.db")
-                    tools = stock_mod.StockTools(db, auto_update=False)
-                    skill_fundamentals = tools.get_stock_fundamentals(code)
-                    db.close()
-                except Exception:
-                    pass
+                # Keep AI chat responsive: the AlphaEar Stock fundamentals
+                # helper can block on remote refreshes. The app still provides
+                # price, volume, technical score, and a-stock-data event cards.
+                skill_fundamentals = "本轮为提速跳过慢速基本面刷新；请以价格、量价、技术评分和 a-stock-data 信号卡片为主。"
 
                 # Include more columns in the tail to prevent AI from hallucinating volume/turnover
                 cols = ["date", "close", "volume"]
@@ -848,7 +857,7 @@ class AIMarketAssistant:
                 selected.add("alphaear-stock")
             if any(word in text for word in ["情绪", "热度", "舆情", "利好", "利空", "恐慌", "乐观", "悲观"]):
                 selected.add("alphaear-sentiment")
-            if any(word in text for word in ["预测", "未来", "明天", "后市", "目标价", "走势", "forecast", "predict"]):
+            if any(word in text for word in ["预测", "未来", "明天", "后市", "目标价", "forecast", "predict"]):
                 selected.add("alphaear-predictor")
             if any(word in text for word in ["搜索", "查", "新闻", "公告", "政策", "催化", "来源", "证据", "search"]):
                 selected.add("alphaear-search")
