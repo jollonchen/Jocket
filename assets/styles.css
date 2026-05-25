@@ -5161,7 +5161,7 @@ div[class*="st-key-ai_market_submit"] .stButton {
     inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
 }
 
-/* Clockwise-flowing light ring clipped to the rounded button shape. */
+/* Clockwise-flowing light sweep contained inside the rounded borders! */
 .st-key-run_stock_quote button::after,
 .st-key-run_market_sentiment button::after,
 .st-key-run_stock_analysis button::after,
@@ -5170,33 +5170,26 @@ div[class*="st-key-ai_market_submit"] .stButton {
 [data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] > button::after {
   content: "" !important;
   position: absolute !important;
-  inset: 0 !important;
-  width: auto !important;
-  height: auto !important;
-  padding: 2px !important;
-  border-radius: inherit !important;
+  left: -50% !important;
+  top: -150% !important;
+  width: 200% !important;
+  height: 400% !important;
+  border-radius: 50% !important;
   
+  /* Soft, semi-transparent pink, blue, and cyan sweep colors to prevent bright-white masking */
   background: conic-gradient(
     from 0deg, 
     transparent 15%, 
-    rgba(55, 232, 255, 0.9) 35%,
-    rgba(91, 140, 255, 0.55) 55%,
-    rgba(255, 92, 200, 0.86) 75%,
+    rgba(55, 232, 255, 0.48) 35%,   /* Soft Cyan Blue */
+    rgba(91, 140, 255, 0.35) 55%,   /* Soft Royal Blue */
+    rgba(255, 92, 200, 0.48) 75%,   /* Soft Neon Pink */
     transparent 95%
   ) !important;
-  z-index: 1 !important;
+  z-index: 0 !important;
   opacity: 0 !important;
   transition: opacity 0.3s ease !important;
   pointer-events: none !important;
   mix-blend-mode: screen !important;
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0) !important;
-  -webkit-mask-composite: xor !important;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0) !important;
-  mask-composite: exclude !important;
 }
 
 /* Active sweeping internally when hovered OR when processing */
@@ -5214,7 +5207,7 @@ div[class*="st-key-ai_market_submit"] .stButton {
 [data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] > button[data-laicai-running="true"]::after {
   opacity: 1 !important;
   animation: laicaiClockwiseGlow 2.5s linear infinite !important;
-  filter: drop-shadow(0 0 6px rgba(55, 232, 255, 0.55)) drop-shadow(0 0 10px rgba(155, 92, 255, 0.38)) !important;
+  filter: blur(14px) !important;
 }
 
 /* Rotating clockwise light glow keyframes */
