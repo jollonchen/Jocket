@@ -2345,10 +2345,18 @@ dcf_discount = 10.0
 dcf_margin = 20.0
 sentiment_window = 60
 _now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
-if _now.hour >= 16 and _now.dayofweek < 5:
-    sentiment_date = _now.normalize().date()
+if _now.dayofweek < 5:
+    sentiment_default_date = _now.normalize().date()
 else:
-    sentiment_date = (_now.normalize() - pd.offsets.BDay(1)).date()
+    sentiment_default_date = (_now.normalize() - pd.offsets.BDay(1)).date()
+previous_sentiment_default = st.session_state.get("sentiment_default_trade_date")
+current_sentiment_state = st.session_state.get("sentiment_date")
+if previous_sentiment_default is None or current_sentiment_state in {None, previous_sentiment_default}:
+    st.session_state.pop("sentiment_date", None)
+    sentiment_date = sentiment_default_date
+else:
+    sentiment_date = current_sentiment_state
+st.session_state["sentiment_default_trade_date"] = sentiment_default_date
 sentiment_refresh = False
 sentiment_backfill = False
 run = False

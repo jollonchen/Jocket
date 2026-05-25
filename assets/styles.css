@@ -5071,6 +5071,7 @@ div[class*="st-key-ai_market_prompt"] [data-baseweb="input"][data-ai-loading="tr
   isolation: isolate !important;
   z-index: 1 !important;
   overflow: hidden !important; /* Contain the sweeping color animations strictly inside the button boundaries */
+  clip-path: inset(0 round var(--radius-lg)) !important;
   min-height: 52px !important;
   border-radius: var(--radius-lg) !important;
   border: 1.5px solid rgba(255, 255, 255, 0.25) !important;
