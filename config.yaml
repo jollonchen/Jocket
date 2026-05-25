@@ -45,7 +45,7 @@ ai_market:
   timeout: 45
   temperature: 0.25
   max_tokens: 4096
-  skill_dir: "Awesome-finance-skills/skills"
+  skill_dir: "src/skill/Awesome-finance-skills/skills"
 
 a_stock_data:
   enabled: true

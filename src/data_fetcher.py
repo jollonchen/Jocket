@@ -58,6 +58,11 @@ try:
 except Exception:  # pragma: no cover
     ef = None
 
+try:
+    import baostock as bs
+except Exception:  # pragma: no cover
+    bs = None
+
 
 class DataFetcher:
     """Market data fetcher with selectable providers.
@@ -111,6 +116,8 @@ class DataFetcher:
             return self._with_realtime_quote(self._get_hist_efinance(code, start, end, use_cache), code, end)
         if provider == 'baidu':
             return self._with_realtime_quote(self._get_hist_baidu(code, start, end, use_cache), code, end)
+        if provider == 'baostock':
+            return self._with_realtime_quote(self._get_hist_baostock(code, start, end, use_cache), code, end)
 
         # auto mode: routing based on code pattern
         is_hk = code.endswith('.HK')
@@ -149,6 +156,13 @@ class DataFetcher:
             return self._with_realtime_quote(df, code, end)
         except Exception as exc:
             errors.append(f'同花顺失败：{exc}')
+
+        if not is_hk and self._is_a_share(code):
+            try:
+                df = self._get_hist_baostock(code, start, end, use_cache)
+                return self._with_realtime_quote(df, code, end)
+            except Exception as exc:
+                errors.append(f'BaoStock失败：{exc}')
             
         if not is_us:
             try:
@@ -1046,4 +1060,56 @@ class DataFetcher:
         df['yahoo_code'] = normalize_a_share_code(code)
         if use_cache:
             df.to_csv(cache_path, index=False, encoding='utf-8-sig')
+        return df
+
+    def _get_hist_baostock(self, code: str, start: str, end: str, use_cache: bool = True) -> pd.DataFrame:
+        if bs is None:
+            raise RuntimeError("未安装 baostock，请先执行：pip install baostock")
+        ticker = display_code(normalize_a_share_code(code))
+        cache_path = self._cache_path("baostock", ticker, start, end)
+        if use_cache:
+            cached = self._read_price_cache("baostock", ticker, start, end, ttl_seconds=3600)
+            if cached is not None:
+                return cached
+
+        market = "sh" if ticker.startswith(("5", "6", "9")) else "sz"
+        adjustflag = "2" if self.adjust == "qfq" else "1" if self.adjust == "hfq" else "3"
+        login = bs.login()
+        if getattr(login, "error_code", "0") != "0":
+            raise RuntimeError(f"baostock登录失败：{getattr(login, 'error_msg', '')}")
+        try:
+            rs = bs.query_history_k_data_plus(
+                f"{market}.{ticker}",
+                "date,open,high,low,close,volume,amount,pctChg,turn",
+                start_date=start,
+                end_date=end,
+                frequency="d",
+                adjustflag=adjustflag,
+            )
+            rows = []
+            while rs.error_code == "0" and rs.next():
+                rows.append(rs.get_row_data())
+            if rs.error_code != "0":
+                raise RuntimeError(rs.error_msg)
+        finally:
+            bs.logout()
+        if not rows:
+            raise ValueError(f"baostock没有获取到行情数据：{ticker}")
+
+        df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "amount", "pct_chg", "turnover_rate"])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        for col in ["open", "high", "low", "close", "volume", "amount", "pct_chg", "turnover_rate"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["date", "close"]).sort_values("date")
+        if df.empty:
+            raise ValueError(f"baostock没有获取到指定区间行情数据：{ticker}")
+        if "amount" not in df.columns:
+            df["amount"] = df["close"] * df.get("volume", 0)
+        if "pct_chg" not in df.columns:
+            df["pct_chg"] = df["close"].pct_change() * 100
+        df["amount_est"] = df["amount"]
+        df["data_source"] = "baostock"
+        df["yahoo_code"] = normalize_a_share_code(code)
+        if use_cache:
+            df.to_csv(cache_path, index=False, encoding="utf-8-sig")
         return df

@@ -28,7 +28,7 @@ data/fundamentals/
 output/
 
 # Local reference repositories
-Awesome-finance-skills/
+/Awesome-finance-skills/
 
 # Build artifacts
 build/
