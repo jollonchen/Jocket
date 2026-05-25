@@ -26,6 +26,11 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['macd_dea'] = df['macd_diff'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = (df['macd_diff'] - df['macd_dea']) * 2
 
+    df['boll_mid'] = df['close'].rolling(20).mean()
+    boll_std = df['close'].rolling(20).std()
+    df['boll_upper'] = df['boll_mid'] + 2 * boll_std
+    df['boll_lower'] = df['boll_mid'] - 2 * boll_std
+
     low9 = df['low'].rolling(9).min()
     high9 = df['high'].rolling(9).max()
     rsv = (df['close'] - low9) / (high9 - low9).replace(0, np.nan) * 100
@@ -37,4 +42,15 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['vol_ratio_20'] = df['volume'] / df['vol_ma20'].replace(0, np.nan)
     df['drawdown_60'] = df['close'] / df['close'].rolling(60).max() - 1
     df['amplitude'] = (df['high'] - df['low']) / df['close'].replace(0, np.nan)
+
+    prev_close = df['close'].shift(1)
+    true_range = pd.concat(
+        [
+            df['high'] - df['low'],
+            (df['high'] - prev_close).abs(),
+            (df['low'] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    df['atr14'] = true_range.rolling(14).mean()
     return df

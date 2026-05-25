@@ -14,10 +14,13 @@ import pandas as pd
 import requests
 
 from .news_fetcher import NewsFetcher
+from .data_fetcher import DataFetcher
+from .indicators import add_indicators
 from .providers.a_stock_data_provider import AStockDataProvider
 from .stock_analyzer import StockAnalyzer
 from .stock_lookup import build_stock_directory, resolve_stock_query
 from .stock_signal_cards import build_market_signal_cards, build_stock_signal_cards, signal_cards_to_text
+from .utils import display_code, normalize_a_share_code
 
 
 DEFAULT_MARKET_KEYWORDS = [
@@ -191,6 +194,8 @@ class AIMarketAssistant:
             contexts["alphaear-logic-visualizer"] = self._fetch_framework_context("alphaear-logic-visualizer", "传导链路图生成框架已触发。")
         if "alphaear-reporter" in route["selected"]:
             contexts["alphaear-reporter"] = self._fetch_framework_context("alphaear-reporter", "专业研报生成框架已触发。")
+        if "qqqq" in route["selected"]:
+            contexts["qqqq"] = self._fetch_quant_context(enriched_question)
         news_context = contexts.get("alphaear-news", "")
         stock_context = contexts.get("alphaear-stock", "")
         snapshot = {
@@ -201,6 +206,7 @@ class AIMarketAssistant:
             "alphaear_news": news_context,
             "alphaear_stock": stock_context,
             "a_stock_market": contexts.get("a-stock-data"),
+            "quant_backtest": contexts.get("qqqq"),
             "project_news": self._fetch_market_news(keywords),
             "sentiment": contexts.get("alphaear-sentiment") if "alphaear-sentiment" in route["selected"] else self._infer_sentiment_context(question, news_context, stock_context),
             "skill_catalog": self._skill_catalog(),
@@ -251,17 +257,19 @@ class AIMarketAssistant:
             "4. **回答规范**：逻辑闭环，严禁截断。确保最后一个字是标点符号。回答字数控制在 500 字以内，结论先行。\n"
             "5. **动态数据请求（主动询问）**：所有可用的数据都在下方的上下文中。如果缺少所需数据（例如未获取到某只股票的最新行情），**请直接在回答中询问用户是否允许你调用对应技能**。例如：'当前未获取到利通电子(SH603629)的最新行情，请问是否允许我调用【Alphaear Stock】技能来获取？' 如果用户回复'允许'或'可以'，系统会自动在下一轮补全数据并继续分析。严禁直接回复“无法判断”来终止对话。"
         )
+        quant_context = context.get("quant_backtest")
         context_text = (
             f"上下文生成时间：{context.get('generated_at')}\n\n"
             f"Skill 路由：{context.get('skill_route')}\n\n"
+            f"QQQ 量化回测上下文（如本段有数据，必须直接输出结果，禁止回复下一轮/稍后/继续授权）：\n{quant_context}\n\n"
             f"已加载 Skill 清单：\n{context.get('skill_catalog')}\n\n"
-            f"Agentic 分析框架：\n{context.get('agentic_frameworks')}\n\n"
             f"DeepEar Lite 信号：\n{context.get('deepear')}\n\n"
             f"AlphaEar News 最新热点/预测市场：\n{context.get('alphaear_news')}\n\n"
             f"AlphaEar Stock 个股行情/基本面：\n{context.get('alphaear_stock')}\n\n"
             f"a-stock-data 市场信号卡片：\n{context.get('a_stock_market')}\n\n"
             f"项目公开新闻补充：\n{context.get('project_news')}\n\n"
             f"情绪初判：\n{context.get('sentiment')}\n"
+            f"Agentic 分析框架：\n{context.get('agentic_frameworks')}\n\n"
         )
         clean_history = [
             {"role": item.get("role", "user"), "content": str(item.get("content", ""))[:2400]}
@@ -613,7 +621,7 @@ class AIMarketAssistant:
             return f"a-stock-data 市场信号获取失败：{exc}"
 
     def _load_skill_module(self, skill_name: str, module_name: str):
-        root = self.settings.skill_dir / skill_name
+        root = self._skill_root_path(skill_name)
         scripts_dir = root / "scripts"
         module_path = scripts_dir / f"{module_name}.py"
         if not module_path.exists():
@@ -662,27 +670,35 @@ class AIMarketAssistant:
         cache_key = str(question or "").strip()
         if cache_key in self._stock_query_cache:
             return [dict(item) for item in self._stock_query_cache[cache_key]]
+        lookup_question = self._strip_quant_skill_words(question or "")
         results: list[dict] = []
-        # Support A-share (6 digits) and HK (5 digits)
-        for code in re.findall(r"\b\d{5,6}\b", question or ""):
-            results.append({"code": code, "name": code})
+        # Support A-share (6 digits), HK (5 digits), and SH/SZ-prefixed codes
+        for market, code in re.findall(r"(?i)(?<![A-Z0-9])(?:([A-Z]{2})\s*)?(\d{5,6})(?!\d)", question or ""):
+            code = str(code)
+            if len(code) == 6 and (not market or market.upper() in {"SH", "SZ", "BJ"}):
+                results.append({"code": code, "name": code})
+            elif len(code) == 5:
+                results.append({"code": code, "name": code})
         # Support US tickers (all caps letters)
-        for ticker in re.findall(r"\b[A-Z]{2,5}\b", question or ""):
-            if ticker not in DEFAULT_MARKET_KEYWORDS:
+        for ticker in re.findall(r"\b[A-Z]{2,5}\b", lookup_question):
+            if ticker not in DEFAULT_MARKET_KEYWORDS and ticker not in {"QQQ", "QQQQ"}:
                 results.append({"code": ticker, "name": ticker})
         try:
             # Keep chat startup responsive. Pulling the full remote A/HK
             # directory can take 60s+ on Streamlit Cloud; use the local/cache
             # directory first, then fall back to lightweight suggest queries.
             directory = build_stock_directory(include_remote=False)
-            for item in resolve_stock_query(question, directory, include_remote_suggest=False)[:3]:
+            for item in resolve_stock_query(lookup_question, directory, include_remote_suggest=False)[:3]:
                 code = str(item.get("code") or "").strip()
                 name = str(item.get("name") or "").strip()
+                reason = str(item.get("reason") or "")
+                if reason == "名称模糊匹配" and code not in lookup_question:
+                    continue
                 if code:
                     results.append({"code": code, "name": name or code})
             
             if not results:
-                q_clean = str(question or "").upper()
+                q_clean = str(lookup_question or "").upper()
                 # Scan directory for any stock name >= 2 chars that appears in the question
                 for _, row in directory.iterrows():
                     name = str(row.get("name", "")).strip()
@@ -697,9 +713,26 @@ class AIMarketAssistant:
                     from src.stock_lookup import _suggest_remote
                     candidates = [
                         token
-                        for token in re.split(r"[，,、\s]|和|还有|应该|今天|走势|都有|分化|买|哪个|哪个更|这几个|的", str(question or ""))
+                        for token in re.split(r"[，,、\s]|和|还有|应该|今天|走势|都有|分化|买|哪个|哪个更|这几个|的", lookup_question)
                         if 2 <= len(token.strip()) <= 10
                     ]
+                    quant_noise = [
+                        "量化回测",
+                        "量化",
+                        "回测",
+                        "跑一下",
+                        "分析",
+                        "一下",
+                        "看看",
+                        "qqqq",
+                        "qqq",
+                        "QQQQ",
+                        "QQQ",
+                    ]
+                    compact = re.sub(r"[，,、\s]+", "", lookup_question)
+                    for word in quant_noise:
+                        compact = compact.replace(word, "")
+                    candidates.extend(re.findall(r"[\u4e00-\u9fff]{2,8}", compact))
                     candidates = list(dict.fromkeys(candidates))[:6]
                     for chunk in candidates:
                         try:
@@ -717,6 +750,14 @@ class AIMarketAssistant:
         if cache_key:
             self._stock_query_cache[cache_key] = [dict(item) for item in resolved]
         return resolved
+
+    @staticmethod
+    def _strip_quant_skill_words(text: str) -> str:
+        cleaned = str(text or "")
+        for word in ["量化回测", "量化", "回测", "跑一下", "分析一下", "分析", "看一下", "看看", "一下"]:
+            cleaned = cleaned.replace(word, " ")
+        cleaned = re.sub(r"(?i)(?<![A-Z0-9])qqqq?(?![A-Z0-9])", " ", cleaned)
+        return cleaned
 
     def _fetch_stock_skill_context(self, question: str) -> str:
         stocks = self._extract_stock_queries(question)
@@ -842,12 +883,15 @@ class AIMarketAssistant:
             "alphaear-search",
             "alphaear-deepear-lite",
             "a-stock-data",
+            "qqqq",
         ]
 
     def _resolve_skill_route(self, question: str, forced_skills: list[str] | None = None) -> dict:
         available = self._available_router_skills()
         forced = [str(item).strip() for item in (forced_skills or [])]
         selected = set(item for item in forced if item in available)
+        if "qqqq" in selected:
+            selected.update(["alphaear-news", "alphaear-stock", "alphaear-sentiment", "a-stock-data"])
         text = question or ""
         if not selected:
             selected.update(["alphaear-news", "a-stock-data"])
@@ -859,6 +903,8 @@ class AIMarketAssistant:
                 selected.add("alphaear-sentiment")
             if any(word in text for word in ["预测", "未来", "明天", "后市", "目标价", "forecast", "predict"]):
                 selected.add("alphaear-predictor")
+            if self._is_quant_request(text):
+                selected.update(["qqqq", "alphaear-stock", "alphaear-sentiment"])
             if any(word in text for word in ["搜索", "查", "新闻", "公告", "政策", "催化", "来源", "证据", "search"]):
                 selected.add("alphaear-search")
             if any(word in text for word in ["跟踪", "信号", "增强", "削弱", "验证", "证伪", "tracker"]):
@@ -874,6 +920,33 @@ class AIMarketAssistant:
             "available": available,
             "reason": "手动指定技能" if forced else "按问题语义自动选择技能",
         }
+
+    @staticmethod
+    def _is_quant_request(text: str) -> bool:
+        return any(
+            word in (text or "")
+            for word in [
+                "qqqq",
+                "qqq",
+                "QQQ",
+                "量化",
+                "量化回测",
+                "回测",
+                "策略胜率",
+                "最大回撤",
+                "夏普",
+                "盈亏比",
+                "支撑位",
+                "压力位",
+                "止损位",
+                "突破确认",
+                "买卖点",
+                "主升浪",
+                "做T",
+                "做t",
+                "持仓风控",
+            ]
+        )
 
     def _fetch_search_context(self, question: str) -> str:
         query = (question or "").strip()
@@ -892,6 +965,12 @@ class AIMarketAssistant:
 
     def _fetch_sentiment_skill_context(self, question: str, contexts: dict[str, str]) -> str:
         base = "\n".join([question or "", contexts.get("alphaear-news", ""), contexts.get("alphaear-stock", "")])[:3500]
+        if os.getenv("JOCKET_ENABLE_LOCAL_FINBERT", "").lower() not in {"1", "true", "yes"}:
+            return (
+                "alphaear-sentiment 本轮使用轻量规则，未下载本地 FinBERT 模型。"
+                "如需启用本地模型，请设置 JOCKET_ENABLE_LOCAL_FINBERT=1。\n"
+                + self._infer_sentiment_context(question, contexts.get("alphaear-news", ""), contexts.get("alphaear-stock", ""))
+            )
         try:
             db_mod = self._load_skill_module("alphaear-sentiment", "database_manager")
             sent_mod = self._load_skill_module("alphaear-sentiment", "sentiment_tools")
@@ -935,13 +1014,284 @@ class AIMarketAssistant:
             "请在回答中按“原始信号、增强证据、削弱证据、证伪条件、下一步观察点”组织结论。"
         )
 
+    def _fetch_quant_context(self, question: str) -> str:
+        stocks = self._extract_stock_queries(question)
+        framework = self._fetch_framework_context(
+            "qqqq",
+            "qqqq/Quant 量化回测框架已触发。回答必须包含条件式交易计划，不给无条件买入。",
+        )
+        template = self._skill_reference_text("qqqq", "references/report-template.md")
+        template_context = f"\n\nQuant 报告模板摘要：\n{template[:1200]}" if template else ""
+        if not stocks:
+            return (
+                f"{framework}{template_context}\n\n"
+                "Quant 执行状态：当前问题未匹配到明确A股代码或名称。"
+                "请先让用户补充个股或组合，例如“量化回测 603629、002929”。"
+            )
+
+        reports = []
+        finance_context = self._finance_quant_framework_context()
+        for stock in stocks[:5]:
+            code = stock["code"]
+            name = stock.get("name") or code
+            try:
+                hist, source = self._load_quant_history(code)
+                if hist.empty or len(hist) < 40:
+                    reports.append(f"## {name}({code})\nQuant 数据不足：仅获取 {len(hist)} 行行情，无法做稳定回测。")
+                    continue
+                hist = add_indicators(hist)
+                latest = hist.iloc[-1]
+                score_text = self._quant_score_text(hist)
+                price_text = self._quant_price_levels(hist)
+                strategy_text = self._quant_strategy_suite(hist)
+                reports.append(
+                    "\n".join(
+                        [
+                            f"## {name}({code}) Quant 量化上下文",
+                            f"- 数据源：{source}",
+                            f"- 样本：{len(hist)} 个交易日；最新交易日：{self._fmt_date(latest.get('date'))}",
+                            f"- 最新价：{self._fmt_num(latest.get('close'))}；成交额：{self._fmt_amount(latest.get('amount'))}",
+                            f"- 技术指标：MA5 {self._fmt_num(latest.get('ma5'))} / MA20 {self._fmt_num(latest.get('ma20'))} / MA60 {self._fmt_num(latest.get('ma60'))}；RSI14 {self._fmt_num(latest.get('rsi14'))}；KDJ J {self._fmt_num(latest.get('kdj_j'))}；MACD柱 {self._fmt_num(latest.get('macd_hist'))}",
+                            f"- 波动区间：BOLL上轨 {self._fmt_num(latest.get('boll_upper'))} / 中轨 {self._fmt_num(latest.get('boll_mid'))} / 下轨 {self._fmt_num(latest.get('boll_lower'))}；ATR14 {self._fmt_num(latest.get('atr14'))}",
+                            f"- 价格区间：{price_text}",
+                            f"- 量化评分：{score_text}",
+                            strategy_text,
+                        ]
+                    )
+                )
+            except Exception as exc:
+                reports.append(f"## {name}({code})\nQuant 执行失败：{exc}")
+
+        return "\n\n".join(reports) + f"\n\n{framework[:1200]}{template_context[:800]}{finance_context}"
+
+    def _load_quant_history(self, code: str) -> tuple[pd.DataFrame, str]:
+        start = (datetime.now() - timedelta(days=520)).strftime("%Y-%m-%d")
+        end = datetime.now().strftime("%Y-%m-%d")
+        try:
+            quant_config = dict(self.config)
+            quant_config["data"] = dict((self.config or {}).get("data", {}))
+            quant_config["data"]["require_realtime"] = False
+            df = DataFetcher(quant_config).get_hist(code, start=start, end=end, provider="auto")
+            if df is not None and not df.empty:
+                return df.tail(320).copy(), str(df.attrs.get("source") or df.get("data_source", pd.Series(["项目数据源"])).iloc[-1])
+        except Exception:
+            pass
+
+        df = self._fetch_baostock_history(code, start, end)
+        return df.tail(320).copy(), "baostock"
+
+    def _fetch_baostock_history(self, code: str, start: str, end: str) -> pd.DataFrame:
+        try:
+            import baostock as bs
+        except Exception as exc:
+            raise RuntimeError("baostock 未安装，已在 requirements.txt 增加依赖；部署后会自动可用。") from exc
+
+        ticker = str(display_code(normalize_a_share_code(code)))
+        market = "sh" if ticker.startswith(("5", "6", "9")) else "sz"
+        bs_code = f"{market}.{ticker}"
+        login = bs.login()
+        if getattr(login, "error_code", "0") != "0":
+            raise RuntimeError(f"baostock 登录失败：{getattr(login, 'error_msg', '')}")
+        try:
+            rs = bs.query_history_k_data_plus(
+                bs_code,
+                "date,open,high,low,close,volume,amount,pctChg,turn",
+                start_date=start,
+                end_date=end,
+                frequency="d",
+                adjustflag="2",
+            )
+            rows = []
+            while rs.error_code == "0" and rs.next():
+                rows.append(rs.get_row_data())
+            if rs.error_code != "0":
+                raise RuntimeError(rs.error_msg)
+        finally:
+            bs.logout()
+        if not rows:
+            raise RuntimeError(f"baostock 未返回行情：{bs_code}")
+        df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "amount", "pct_chg", "turnover_rate"])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        for col in ["open", "high", "low", "close", "volume", "amount", "pct_chg", "turnover_rate"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["date", "close"]).sort_values("date")
+        df["data_source"] = "baostock"
+        df["yahoo_code"] = normalize_a_share_code(code)
+        return df
+
+    def _quant_strategy_suite(self, hist: pd.DataFrame) -> str:
+        strategies = {
+            "双均线": (hist["ma5"] > hist["ma20"]) & (hist["close"] > hist["ma20"]),
+            "动量突破": hist["close"] > hist["high"].rolling(20).max().shift(1),
+            "BOLL均值回归": hist["close"] < (hist["ma20"] - 2 * hist["close"].rolling(20).std()),
+            "放量突破": (hist["close"] > hist["ma20"]) & (hist["vol_ratio_20"] > 1.5),
+            "趋势跟随": (hist["close"] > hist["ma60"]) & (hist["ma20"] > hist["ma60"]) & (hist["macd_diff"] > hist["macd_dea"]),
+            "止盈止损": (hist["close"] > hist["ma10"]) & (hist["rsi14"].between(45, 75)),
+        }
+        lines = ["### 策略回测摘要"]
+        best_60 = None
+        for name, signal in strategies.items():
+            metric_250 = self._strategy_metrics(hist.tail(250), signal.tail(250))
+            metric_60 = self._strategy_metrics(hist.tail(60), signal.tail(60))
+            if best_60 is None or metric_60["cum_return"] > best_60[1]["cum_return"]:
+                best_60 = (name, metric_60)
+            lines.append(
+                "- "
+                f"{name}：250日收益 {metric_250['cum_return']:+.2f}% / 胜率 {metric_250['win_rate']:.1f}% / 回撤 {metric_250['max_drawdown']:.1f}% / 夏普 {metric_250['sharpe']:.2f}；"
+                f"60日收益 {metric_60['cum_return']:+.2f}% / 胜率 {metric_60['win_rate']:.1f}% / 回撤 {metric_60['max_drawdown']:.1f}% / 盈亏比 {metric_60['profit_loss']:.2f}；"
+                f"当前状态 {metric_60['current_state']}，最近信号 {metric_60['last_signal']}。"
+            )
+        if best_60:
+            lines.append(f"- 近期最有效策略：{best_60[0]}，近60日收益 {best_60[1]['cum_return']:+.2f}%。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _strategy_metrics(hist: pd.DataFrame, signal: pd.Series) -> dict:
+        frame = hist.copy()
+        frame["signal"] = signal.reindex(frame.index).fillna(False).astype(bool)
+        frame["position"] = frame["signal"].astype(int).shift(1).fillna(0)
+        returns = frame["close"].pct_change().fillna(0)
+        strategy_returns = returns * frame["position"]
+        equity = (1 + strategy_returns).cumprod()
+        drawdown = equity / equity.cummax() - 1
+        active = strategy_returns[frame["position"] > 0]
+        wins = active[active > 0]
+        losses = active[active < 0]
+        sharpe = 0.0
+        if strategy_returns.std() and not pd.isna(strategy_returns.std()):
+            sharpe = float(strategy_returns.mean() / strategy_returns.std() * (252 ** 0.5))
+        changes = frame["signal"].astype(int).diff().fillna(0)
+        signal_dates = frame.loc[changes != 0, ["date", "signal"]].tail(1)
+        if signal_dates.empty:
+            last_signal = "无"
+        else:
+            row = signal_dates.iloc[-1]
+            last_signal = f"{'买入' if bool(row['signal']) else '卖出'}@{AIMarketAssistant._fmt_date(row['date'])}"
+        return {
+            "cum_return": (float(equity.iloc[-1]) - 1) * 100 if len(equity) else 0.0,
+            "win_rate": (len(wins) / len(active) * 100) if len(active) else 0.0,
+            "max_drawdown": float(drawdown.min() * 100) if len(drawdown) else 0.0,
+            "sharpe": sharpe,
+            "profit_loss": (float(wins.mean()) / abs(float(losses.mean()))) if len(wins) and len(losses) else 0.0,
+            "current_state": "持仓" if bool(frame["signal"].iloc[-1]) else "空仓/观察",
+            "last_signal": last_signal,
+        }
+
+    def _quant_price_levels(self, hist: pd.DataFrame) -> str:
+        tail = hist.tail(60).copy()
+        latest = tail.iloc[-1]
+        close = float(latest.get("close") or 0)
+        high20 = float(tail["high"].tail(20).max())
+        low20 = float(tail["low"].tail(20).min())
+        atr = latest.get("atr14")
+        if atr is None or pd.isna(atr):
+            atr = (tail["high"] - tail["low"]).tail(14).mean()
+        atr = float(atr) if not pd.isna(atr) else close * 0.03
+        support = max(low20, close - 1.2 * atr)
+        resistance = min(high20, close + 1.5 * atr) if high20 > close else close + 1.5 * atr
+        stop = close - 1.8 * atr
+        confirm = resistance * 1.01
+        low_forecast = close - atr
+        high_forecast = close + atr
+        return (
+            f"下一交易日预估区间 {low_forecast:.2f}-{high_forecast:.2f}；"
+            f"支撑 {support:.2f}，压力 {resistance:.2f}，止损 {stop:.2f}，突破确认 {confirm:.2f}。"
+        )
+
+    @staticmethod
+    def _quant_score_text(hist: pd.DataFrame) -> str:
+        latest = hist.iloc[-1]
+        close = float(latest.get("close") or 0)
+        ma20 = float(latest.get("ma20") or close)
+        ma60 = float(latest.get("ma60") or close)
+        rsi = float(latest.get("rsi14") or 50)
+        macd_hist = float(latest.get("macd_hist") or 0)
+        vol_ratio = float(latest.get("vol_ratio_20") or 1)
+        drawdown = abs(float(latest.get("drawdown_60") or 0))
+        trend = max(0, min(100, 50 + (close / ma20 - 1) * 350 + (ma20 / ma60 - 1) * 250))
+        momentum = max(0, min(100, 50 + macd_hist * 15 + (rsi - 50) * 1.2))
+        capital = max(0, min(100, 45 + (vol_ratio - 1) * 25))
+        risk = max(0, min(100, 80 - drawdown * 260 - max(0, rsi - 78) * 2))
+        main_wave = max(0, min(100, trend * 0.45 + momentum * 0.35 + capital * 0.2))
+        trade_value = max(0, min(100, trend * 0.35 + momentum * 0.3 + capital * 0.2 + risk * 0.15))
+        return (
+            f"趋势 {trend:.0f}/100，动量 {momentum:.0f}/100，资金 {capital:.0f}/100，"
+            f"风险控制 {risk:.0f}/100，主升浪概率 {main_wave:.0f}/100，短线交易价值 {trade_value:.0f}/100。"
+        )
+
+    @staticmethod
+    def _fmt_num(value: Any) -> str:
+        try:
+            if value is None or pd.isna(value):
+                return "N/A"
+            return f"{float(value):.2f}"
+        except Exception:
+            return "N/A"
+
+    @staticmethod
+    def _fmt_amount(value: Any) -> str:
+        try:
+            if value is None or pd.isna(value):
+                return "N/A"
+            return f"{float(value) / 1e8:.2f}亿元"
+        except Exception:
+            return "N/A"
+
+    @staticmethod
+    def _fmt_date(value: Any) -> str:
+        return value.strftime("%Y-%m-%d") if hasattr(value, "strftime") else str(value or "-")
+
     def _fetch_framework_context(self, skill_name: str, lead: str) -> str:
-        path = self.settings.skill_dir / skill_name / "SKILL.md"
+        path = self._skill_doc_path(skill_name)
         if not path.exists():
             return f"{skill_name} 未安装或路径不可用。"
         text = path.read_text(encoding="utf-8", errors="ignore")
         body = re.sub(r"---.*?---", "", text, flags=re.S).strip()
         return f"{lead}\n{body[:1400]}"
+
+    def _finance_quant_framework_context(self) -> str:
+        """Surface the quant skill docs that qqqq depends on without running them."""
+        parts = []
+        for name in ("akshare", "baostock", "pywencai", "backtrader", "rqalpha", "akquant"):
+            path = self._skill_doc_path(name)
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            body = re.sub(r"---.*?---", "", text, flags=re.S).strip()
+            parts.append(f"[{name}]\n{body[:650]}")
+        if not parts:
+            return "\n\n量化依赖文档：未在项目内检测到 finance-quant-skills。"
+        return (
+            "\n\n量化依赖文档已加载：\n"
+            + "\n\n".join(parts)
+            + "\n\n数据缺口规则：pywencai 需要 Cookie；rqalpha/akquant/miniqmt/tdxquant 等偏框架或客户端能力仅作为开发文档，不在云端默认实盘调用。"
+        )
+
+    def _skill_root_path(self, skill_name: str) -> Path:
+        src_dir = Path(__file__).resolve().parent
+        candidates = [
+            self.settings.skill_dir / skill_name,
+            src_dir / "skills" / skill_name,
+            src_dir / "skill" / skill_name,
+            src_dir / "skills" / "Awesome-finance-skills" / "skills" / skill_name,
+            src_dir / "skill" / "Awesome-finance-skills" / "skills" / skill_name,
+            src_dir / "skills" / "finance-quant-skills" / "skills" / skill_name,
+            src_dir / "skill" / "finance-quant-skills" / "skills" / skill_name,
+        ]
+        for root in candidates:
+            if (root / "SKILL.md").exists():
+                return root
+        return candidates[0]
+
+    def _skill_doc_path(self, skill_name: str) -> Path:
+        return self._skill_root_path(skill_name) / "SKILL.md"
+
+    def _skill_reference_text(self, skill_name: str, relative_path: str) -> str:
+        skill_doc = self._skill_doc_path(skill_name)
+        ref_path = skill_doc.parent / relative_path
+        if not ref_path.exists():
+            return ""
+        return ref_path.read_text(encoding="utf-8", errors="ignore").strip()
 
     def _infer_sentiment_context(self, question: str, news_context: str, stock_context: str) -> str:
         text = f"{question}\n{news_context[:3000]}\n{stock_context[:2000]}"
@@ -964,17 +1314,27 @@ class AIMarketAssistant:
         )
 
     def _skill_catalog(self) -> str:
-        rows = []
-        for path in sorted(self.settings.skill_dir.glob("*/SKILL.md")):
+        rows = {}
+        src_dir = Path(__file__).resolve().parent
+        paths = list(self.settings.skill_dir.glob("*/SKILL.md"))
+        paths.extend((src_dir / "skills").glob("*/SKILL.md"))
+        paths.extend((src_dir / "skill").glob("*/SKILL.md"))
+        paths.extend((src_dir / "skills" / "Awesome-finance-skills" / "skills").glob("*/SKILL.md"))
+        paths.extend((src_dir / "skill" / "Awesome-finance-skills" / "skills").glob("*/SKILL.md"))
+        paths.extend((src_dir / "skills" / "finance-quant-skills" / "skills").glob("*/SKILL.md"))
+        paths.extend((src_dir / "skill" / "finance-quant-skills" / "skills").glob("*/SKILL.md"))
+        for path in sorted(paths):
             name = path.parent.name
+            if name in rows:
+                continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             desc = ""
             for line in text.splitlines():
                 if line.startswith("description:"):
                     desc = line.split(":", 1)[1].strip()
                     break
-            rows.append(f"- {name}: {desc}")
-        return "\n".join(rows)
+            rows[name] = f"- {name}: {desc}"
+        return "\n".join(rows.values())
 
     def _agentic_frameworks(self) -> str:
         frameworks = []
@@ -985,8 +1345,15 @@ class AIMarketAssistant:
             "alphaear-logic-visualizer",
             "alphaear-search",
             "alphaear-sentiment",
+            "akshare",
+            "baostock",
+            "pywencai",
+            "backtrader",
+            "rqalpha",
+            "akquant",
+            "qqqq",
         ):
-            path = self.settings.skill_dir / name / "SKILL.md"
+            path = self._skill_doc_path(name)
             if not path.exists():
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")

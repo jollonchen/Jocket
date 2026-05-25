@@ -239,14 +239,190 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
     ]
 
 
-def _render_chart_card(title: str, badge: str, fig, container_height: int | None = None) -> None:
+def _render_chart_card(title: str, badge: str, fig, container_height: int | None = None, pill_class: str = "pill-cyan") -> None:
     container = st.container(border=True, height=container_height) if container_height else st.container(border=True)
     with container:
         st.markdown(
-            f'<div class="chart-title"><span>{title}</span><span class="pill pill-cyan">{badge}</span></div>',
+            f'<div class="chart-title"><span>{title}</span><span class="pill {pill_class}">{badge}</span></div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"chart_{title}")
+
+
+def analyze_recent_5d_emotion(history: pd.DataFrame) -> tuple[str, str]:
+    """
+    分析近5日情绪评分趋势，返回（状态文本，药丸样式类名）
+    """
+    df = history.copy() if history is not None else pd.DataFrame()
+    if df.empty:
+        return "近5日", "pill-cyan"
+
+    missing = pd.to_numeric(df.get("history_missing", 0), errors="coerce").fillna(0)
+    counts = (
+        pd.to_numeric(df.get("limit_up_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("broken_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("limit_down_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("strong_count", 0), errors="coerce").fillna(0)
+    )
+    df = df[(missing <= 0) & (counts > 0)].tail(5).copy()
+    if df.empty or len(df) < 2:
+        return "近5日", "pill-cyan"
+
+    limit_count = pd.to_numeric(df.get("limit_up_count", 0), errors="coerce").fillna(0)
+    max_streak = pd.to_numeric(df.get("max_streak", 0), errors="coerce").fillna(0)
+    strong_count = pd.to_numeric(df.get("strong_count", 0), errors="coerce").fillna(0)
+    broken_rate = pd.to_numeric(df.get("broken_rate", 0), errors="coerce").fillna(0) * 100
+    down_count = pd.to_numeric(df.get("limit_down_count", 0), errors="coerce").fillna(0)
+
+    if "emotion_score" in df.columns:
+        emotion = pd.to_numeric(df["emotion_score"], errors="coerce").fillna(0).tolist()
+    else:
+        emotion = (
+            (limit_count / max(limit_count.max(), 1) * 45)
+            + (max_streak / max(max_streak.max(), 1) * 25)
+            + (strong_count / max(strong_count.max(), 1) * 20)
+            - broken_rate * 0.18
+            - down_count * 1.2
+            + 12
+        ).clip(0, 100).tolist()
+
+    latest_score = emotion[-1]
+    prev_score = emotion[-2]
+    change = latest_score - prev_score
+    overall_change = emotion[-1] - emotion[0]
+
+    if latest_score >= 70:
+        status = "一致过热"
+        tone = "pill-red"
+    elif latest_score <= 35:
+        status = "情绪冰点"
+        tone = "pill-purple"
+    else:
+        if overall_change > 8:
+            status = "震荡走强"
+            tone = "pill-green"
+        elif overall_change < -8:
+            status = "情绪退潮"
+            tone = "pill-orange"
+        else:
+            if change > 0:
+                status = "分歧回暖"
+                tone = "pill-cyan"
+            else:
+                status = "高位分歧" if latest_score > 55 else "低位震荡"
+                tone = "pill-purple"
+
+    return f"{status} {latest_score:.1f}", tone
+
+
+def analyze_recent_5d_limit_counts(history: pd.DataFrame) -> tuple[str, str]:
+    """
+    分析近5日涨跌停家数，返回（状态文本，药丸样式类名）
+    """
+    df = history.copy() if history is not None else pd.DataFrame()
+    if df.empty:
+        return "近5日", "pill-cyan"
+
+    missing = pd.to_numeric(df.get("history_missing", 0), errors="coerce").fillna(0)
+    counts = (
+        pd.to_numeric(df.get("limit_up_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("broken_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("limit_down_count", 0), errors="coerce").fillna(0)
+    )
+    df = df[(missing <= 0) & (counts > 0)].tail(5).copy()
+    if df.empty:
+        return "近5日", "pill-cyan"
+
+    limit_ups = pd.to_numeric(df.get("limit_up_count", 0), errors="coerce").fillna(0).tolist()
+    limit_downs = pd.to_numeric(df.get("limit_down_count", 0), errors="coerce").fillna(0).tolist()
+    brokens = pd.to_numeric(df.get("broken_count", 0), errors="coerce").fillna(0).tolist()
+
+    latest_up = limit_ups[-1]
+    latest_down = limit_downs[-1]
+    latest_broken = brokens[-1]
+
+    avg_up = sum(limit_ups) / len(limit_ups)
+    up_change_5d = limit_ups[-1] - limit_ups[0]
+
+    if latest_down > 15:
+        status = "跌停恐慌"
+        tone = "pill-red"
+    elif latest_up > 60:
+        status = "多头高潮"
+        tone = "pill-green"
+    elif latest_up > avg_up * 1.2:
+        if up_change_5d > 5:
+            status = "接力升温"
+            tone = "pill-green"
+        else:
+            status = "涨停放量"
+            tone = "pill-cyan"
+    elif latest_up < avg_up * 0.8:
+        status = "接力衰退"
+        tone = "pill-orange"
+    else:
+        total_limit_attempts = latest_up + latest_broken
+        broken_rate = (latest_broken / total_limit_attempts) if total_limit_attempts > 0 else 0
+        if broken_rate > 0.35:
+            status = "分歧加剧"
+            tone = "pill-purple"
+        else:
+            status = "多空平衡"
+            tone = "pill-cyan"
+
+    return f"{status} 涨{int(latest_up)}/跌{int(latest_down)}", tone
+
+
+def analyze_recent_5d_amount(history: pd.DataFrame) -> tuple[str, str]:
+    """
+    分析近5日接力成交额趋势，返回（状态文本，药丸样式类名）
+    """
+    df = history.copy() if history is not None else pd.DataFrame()
+    if df.empty:
+        return "近5日", "pill-cyan"
+
+    missing = pd.to_numeric(df.get("history_missing", 0), errors="coerce").fillna(0)
+    counts = (
+        pd.to_numeric(df.get("limit_up_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("broken_count", 0), errors="coerce").fillna(0)
+        + pd.to_numeric(df.get("limit_down_count", 0), errors="coerce").fillna(0)
+    )
+    df = df[(missing <= 0) & (counts > 0)].tail(5).copy()
+    if df.empty:
+        return "近5日", "pill-cyan"
+
+    amounts = (pd.to_numeric(df.get("limit_amount", 0), errors="coerce").fillna(0) / 1_0000_0000).tolist()
+
+    latest_amt = amounts[-1]
+    avg_amt = sum(amounts) / len(amounts)
+    amt_change_5d = amounts[-1] - amounts[0]
+
+    if latest_amt >= 150:
+        status = "巨量突击"
+        tone = "pill-red"
+    elif latest_amt >= 80:
+        status = "活跃流入"
+        tone = "pill-green"
+    elif latest_amt < 15:
+        status = "地量冰点"
+        tone = "pill-purple"
+    elif amt_change_5d > 15:
+        status = "放量进攻"
+        tone = "pill-green"
+    elif amt_change_5d < -15:
+        status = "缩量退潮"
+        tone = "pill-orange"
+    elif latest_amt > avg_amt * 1.1:
+        status = "放量进攻"
+        tone = "pill-cyan"
+    elif latest_amt < avg_amt * 0.9:
+        status = "缩量整理"
+        tone = "pill-orange"
+    else:
+        status = "平稳整理"
+        tone = "pill-cyan"
+
+    return f"{status} {latest_amt:.1f}亿", tone
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -346,7 +522,7 @@ def _render_sector_heat_card(sector_payload: dict) -> None:
         if boards is None or boards.empty:
             st.info("当前所属板块/概念数据不足，行业/题材评分暂以价格动量辅助判断。")
             return
-        
+
         top_pct = float(summary.get("top_board_pct") or 0)
         top_ind = "strong" if top_pct >= 2.0 else "active" if top_pct >= 0.8 else "mild_strong" if top_pct > 0 else "mild_weak" if top_pct >= -1.5 else "weak"
 
@@ -598,7 +774,7 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
     business_raw = profile.get("business", "")
 
     final_summary = business_raw or analysis.get("profile_summary", "")
-    
+
     render_company_profile(profile, final_summary)
     _render_sector_heat_card(payload.get("sector", {}))
     boards = tuple((payload.get("sector", {}) or {}).get("summary", {}).get("primary_boards", []) or profile.get("belong_boards", []) or [])
@@ -1297,7 +1473,7 @@ def _run_market_sentiment_job(trade_date, window_days: int, progress: dict | Non
         trade_date,
         window_days=int(window_days or 60),
         force_refresh=False,
-        backfill_history=False,
+        backfill_history=True,
     )
     _set_job_stage(progress, "compute")
     trade_date_text = pd.to_datetime(trade_date).strftime("%Y-%m-%d")
@@ -2053,20 +2229,25 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
 
     st.markdown('<div class="chart-title" style="margin-bottom:16px;"><span>情绪周期定位</span><span class="pill pill-cyan">综合研判</span></div>', unsafe_allow_html=True)
     _render_emotion_cycle_position(metrics)
-    
+
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
-    
+
     # 5日图表并排展示
+    hist_df = payload.get("history", pd.DataFrame())
+    emo_badge, emo_class = analyze_recent_5d_emotion(hist_df)
+    counts_badge, counts_class = analyze_recent_5d_limit_counts(hist_df)
+    amt_badge, amt_class = analyze_recent_5d_amount(hist_df)
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        _render_chart_card("近5日情绪评分", "近5日", plot_recent_5d_emotion(payload.get("history", pd.DataFrame())))
+        _render_chart_card("近5日情绪评分", emo_badge, plot_recent_5d_emotion(hist_df), pill_class=emo_class)
     with c2:
-        _render_chart_card("近5日涨跌停家数", "近5日", plot_recent_5d_limit_counts(payload.get("history", pd.DataFrame())))
+        _render_chart_card("近5日涨跌停家数", counts_badge, plot_recent_5d_limit_counts(hist_df), pill_class=counts_class)
     with c3:
-        _render_chart_card("近5日接力成交额", "近5日", plot_recent_5d_amount(payload.get("history", pd.DataFrame())))
+        _render_chart_card("近5日接力成交额", amt_badge, plot_recent_5d_amount(hist_df), pill_class=amt_class)
 
     st.markdown("<div style='margin-bottom: 32px;'></div>", unsafe_allow_html=True)
-    
+
     st.markdown('<div class="chart-title"><span>板块梯队复盘</span><span class="pill pill-cyan">市场合力</span></div>', unsafe_allow_html=True)
     _render_board_ladder(payload.get("boards", pd.DataFrame()), payload.get("board_members", pd.DataFrame()))
 
@@ -2089,9 +2270,9 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
 
     st.markdown('<div class="chart-title" style="margin-top:24px;"><span>明日观察池</span><span class="pill pill-cyan">候选标的</span></div>', unsafe_allow_html=True)
     _render_watchlist_table(payload.get("watchlist", pd.DataFrame()))
-    
+
     st.markdown("<div style='margin-bottom: 48px;'></div>", unsafe_allow_html=True)
-    
+
     # 纵向排列两个大图表
     history_for_detail = payload.get("history", pd.DataFrame())
     valid_history_days = 0
@@ -2126,10 +2307,10 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
             render_glass_dataframe(pd.DataFrame([w if isinstance(w, dict) else {"message": str(w)} for w in warnings[:60]]), height=420)
         else:
             st.success("本轮没有记录到数据源错误。")
-            
+
         st.markdown("<div style='margin-top: 32px; margin-bottom: 16px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 24px;'></div>", unsafe_allow_html=True)
         st.markdown('<div class="chart-title"><span>缓存与数据生命周期管理</span><span class="pill pill-orange">系统级操作</span></div>', unsafe_allow_html=True)
-        
+
         col_info, col_btn = st.columns([0.76, 0.24], vertical_alignment="center")
         with col_info:
             st.markdown(
@@ -2372,6 +2553,7 @@ AI_SKILL_BUTTONS = [
     ("alphaear-logic-visualizer", "传导链路图生成"),
     ("alphaear-reporter", "专业研报生成"),
     ("alphaear-search", "全网搜索与本地 RAG"),
+    ("qqqq", "QQQ 量化回测、策略胜率、支撑压力与交易计划"),
 ]
 
 if page == "AI洞察":
@@ -2412,7 +2594,7 @@ if page == "AI洞察":
             st.rerun()
         if "ai_market_forced_skill_names" not in st.session_state:
             st.session_state["ai_market_forced_skill_names"] = []
-            
+
         def _toggle_ai_skill(s_name):
             skills = set(st.session_state.get("ai_market_forced_skill_names", []))
             if s_name in skills:
@@ -2424,9 +2606,9 @@ if page == "AI洞察":
         with st.expander("请选择Skill", expanded=False):
             st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
             selected_skills = set(st.session_state.get("ai_market_forced_skill_names", []))
-            
+
             for skill_name, help_text in AI_SKILL_BUTTONS:
-                display_name = skill_name.replace("alphaear-", "").title()
+                display_name = "QQQ" if skill_name == "qqqq" else skill_name.replace("alphaear-", "").title()
                 st.button(
                     display_name,
                     key=f"ai_skill_{skill_name.replace('-', '_')}",
@@ -2457,7 +2639,7 @@ elif page in {"个股行情", "市场情绪"}:
             with command_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
                 run = st.button("来财来财", type="primary", use_container_width=True, key="run_stock_quote")
-    
+
             matches = resolve_stock_query(stock_query, _stock_directory()) if stock_query.strip() else []
             if matches:
                 selected = matches[0]
@@ -2466,7 +2648,7 @@ elif page in {"个股行情", "市场情绪"}:
                 st.caption(f"已匹配：{name}（{code}）")
             elif stock_query.strip():
                 st.warning("没有匹配到股票。可以尝试输入 6 位代码、完整名称或更短的名称关键词。")
-    
+
             with st.expander("DCF 估值假设", expanded=False):
                 dcf_cols = st.columns(5, vertical_alignment="top")
                 with dcf_cols[0]:
@@ -2500,7 +2682,7 @@ elif page in {"个股行情", "市场情绪"}:
             with command_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
                 run = st.button("来财来财", type="primary", use_container_width=True, key="run_market_sentiment")
-            
+
             sentiment_refresh = False
             sentiment_backfill = False
 

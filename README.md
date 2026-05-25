@@ -75,6 +75,8 @@ http://localhost:8501
 - 读取 `alphaear-deepear-lite` 的 DeepEar Lite 实时金融信号。
 - 结合项目已有公开新闻/热点聚合能力生成实时上下文。
 - 读取 a-stock-data 个股/市场信号卡片，用“卡片结论 + 阈值 + 来源 + 更新时间”支持估值、资金、公告、龙虎榜、北向、行业轮动等问答。
+- 可手动触发 `QQQ` 量化回测 skill，自动补充近 250 / 60 交易日策略回测、支撑压力、止损位、突破确认位、BOLL / ATR / KDJ 和条件式交易计划。
+- 项目内置 `src/skill/Awesome-finance-skills/skills` 与 `src/skill/finance-quant-skills/skills`，部署环境无需依赖根目录的本地参考仓库。
 - 使用 Gemini 原生 API 生成回答，并在界面显示当前连接状态。
 
 启动前需要配置 API token。推荐复制 `.env.example` 为 `.env`，再填入本地密钥；`.env` 已被 `.gitignore` 忽略，不会进入 Git。

@@ -172,10 +172,12 @@ class MarketSentimentAnalyzer:
         self.cache = FileCache("data/cache")
         self.ttl = int(self.config.get("data", {}).get("sentiment_ttl_seconds", 900))
 
-    def analyze(self, trade_date, window_days: int = 60, force_refresh: bool = False, backfill_history: bool = False) -> dict:
+    def analyze(self, trade_date, window_days: int = 60, force_refresh: bool = False, backfill_history: bool = True) -> dict:
         trade_ts = pd.to_datetime(trade_date).normalize()
         window_days = int(max(14, min(120, window_days)))
-        cache_key = f"market_sentiment_{self.CACHE_VERSION}_{_date_key(trade_ts)}_{window_days}_{int(bool(backfill_history))}"
+        min_history_days = int(self.config.get("market", {}).get("min_history_days", 60) or 60)
+        required_history_days = int(max(window_days, min_history_days))
+        cache_key = f"market_sentiment_{self.CACHE_VERSION}_{_date_key(trade_ts)}_{window_days}_{required_history_days}_{int(bool(backfill_history))}"
         if not force_refresh:
             cached = self.cache.get_pickle("industry", cache_key, ttl_seconds=self.ttl)
             if cached:
@@ -183,9 +185,9 @@ class MarketSentimentAnalyzer:
 
         warnings: list[dict] = []
         latest = self._fetch_day(trade_ts, warnings, force_refresh=force_refresh)
-        dates = pd.bdate_range(end=trade_ts, periods=window_days)
+        dates = pd.bdate_range(end=trade_ts, periods=required_history_days)
         history_rows = []
-        remote_backfill_days = window_days if backfill_history else int(self.config.get("data", {}).get("sentiment_remote_backfill_days", 0))
+        remote_backfill_days = required_history_days if backfill_history else int(self.config.get("data", {}).get("sentiment_remote_backfill_days", 0))
         for offset, day in enumerate(dates):
             is_recent = offset >= len(dates) - remote_backfill_days
             day_key = f"sentiment_day_{self.CACHE_VERSION}_{_date_key(day)}"
@@ -195,7 +197,7 @@ class MarketSentimentAnalyzer:
             elif cached_day and not (backfill_history and self._cached_day_needs_backfill(cached_day)):
                 day_payload = cached_day
             elif is_recent:
-                day_payload = self._fetch_day(day, warnings, force_refresh=False)
+                day_payload = self._fetch_day(day, warnings, force_refresh=bool(cached_day and backfill_history))
             else:
                 warnings.append({"source": "cache", "interface": "sentiment_day_history", "message": f"{day.strftime('%Y-%m-%d')} 暂无缓存，跳过远端补齐以控制页面耗时", "fallback_used": "empty_history_row"})
                 day_payload = {"metrics": self._empty_day_metrics(day), "limit_up": pd.DataFrame()}
@@ -229,7 +231,9 @@ class MarketSentimentAnalyzer:
             "source": "涨跌停池 + 市场宽度/指数兜底",
             "metrics": metrics,
             "latest": latest,
-            "history": history,
+            "history": history.tail(window_days).copy(),
+            "calculation_history": history,
+            "required_history_days": required_history_days,
             "heatmap": heatmap,
             "month_stats": month_stats,
             "boards": boards,
