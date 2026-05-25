@@ -41,3 +41,13 @@ dist/
 # Database files
 *.db
 data/*.db
+
+# Local debug artifacts
+scratch/
+out*.txt
+*.patch
+dom_dumper.py
+get_*.py
+check_*.py
+params.py
+update.py

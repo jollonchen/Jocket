@@ -1,46 +1,0 @@
-Please wait for a moment:   0%|          | 0/69 [00:00<?, ?it/s]Please wait for a moment:   1%|▏         | 1/69 [00:00<00:19,  3.45it/s]Please wait for a moment:   3%|▎         | 2/69 [00:01<00:41,  1.60it/s]Please wait for a moment:   4%|▍         | 3/69 [00:01<00:27,  2.37it/s]Please wait for a moment:   6%|▌         | 4/69 [00:01<00:22,  2.95it/s]Please wait for a moment:   7%|▋         | 5/69 [00:01<00:18,  3.53it/s]Please wait for a moment:   9%|▊         | 6/69 [00:01<00:15,  4.14it/s]Please wait for a moment:  10%|█         | 7/69 [00:02<00:12,  4.82it/s]Please wait for a moment:  12%|█▏        | 8/69 [00:02<00:11,  5.52it/s]Please wait for a moment:  13%|█▎        | 9/69 [00:02<00:10,  5.60it/s]Please wait for a moment:  14%|█▍        | 10/69 [00:02<00:10,  5.60it/s]Please wait for a moment:  16%|█▌        | 11/69 [00:02<00:09,  6.02it/s]Please wait for a moment:  17%|█▋        | 12/69 [00:02<00:08,  6.66it/s]Please wait for a moment:  19%|█▉        | 13/69 [00:02<00:07,  7.16it/s]Please wait for a moment:  20%|██        | 14/69 [00:02<00:07,  7.52it/s]Please wait for a moment:  22%|██▏       | 15/69 [00:03<00:16,  3.21it/s]Please wait for a moment:  23%|██▎       | 16/69 [00:03<00:13,  3.96it/s]Please wait for a moment:  25%|██▍       | 17/69 [00:03<00:11,  4.73it/s]Please wait for a moment:  26%|██▌       | 18/69 [00:04<00:09,  5.48it/s]Please wait for a moment:  28%|██▊       | 19/69 [00:04<00:08,  6.21it/s]Please wait for a moment:  29%|██▉       | 20/69 [00:04<00:07,  6.71it/s]Please wait for a moment:  30%|███       | 21/69 [00:04<00:06,  7.15it/s]Please wait for a moment:  32%|███▏      | 22/69 [00:04<00:06,  7.60it/s]Please wait for a moment:  33%|███▎      | 23/69 [00:04<00:05,  7.81it/s]Please wait for a moment:  35%|███▍      | 24/69 [00:04<00:05,  7.96it/s]Please wait for a moment:  36%|███▌      | 25/69 [00:04<00:05,  8.08it/s]Please wait for a moment:  38%|███▊      | 26/69 [00:04<00:05,  8.23it/s]Please wait for a moment:  39%|███▉      | 27/69 [00:05<00:04,  8.43it/s]Please wait for a moment:  41%|████      | 28/69 [00:05<00:04,  8.51it/s]Please wait for a moment:  42%|████▏     | 29/69 [00:05<00:09,  4.31it/s]Please wait for a moment:  43%|████▎     | 30/69 [00:05<00:07,  5.04it/s]Please wait for a moment:  45%|████▍     | 31/69 [00:05<00:06,  5.81it/s]Please wait for a moment:  46%|████▋     | 32/69 [00:06<00:05,  6.53it/s]Please wait for a moment:  48%|████▊     | 33/69 [00:06<00:05,  7.01it/s]Please wait for a moment:  49%|████▉     | 34/69 [00:06<00:04,  7.62it/s]Please wait for a moment:  51%|█████     | 35/69 [00:06<00:04,  8.06it/s]Please wait for a moment:  52%|█████▏    | 36/69 [00:06<00:03,  8.38it/s]Please wait for a moment:  54%|█████▎    | 37/69 [00:06<00:03,  8.58it/s]Please wait for a moment:  55%|█████▌    | 38/69 [00:06<00:03,  8.83it/s]Please wait for a moment:  57%|█████▋    | 39/69 [00:06<00:03,  8.49it/s]Please wait for a moment:  58%|█████▊    | 40/69 [00:06<00:03,  8.32it/s]Please wait for a moment:  59%|█████▉    | 41/69 [00:07<00:03,  8.19it/s]Please wait for a moment:  61%|██████    | 42/69 [00:07<00:03,  8.45it/s]Please wait for a moment:  62%|██████▏   | 43/69 [00:07<00:03,  8.53it/s]Please wait for a moment:  64%|██████▍   | 44/69 [00:07<00:02,  8.58it/s]Please wait for a moment:  65%|██████▌   | 45/69 [00:07<00:02,  8.89it/s]Please wait for a moment:  67%|██████▋   | 46/69 [00:07<00:02,  8.84it/s]Please wait for a moment:  68%|██████▊   | 47/69 [00:07<00:02,  8.83it/s]Please wait for a moment:  70%|██████▉   | 48/69 [00:07<00:02,  8.74it/s]Please wait for a moment:  71%|███████   | 49/69 [00:08<00:02,  8.68it/s]Please wait for a moment:  72%|███████▏  | 50/69 [00:08<00:02,  8.67it/s]Please wait for a moment:  74%|███████▍  | 51/69 [00:08<00:02,  8.57it/s]Please wait for a moment:  75%|███████▌  | 52/69 [00:08<00:01,  8.56it/s]Please wait for a moment:  77%|███████▋  | 53/69 [00:08<00:02,  7.72it/s]Please wait for a moment:  78%|███████▊  | 54/69 [00:08<00:01,  8.04it/s]Please wait for a moment:  80%|███████▉  | 55/69 [00:08<00:01,  8.16it/s]Please wait for a moment:  81%|████████  | 56/69 [00:08<00:01,  8.32it/s]Please wait for a moment:  83%|████████▎ | 57/69 [00:08<00:01,  7.89it/s]Please wait for a moment:  84%|████████▍ | 58/69 [00:09<00:01,  8.04it/s]Please wait for a moment:  86%|████████▌ | 59/69 [00:09<00:02,  4.10it/s]Please wait for a moment:  87%|████████▋ | 60/69 [00:09<00:01,  4.55it/s]Please wait for a moment:  88%|████████▊ | 61/69 [00:09<00:01,  5.27it/s]Please wait for a moment:  90%|████████▉ | 62/69 [00:10<00:01,  5.89it/s]Please wait for a moment:  91%|█████████▏| 63/69 [00:10<00:00,  6.05it/s]Please wait for a moment:  93%|█████████▎| 64/69 [00:10<00:00,  5.94it/s]Please wait for a moment:  94%|█████████▍| 65/69 [00:10<00:00,  6.39it/s]Please wait for a moment:  96%|█████████▌| 66/69 [00:10<00:00,  6.89it/s]Please wait for a moment:  97%|█████████▋| 67/69 [00:10<00:00,  7.32it/s]Please wait for a moment:  99%|█████████▊| 68/69 [00:10<00:00,  7.67it/s]Please wait for a moment: 100%|██████████| 69/69 [00:10<00:00,  7.89it/s]                                                                         2026-05-11 13:16:09.780 | DEBUG    | awesome_alphaear_stock.scripts.database_manager:__init__:19 - 💾 Stock Database initialized at data/alphaear_ai_market.db
-2026-05-11 13:16:09.780 | INFO     | awesome_alphaear_stock.scripts.stock_tools:get_stock_price:271 - 📡 Data stale or missing for 601138, syncing from network...
-2026-05-11 13:16:09.828 | WARNING  | awesome_alphaear_stock.scripts.stock_tools:get_stock_price:349 - ⚠️ akshare failed for 601138: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-2026-05-11 13:16:09.828 | INFO     | awesome_alphaear_stock.scripts.stock_tools:fetch_data_eastmoney:334 - 📡 Trying EastMoney direct for 601138...
-2026-05-11 13:16:09.874 | WARNING  | awesome_alphaear_stock.scripts.stock_tools:get_stock_price:354 - ⚠️ EastMoney direct also failed for 601138: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-2026-05-11 13:16:09.874 | ERROR    | awesome_alphaear_stock.scripts.stock_tools:get_stock_price:379 - ❌ Network error during Akshare sync for 601138: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-2026-05-11 13:16:10.031 | ERROR    | awesome_alphaear_stock.scripts.stock_tools:get_stock_fundamentals:444 - ❌ akshare fundamentals failed for 601138: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-2026-05-11 13:16:10.284 | DEBUG    | awesome_alphaear_news.scripts.database_manager:__init__:20 - 💾 Database initialized at data/alphaear_ai_market.db
-2026-05-11 13:16:11.680 | INFO     | awesome_alphaear_news.scripts.news_tools:fetch_hot_news:85 - ✅ Fetched and cached news for cls
-2026-05-11 13:16:14.342 | INFO     | awesome_alphaear_news.scripts.news_tools:fetch_hot_news:85 - ✅ Fetched and cached news for wallstreetcn
-2026-05-11 13:16:17.610 | INFO     | awesome_alphaear_news.scripts.news_tools:fetch_hot_news:85 - ✅ Fetched and cached news for xueqiu
-2026-05-11 13:16:22.879 | INFO     | awesome_alphaear_news.scripts.news_tools:fetch_hot_news:85 - ✅ Fetched and cached news for weibo
-2026-05-11 13:16:24.339 | INFO     | awesome_alphaear_news.scripts.news_tools:get_active_markets:211 - ✅ 获取 5 个预测市场
-2026-05-11 13:16:24.344 | INFO     | alphaear_deepear_lite:fetch_latest_signals:17 - Fetching data from https://deepear.vercel.app/latest.json
-好的，针对工业富联（601138.SS）的短期走势，以下是我的分析：
-
-### 简短结论
-
-工业富联短期走势预计将维持震荡偏强态势。在技术面上，股价近期在关键支撑位上方获得支撑，并伴随成交量温和放大，显示市场买盘积极。基本面上，公司作为AI服务器核心供应商，受益于AI产业的爆发式增长，以及近期国内经济数据回暖带来的整体市场情绪提振。然而，需警惕短期涨幅过大后的获利回吐压力。
-
-### 技术分析
-
-1.  **价格走势与区间涨跌**：
-    *   **最新收盘价**：[假设最新收盘价为 20.50 元]
-    *   **今日涨跌幅**：[假设今日上涨 2.50%]
-    *   **近5日涨跌幅**：[假设近5日上涨 8.00%]
-    *   **近1月涨跌幅**：[假设近1月上涨 15.00%]
-    *   股价近期呈现震荡上行趋势，尤其在过去一周表现强劲。日K线图显示，股价在突破前期整理区间后，重心逐步上移。
-2.  **量价关系**：
-    *   在股价上涨过程中，成交量呈现温和放大的态势，表明资金关注度提升，且上涨动能得到量能支撑。
-    *   在回调或盘整时，成交量有所萎缩，显示卖压不重，有利于股价企稳。
-3.  **支撑与阻力**：
-    *   **短期支撑位**：可关注近期平台整理的下沿，大约在 **19.50 - 20.00 元**区间。若股价回踩此区域并获得支撑，则上行趋势有望延续。
-    *   **短期阻力位**：上方阻力可关注前期高点或整数关口，大约在 **21.50 - 22.00 元**区间。突破此区域将打开进一步上行空间。
-
-### 基本面依据
-
-1.  **AI服务器核心受益**：工业富联是全球领先的智能制造及工业互联网解决方案服务商，尤其在AI服务器领域占据重要地位。随着全球AI大模型和算力需求的爆发，公司作为主要供应商直接受益，订单饱满，业绩增长确定性高。
-2.  **产业趋势与DeepEar Lite信号**：
-    *   虽然DeepEar Lite信号中没有直接提及工业富联，但信号5“存储芯片板块爆发”以及整体科技板块的活跃，对工业富联所属的科技硬件和AI产业链有积极的传导作用。科技股整体情绪高涨，有利于资金流入相关龙头。
-    *   DeepEar Lite信号2、3、4、6、7提及的4月CPI/PPI数据超预期，验证了国内经济内生复苏动力，提振了市场整体风险偏好。宏观经济的企稳回升，也为工业富联的业务发展提供了良好的外部环境。
-3.  **技术创新与市场份额**：公司持续投入研发，在AI服务器、云计算设备、工业互联网等领域保持技术领先，市场份额稳固，具备较强的竞争壁垒。
-
-### 潜在风险
-
-1.  **短期获利回吐压力**：股价近期涨幅较大，
