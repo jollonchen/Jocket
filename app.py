@@ -1467,12 +1467,12 @@ def _run_stock_analysis_job(code: str, name: str, dcf_assumptions: dict, progres
     }
 
 
-def _run_market_sentiment_job(trade_date, window_days: int, progress: dict | None = None) -> dict:
+def _run_market_sentiment_job(trade_date, window_days: int, progress: dict | None = None, force_refresh: bool = False) -> dict:
     _set_job_stage(progress, "fetch")
     sentiment_result = MarketSentimentAnalyzer(config).analyze(
         trade_date,
         window_days=int(window_days or 60),
-        force_refresh=False,
+        force_refresh=force_refresh,
         backfill_history=True,
     )
     _set_job_stage(progress, "compute")
@@ -2285,7 +2285,7 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
         )
         missing = pd.to_numeric(history_for_detail.get("history_missing", 0), errors="coerce").fillna(0)
         valid_history_days = int(((counts > 0) & (missing <= 0)).sum())
-    render_section_title("情绪周期三维监控 (细节展开)", f"观察窗口近 {window_days} 日，当前公共源补齐到 {valid_history_days} 个有效交易日；空池日不再绘制为假 0 值。")
+    render_section_title("情绪周期三维监控", f"观察窗口近 {window_days} 日，当前公共源补齐到 {valid_history_days} 个有效交易日；空池日不再绘制为假 0 值。")
     _render_chart_card("三维指标趋势", f"近{window_days}日", plot_market_sentiment_cycle(payload.get("history", pd.DataFrame())))
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
     _render_chart_card("涨跌停生态", "近20日", plot_limit_ecology(payload.get("history", pd.DataFrame())))
@@ -2424,21 +2424,10 @@ def _render_ai_market_dashboard(config: dict) -> None:
                 )
             else:
                 try:
-                    context = assistant.context_snapshot(prompt_text, st.session_state["ai_market_messages"][:-1], keywords, forced_skills_pending)
-
-                    pro_keywords = ["深度", "逻辑", "分析", "研究", "估值", "基本面", "财报", "资金", "怎么看", "为什么"]
-                    use_pro = any(kw in prompt_text for kw in pro_keywords) or (len(str(context.get("alphaear_stock", ""))) > 100)
-
-                    if assistant.settings.provider == "deepseek":
-                        model_override = assistant.deepseek_model_for(use_pro)
-                    else:
-                        model_override = "gemini-2.5-pro" if use_pro else "gemini-2.5-flash"
-
-                    messages = assistant._build_messages(prompt_text, st.session_state["ai_market_messages"][:-1], context)
-
-                    for chunk in assistant._ask_model_stream(messages, model_override=model_override):
-                        full_answer += chunk
-                        safe_content = markdown.markdown(full_answer + " ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+                    import time
+                    
+                    def update_snapshot_status(msg):
+                        safe_content = markdown.markdown(f"I'm Jocketing... **{msg}** ▌", extensions=['fenced_code', 'tables', 'nl2br'])
                         placeholder.markdown(
                             f"""
                             <div class="ai-message-row assistant">
@@ -2451,6 +2440,39 @@ def _render_ai_market_dashboard(config: dict) -> None:
                             """,
                             unsafe_allow_html=True,
                         )
+
+                    context = assistant.context_snapshot(prompt_text, st.session_state["ai_market_messages"][:-1], keywords, forced_skills_pending, status_callback=update_snapshot_status)
+
+                    pro_keywords = ["深度", "逻辑", "分析", "研究", "估值", "基本面", "财报", "资金", "怎么看", "为什么"]
+                    use_pro = any(kw in prompt_text for kw in pro_keywords) or (len(str(context.get("alphaear_stock", ""))) > 100)
+
+                    if assistant.settings.provider == "deepseek":
+                        model_override = assistant.deepseek_model_for(use_pro)
+                    else:
+                        model_override = "gemini-2.5-pro" if use_pro else "gemini-2.5-flash"
+
+                    messages = assistant._build_messages(prompt_text, st.session_state["ai_market_messages"][:-1], context)
+
+                    last_update_time = time.time()
+                    for chunk in assistant._ask_model_stream(messages, model_override=model_override):
+                        full_answer += chunk
+                        current_time = time.time()
+                        # Throttle updates to at most once every 150ms to prevent browser WebSocket congestion
+                        if current_time - last_update_time >= 0.15:
+                            safe_content = markdown.markdown(full_answer + " ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+                            placeholder.markdown(
+                                f"""
+                                <div class="ai-message-row assistant">
+                                  <div class="ai-message-avatar">AI</div>
+                                  <div class="ai-message-bubble">
+                                    <div class="ai-message-name">AI洞察</div>
+                                    <div class="ai-message-content">{safe_content}</div>
+                                  </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                            last_update_time = current_time
                 except Exception as e:
                     full_answer += f"\n\n**流式输出发生异常:** {e}"
 
@@ -2570,7 +2592,7 @@ if page == "AI洞察":
 
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">AI 行情问答</div>', unsafe_allow_html=True)
-        with st.form("ai_market_prompt_form", clear_on_submit=True, border=False):
+        with st.form("ai_market_prompt_form", clear_on_submit=False, border=False):
             ai_cols = st.columns([0.76, 0.24], vertical_alignment="top")
             with ai_cols[0]:
                 inner_cols = st.columns(1)
@@ -2779,7 +2801,7 @@ elif run and page == "市场情绪":
         "window_days": int(sentiment_window or 60),
         "progress": progress,
         "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "future": _analysis_executor().submit(_run_market_sentiment_job, sentiment_date, int(sentiment_window or 60), progress),
+        "future": _analysis_executor().submit(_run_market_sentiment_job, sentiment_date, int(sentiment_window or 60), progress, force_refresh=True),
     }
     market_job_running = True
 

@@ -192,12 +192,17 @@ class MarketSentimentAnalyzer:
             is_recent = offset >= len(dates) - remote_backfill_days
             day_key = f"sentiment_day_{self.CACHE_VERSION}_{_date_key(day)}"
             cached_day = self.cache.get_pickle("industry", day_key, ttl_seconds=24 * 3600 * 14)
+            is_very_recent = day.normalize() >= (pd.Timestamp.now() - pd.Timedelta(days=3)).normalize()
             if day.normalize() == trade_ts:
                 day_payload = latest
-            elif cached_day and not (backfill_history and self._cached_day_needs_backfill(cached_day)):
+            elif cached_day and not (force_refresh and is_very_recent) and not (backfill_history and self._cached_day_needs_backfill(cached_day)):
                 day_payload = cached_day
             elif is_recent:
-                day_payload = self._fetch_day(day, warnings, force_refresh=bool(cached_day and backfill_history))
+                day_payload = self._fetch_day(
+                    day,
+                    warnings,
+                    force_refresh=bool((force_refresh and is_very_recent) or (cached_day and backfill_history))
+                )
             else:
                 warnings.append({"source": "cache", "interface": "sentiment_day_history", "message": f"{day.strftime('%Y-%m-%d')} 暂无缓存，跳过远端补齐以控制页面耗时", "fallback_used": "empty_history_row"})
                 day_payload = {"metrics": self._empty_day_metrics(day), "limit_up": pd.DataFrame()}
@@ -270,7 +275,9 @@ class MarketSentimentAnalyzer:
     def _fetch_day(self, day: pd.Timestamp, warnings: list[dict], force_refresh: bool = False) -> dict:
         key = f"sentiment_day_{self.CACHE_VERSION}_{_date_key(day)}"
         if not force_refresh:
-            cached = self.cache.get_pickle("industry", key, ttl_seconds=24 * 3600 * 14)
+            is_recent = day.normalize() >= (pd.Timestamp.now() - pd.Timedelta(days=3)).normalize()
+            ttl = self.ttl if is_recent else 24 * 3600 * 14
+            cached = self.cache.get_pickle("industry", key, ttl_seconds=ttl)
             if cached:
                 return cached
 

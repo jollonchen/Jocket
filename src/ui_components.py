@@ -465,10 +465,8 @@ def load_css(path: str = "assets/styles.css") -> None:
                   inputElem.dataset.jocketEnterBound = "true";
                   inputElem.addEventListener("keydown", (e) => {
                     if (e.key === "Enter" && inputElem.value.trim()) {
-                      e.preventDefault();
                       inputWrap.setAttribute("data-ai-loading", "true");
                       if (sendBtn) sendBtn.setAttribute("data-laicai-running", "true");
-                      if (sendBtn) sendBtn.click();
                     }
                   });
                 }
@@ -1060,15 +1058,19 @@ def plot_market_sentiment_cycle(history: pd.DataFrame) -> go.Figure:
             - down_count * 1.2
             + 12
         ).clip(0, 100)
-    _add_glow_line(fig, x=data["date"], y=score, name="情绪指数", color=RED, width=3.0, mode="lines+markers")
-    _add_glow_line(fig, x=data["date"], y=(limit_count / max(limit_count.max(), 1) * 100).clip(0, 100), name="涨停强度", color=PURPLE, width=2.2)
-    _add_glow_line(fig, x=data["date"], y=broken_rate.clip(0, 100), name="炸板率", color=ORANGE, width=2.2)
-    _add_glow_line(fig, x=data["date"], y=(down_count / max(down_count.max(), 1) * 100).clip(0, 100), name="冰点压力", color=BLUE, width=2.2)
+    # Convert date to string format for categorical axis to naturally exclude non-trading days
+    date_str = data["date"].dt.strftime("%m/%d")
+    _add_glow_line(fig, x=date_str, y=score, name="情绪指数", color=RED, width=3.0, mode="lines+markers")
+    _add_glow_line(fig, x=date_str, y=(limit_count / max(limit_count.max(), 1) * 100).clip(0, 100), name="涨停强度", color=PURPLE, width=2.2)
+    _add_glow_line(fig, x=date_str, y=broken_rate.clip(0, 100), name="炸板率", color=ORANGE, width=2.2)
+    _add_glow_line(fig, x=date_str, y=(down_count / max(down_count.max(), 1) * 100).clip(0, 100), name="冰点压力", color=BLUE, width=2.2)
     fig.add_hrect(y0=80, y1=100, fillcolor="rgba(255,92,122,0.08)", line_width=0)
     fig.add_hrect(y0=0, y1=20, fillcolor="rgba(91,140,255,0.10)", line_width=0)
     fig.update_yaxes(title="指数 (0-100)", range=[0, 100])
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
-    return _base_fig(fig, 430)
+    fig = _base_fig(fig, 430)
+    fig.update_xaxes(type="category")
+    return fig
 
 
 def plot_market_sentiment_heatmap(heatmap: pd.DataFrame) -> go.Figure:
@@ -1140,12 +1142,16 @@ def plot_limit_ecology(history: pd.DataFrame) -> go.Figure:
     data = data[(missing <= 0) & (counts > 0)].copy()
     if data.empty:
         return _base_fig(fig, 330)
-    fig.add_trace(go.Bar(x=data["date"], y=data.get("limit_up_count", 0), name="涨停", marker=_bar_marker(RED, 0.70)))
-    fig.add_trace(go.Bar(x=data["date"], y=data.get("broken_count", 0), name="炸板", marker=_bar_marker(ORANGE, 0.65)))
-    fig.add_trace(go.Bar(x=data["date"], y=data.get("limit_down_count", 0), name="跌停", marker=_bar_marker(GREEN, 0.60)))
+    # Convert date to string format for categorical axis to naturally exclude non-trading days
+    date_str = data["date"].dt.strftime("%m/%d")
+    fig.add_trace(go.Bar(x=date_str, y=data.get("limit_up_count", 0), name="涨停", marker=_bar_marker(RED, 0.70)))
+    fig.add_trace(go.Bar(x=date_str, y=data.get("broken_count", 0), name="炸板", marker=_bar_marker(ORANGE, 0.65)))
+    fig.add_trace(go.Bar(x=date_str, y=data.get("limit_down_count", 0), name="跌停", marker=_bar_marker(GREEN, 0.60)))
     fig.update_layout(barmode="group", legend=dict(orientation="h"))
     fig.update_yaxes(title="家数")
-    return _base_fig(fig, 340)
+    fig = _base_fig(fig, 340)
+    fig.update_xaxes(type="category")
+    return fig
 
 
 def plot_recent_5d_emotion(history: pd.DataFrame) -> go.Figure:

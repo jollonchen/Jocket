@@ -163,7 +163,7 @@ class AIMarketAssistant:
         )
         return pro_model if use_pro else flash_model
 
-    def context_snapshot(self, question: str = "", history: list[dict] | None = None, keywords: list[str] | None = None, forced_skills: list[str] | None = None) -> dict:
+    def context_snapshot(self, question: str = "", history: list[dict] | None = None, keywords: list[str] | None = None, forced_skills: list[str] | None = None, status_callback=None) -> dict:
         keywords = [item.strip() for item in (keywords or DEFAULT_MARKET_KEYWORDS) if str(item).strip()]
         
         enriched_question = question or ""
@@ -172,30 +172,57 @@ class AIMarketAssistant:
                 if msg.get("content"):
                     enriched_question += " " + msg["content"]
 
+        if status_callback:
+            status_callback("正在解析提问意图与路由技能...")
         route = self._resolve_skill_route(enriched_question, forced_skills)
         contexts = {name: "本轮未触发。" for name in route["available"]}
         if "alphaear-stock" in route["selected"]:
-            contexts["alphaear-stock"] = self._fetch_stock_skill_context(enriched_question)
+            if status_callback:
+                status_callback("正在调用 alphaear-stock 获取个股行情与量价数据...")
+            contexts["alphaear-stock"] = self._fetch_stock_skill_context(enriched_question, status_callback=status_callback)
         if "alphaear-news" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-news 检索财经热点与预测市场...")
             contexts["alphaear-news"] = self._fetch_alphaear_news_context(keywords)
         if "alphaear-deepear-lite" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-deepear-lite 检索最新量化信号...")
             contexts["alphaear-deepear-lite"] = self._fetch_deepear_signals()
         if "a-stock-data" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 a-stock-data 检索全市场情绪卡片...")
             contexts["a-stock-data"] = self._fetch_a_stock_market_context()
         if "alphaear-search" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-search 执行全网信息检索...")
             contexts["alphaear-search"] = self._fetch_search_context(enriched_question)
         if "alphaear-sentiment" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-sentiment 运行文本情感量化...")
             contexts["alphaear-sentiment"] = self._fetch_sentiment_skill_context(enriched_question, contexts)
         if "alphaear-predictor" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-predictor 运行 Kronos 时序预测...")
             contexts["alphaear-predictor"] = self._fetch_predictor_context(enriched_question, contexts)
         if "alphaear-signal-tracker" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 alphaear-signal-tracker 追踪关键信号演化...")
             contexts["alphaear-signal-tracker"] = self._fetch_signal_tracker_context(enriched_question)
         if "alphaear-logic-visualizer" in route["selected"]:
+            if status_callback:
+                status_callback("正在触发 alphaear-logic-visualizer 链路生成框架...")
             contexts["alphaear-logic-visualizer"] = self._fetch_framework_context("alphaear-logic-visualizer", "传导链路图生成框架已触发。")
         if "alphaear-reporter" in route["selected"]:
+            if status_callback:
+                status_callback("正在触发 alphaear-reporter 专业研报生成框架...")
             contexts["alphaear-reporter"] = self._fetch_framework_context("alphaear-reporter", "专业研报生成框架已触发。")
         if "qqqq" in route["selected"]:
+            if status_callback:
+                status_callback("正在调用 qqqq 执行策略回测与交易计划...")
             contexts["qqqq"] = self._fetch_quant_context(enriched_question)
+        
+        if status_callback:
+            status_callback("正在整理多源信号快照并注入模型上下文...")
         news_context = contexts.get("alphaear-news", "")
         stock_context = contexts.get("alphaear-stock", "")
         snapshot = {
@@ -759,7 +786,7 @@ class AIMarketAssistant:
         cleaned = re.sub(r"(?i)(?<![A-Z0-9])qqqq?(?![A-Z0-9])", " ", cleaned)
         return cleaned
 
-    def _fetch_stock_skill_context(self, question: str) -> str:
+    def _fetch_stock_skill_context(self, question: str, status_callback=None) -> str:
         stocks = self._extract_stock_queries(question)
         if not stocks:
             return "用户问题未明确匹配到个股代码/名称；本轮以市场、板块、新闻和 DeepEar 信号为主。"
@@ -769,9 +796,11 @@ class AIMarketAssistant:
         nominal_config = self.config.copy()
         nominal_config['adjust'] = '' # Empty string means nominal in many interfaces
 
-        for stock in stocks:
+        for idx, stock in enumerate(stocks):
             code = stock["code"]
             name = stock.get("name", code)
+            if status_callback:
+                status_callback(f"正在检索 {name}（{code}）的最新行情与技术分析... ({idx+1}/{len(stocks)})")
             start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
             
             try:
