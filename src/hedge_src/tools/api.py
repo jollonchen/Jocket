@@ -64,9 +64,16 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
 
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
     """Fetch price data from cache or Jocket's robust DataFetcher."""
-    cache_key = f"{ticker}_{start_date}_{end_date}"
-    if cached_data := _cache.get_prices(cache_key):
-        return [Price(**price) for price in cached_data]
+    # Check cache by ticker instead of compound key to leverage prefetched data
+    cached_data = _cache.get_prices(ticker)
+    if cached_data:
+        filtered = [p for p in cached_data if start_date <= p["time"] <= end_date]
+        cached_times = [p["time"] for p in cached_data]
+        if cached_times:
+            min_time = min(cached_times)
+            max_time = max(cached_times)
+            if min_time <= start_date and end_date <= max_time:
+                return [Price(**price) for price in filtered]
 
     try:
         from src.data_fetcher import DataFetcher
@@ -91,7 +98,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None)
             ))
         
         if prices:
-            _cache.set_prices(cache_key, [p.model_dump() for p in prices])
+            _cache.set_prices(ticker, [p.model_dump() for p in prices])
         return prices
     except Exception as e:
         logger.warning("Failed to fetch price data using DataFetcher for %s: %s", ticker, e)
@@ -107,9 +114,16 @@ def get_financial_metrics(
     api_key: str = None,
 ) -> list[FinancialMetrics]:
     """Fetch financial metrics from cache or Jocket's robust FundamentalFetcher."""
-    cache_key = f"{ticker}_{period}_{end_date}_{limit}"
-    if cached_data := _cache.get_financial_metrics(cache_key):
-        return [FinancialMetrics(**metric) for metric in cached_data]
+    # Check cache by ticker to avoid dynamic end_date misses
+    cached_data = _cache.get_financial_metrics(ticker)
+    if cached_data:
+        filtered = [
+            m for m in cached_data
+            if m.get("period") == period and m.get("report_period") <= end_date
+        ]
+        if filtered:
+            filtered = sorted(filtered, key=lambda x: x["report_period"], reverse=True)
+            return [FinancialMetrics(**metric) for metric in filtered[:limit]]
 
     try:
         from src.fundamental_fetcher import FundamentalFetcher
@@ -181,7 +195,7 @@ def get_financial_metrics(
         )
         
         financial_metrics = [metrics]
-        _cache.set_financial_metrics(cache_key, [m.model_dump() for m in financial_metrics])
+        _cache.set_financial_metrics(ticker, [m.model_dump() for m in financial_metrics])
         return financial_metrics
     except Exception as e:
         logger.warning("Failed to fetch financial metrics using FundamentalFetcher for %s: %s", ticker, e)
@@ -292,9 +306,22 @@ def get_company_news(
     api_key: str = None,
 ) -> list[CompanyNews]:
     """Fetch company news using yfinance, with A-share fallback via Jocket NewsFetcher."""
-    cache_key = f"{ticker}_{start_date or 'none'}_{end_date}_{limit}"
-    if cached_data := _cache.get_company_news(cache_key):
-        return [CompanyNews(**news) for news in cached_data]
+    # Check cache by ticker instead of compound key to leverage prefetched news
+    cached_data = _cache.get_company_news(ticker)
+    if cached_data:
+        filtered = cached_data
+        if start_date:
+            filtered = [n for n in filtered if n.get("date") and start_date <= n["date"][:10]]
+        if end_date:
+            filtered = [n for n in filtered if n.get("date") and n["date"][:10] <= end_date]
+        
+        # Check coverage of cached news to avoid empty hits
+        cached_dates = [n["date"][:10] for n in cached_data if n.get("date")]
+        if cached_dates:
+            min_date = min(cached_dates)
+            max_date = max(cached_dates)
+            if (not start_date or min_date <= start_date) and end_date <= max_date:
+                return [CompanyNews(**news) for news in filtered[:limit]]
 
     all_news: list[CompanyNews] = []
     ticker_clean = normalize_a_share_code(ticker)
@@ -399,7 +426,7 @@ def get_company_news(
 
     all_news = all_news[:limit]
     if all_news:
-        _cache.set_company_news(cache_key, [news.model_dump() for news in all_news])
+        _cache.set_company_news(ticker, [news.model_dump() for news in all_news])
     return all_news
 
 

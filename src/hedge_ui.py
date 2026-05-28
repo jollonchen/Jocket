@@ -643,7 +643,7 @@ def render_hedge_dashboard() -> None:
 
 
             # Analyst Multiselect replaced by Jocket expander + skill buttons container
-            st.markdown('<div class="command-field-label">参与决策的智能体</div>', unsafe_allow_html=True)
+            st.markdown('<div class="command-field-label">智能体分析师</div>', unsafe_allow_html=True)
             if "selected_hedge_agents" not in st.session_state:
                 st.session_state["selected_hedge_agents"] = []
             selected_agent_keys = st.session_state["selected_hedge_agents"]
@@ -654,7 +654,7 @@ def render_hedge_dashboard() -> None:
             if selected_names:
                 st.caption(f"当前选择：{', '.join(selected_names)}")
             else:
-                st.caption("当前选择：无（请在下方展开选择参与决策的智能体）")
+                st.caption("当前选择：无")
             
             def toggle_hedge_agent(agent_key):
                 agents = set(st.session_state.get("selected_hedge_agents", []))
@@ -664,7 +664,7 @@ def render_hedge_dashboard() -> None:
                     agents.add(agent_key)
                 st.session_state["selected_hedge_agents"] = list(agents)
 
-            with st.expander("选择参与决策的智能体", expanded=False):
+            with st.expander("选择智能体分析师", expanded=False):
                 st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
                 
                 for agent in get_agents_list():
