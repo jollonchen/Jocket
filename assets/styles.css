@@ -5529,19 +5529,18 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
 .st-key-hedge_mode {
   width: 100% !important;
   margin: 0 auto 14px !important;
-  padding: 6px !important;
+  padding: 5px !important;
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
   border-radius: 999px !important;
-  height: 64px !important;
-  min-height: 64px !important;
+  height: 52px !important;
+  min-height: 52px !important;
   box-sizing: border-box !important;
   background:
-    radial-gradient(circle at 8% 0%, rgba(255, 255, 255, 0.06), transparent 44%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)) !important;
+    radial-gradient(circle at 8% 0%, rgba(255, 255, 255, 0.06), transparent 46%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -16px 28px rgba(0, 0, 0, 0.06),
-    0 12px 28px rgba(0, 0, 0, 0.18) !important;
+    0 10px 24px rgba(0, 0, 0, 0.16) !important;
   backdrop-filter: blur(18px) !important;
   display: block !important;
   overflow: hidden !important;
@@ -5606,15 +5605,15 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
   flex: 1 1 0 !important;
   max-width: none !important;
   min-width: 0 !important;
-  height: 100% !important;
-  min-height: 100% !important;
+  height: 42px !important;
+  min-height: 42px !important;
   border-radius: 999px !important;
   border: 1px solid transparent !important;
   color: rgba(245, 247, 250, 0.52) !important;
   background: transparent !important;
   box-shadow: none !important;
   margin: 0 !important;
-  padding: 0 !important;
+  padding: 6px 12px !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
