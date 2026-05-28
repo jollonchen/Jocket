@@ -148,9 +148,160 @@ class FundamentalFetcher:
             cn_profile = future_cn.result()
             sector_payload = future_sec.result()
             
+        if yahoo_code.endswith((".SS", ".SZ")):
+            if y.get("annual") is None or y["annual"].empty or y.get("quarterly") is None or y["quarterly"].empty:
+                try:
+                    sina_annual, sina_quarterly = self._fetch_sina_statements(ticker)
+                    if not sina_annual.empty:
+                        y["annual"] = sina_annual
+                    if not sina_quarterly.empty:
+                        y["quarterly"] = sina_quarterly
+                except Exception as ex:
+                    logger.warning("Failed to fetch Sina statements fallback for %s: %s", ticker, ex)
+            
         payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, cn_profile, sector_payload, latest_price, a_stock_payload)
         self.cache.set_pickle("fundamentals", cache_key, payload)
         return payload
+
+    def _fetch_sina_statements(self, ticker: str, limit: int = 12) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Fetch income, balance, and cashflow from Sina Finance and return annual/quarterly DataFrames formatted exactly like yfinance."""
+        import requests
+        import numpy as np
+        
+        # Clean ticker (ensure 6-digit code)
+        m = re.search(r'\d{6}', ticker)
+        if not m:
+            return pd.DataFrame(), pd.DataFrame()
+        code = m.group(0)
+        
+        # Helper to fetch and parse a report type
+        def get_sina_report(source_type: str) -> list[dict]:
+            prefix = "sh" if code.startswith("6") else "sz"
+            paper_code = f"{prefix}{code}"
+            url = "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
+            params = {
+                "paperCode": paper_code,
+                "source": source_type,
+                "type": "0",
+                "page": "1",
+                "num": "40",
+            }
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 Jocket"}
+                r = requests.get(url, params=params, headers=headers, timeout=10)
+                if r.status_code != 200:
+                    return []
+                d = r.json()
+                result = d.get("result", {}).get("data", {})
+                report_dict = result.get("report_list", {})
+                if not isinstance(report_dict, dict) or not report_dict:
+                    return []
+                records = []
+                for date_key, date_info in report_dict.items():
+                    row = {"报告日": date_key}
+                    for field in date_info.get("data", []):
+                        row[field.get("item_title", "")] = field.get("item_value")
+                    records.append(row)
+                return records
+            except Exception as e:
+                logger.warning("Sina finance fetch failed for %s source %s: %s", code, source_type, e)
+                return []
+
+        fzb_records = get_sina_report("fzb")
+        lrb_records = get_sina_report("lrb")
+        llb_records = get_sina_report("llb")
+        
+        if not fzb_records and not lrb_records and not llb_records:
+            return pd.DataFrame(), pd.DataFrame()
+            
+        # Combine records by date (YYYYMMDD)
+        dates = sorted(list(set([r["报告日"] for r in fzb_records + lrb_records + llb_records])), reverse=True)
+        
+        def find_record(records, d_str):
+            for r in records:
+                if r["报告日"] == d_str:
+                    return r
+            return {}
+            
+        rows = []
+        for d_str in dates:
+            fzb = find_record(fzb_records, d_str)
+            lrb = find_record(lrb_records, d_str)
+            llb = find_record(llb_records, d_str)
+            
+            # Safe float parsing
+            def val(d, keys):
+                for k in keys:
+                    if k in d and d[k] is not None:
+                        try:
+                            s = str(d[k]).strip().replace(",", "")
+                            if s and s not in {"-", "--", "None", "nan"}:
+                                return float(s)
+                        except Exception:
+                            pass
+                return None
+
+            revenue = val(lrb, ["营业总收入", "营业收入", "主营业务收入"])
+            net_income = val(lrb, ["归属于母公司所有者的净利润", "归属于母公司股东的净利润", "净利润"])
+            eps = val(lrb, ["基本每股收益", "稀释每股收益", "每股收益"])
+            
+            total_assets = val(fzb, ["资产总计", "总资产", "资产合计"])
+            total_liab = val(fzb, ["负债合计", "总负债", "负债总额"])
+            equity = val(fzb, ["归属于母公司所有者权益合计", "所有者权益合计(或股东权益合计)", "归属于母公司股东权益合计", "股东权益合计"])
+            shares = val(fzb, ["实收资本(或股本)", "股本"])
+            
+            operating_cash_flow = val(llb, ["经营活动产生的现金流量净额"])
+            
+            # FCF proxy
+            capex = val(llb, ["购建固定资产、无形资产和其他长期资产支付的现金"])
+            free_cash_flow = None
+            if operating_cash_flow is not None:
+                free_cash_flow = operating_cash_flow - (capex or 0)
+                
+            bvps = None
+            if equity and shares:
+                bvps = equity / shares
+                
+            gross_profit = val(lrb, ["营业利润", "利润总额"]) # proxy
+            if gross_profit is None and revenue is not None:
+                cost = val(lrb, ["营业成本"])
+                if cost is not None:
+                    gross_profit = revenue - cost
+
+            rows.append({
+                "period": pd.to_datetime(d_str, format="%Y%m%d", errors="coerce").strftime("%Y-%m-%d"),
+                "totalRevenue": revenue,
+                "grossProfit": gross_profit,
+                "netIncome": net_income,
+                "deductedNetIncome": None,
+                "operatingCashFlow": operating_cash_flow,
+                "freeCashFlow": free_cash_flow,
+                "totalAssets": total_assets,
+                "totalLiab": total_liab,
+                "totalStockholderEquity": equity,
+                "grossMargin": gross_profit / revenue if revenue and gross_profit is not None else None,
+                "netMargin": net_income / revenue if revenue and net_income is not None else None,
+                "roe": net_income / equity if net_income and equity else None,
+                "roa": net_income / total_assets if net_income and total_assets else None,
+                "debtToEquity": total_liab / equity if total_liab and equity else None,
+                "eps": eps,
+                "bvps": bvps,
+                "dividend": None,
+                "dividendYield": None,
+            })
+            
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return pd.DataFrame(), pd.DataFrame()
+            
+        df["dt"] = pd.to_datetime(df["period"])
+        
+        # Split into annual and quarterly
+        # Annual: reports ending on Dec 31
+        annual = df[df["dt"].dt.month == 12].copy().drop(columns=["dt"]).head(5)
+        quarterly = df.copy().drop(columns=["dt"]).head(limit)
+        
+        return annual, quarterly
 
     def _fetch_yfinance(self, yahoo_code: str, latest_price: float | None) -> dict:
         errors = []

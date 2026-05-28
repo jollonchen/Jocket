@@ -106,7 +106,7 @@ def load_css(path: str = "assets/styles.css") -> None:
               const enhanceNav = () => {
                 const navWrap = doc.querySelector(".st-key-analysis_mode_top");
                 const navScope = navWrap || doc;
-                const navLabels = ["AI洞察", "个股行情", "市场情绪", "投研分析"];
+                const navLabels = ["AI洞察", "个股行情", "市场情绪", "投研分析", "量化对冲"];
                 const rawItems = [
                   ...navScope.querySelectorAll('[data-testid="stSegmentedControlOption"], button, label, [role="radio"], [role="button"]')
                 ];
@@ -117,7 +117,7 @@ def load_css(path: str = "assets/styles.css") -> None:
                   seen.add(text);
                   return true;
                 });
-                if (navButtons.length < 4) return;
+                if (navButtons.length < 5) return;
                 const nav = navButtons[0].parentElement;
                 if (!nav) return;
                 nav.dataset.jocketNavEnhanced = "true";

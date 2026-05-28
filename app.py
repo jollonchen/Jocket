@@ -2523,7 +2523,7 @@ def _render_ai_market_dashboard(config: dict) -> None:
 st.markdown('<div class="product-masthead"><span>Jocket</span></div>', unsafe_allow_html=True)
 page = st.segmented_control(
     "核心功能",
-    ["AI洞察", "个股行情", "市场情绪", "投研分析"],
+    ["AI洞察", "个股行情", "市场情绪", "投研分析", "量化对冲"],
     default="AI洞察",
     key="analysis_mode_top",
     label_visibility="collapsed",
@@ -2534,8 +2534,9 @@ st.markdown(f'<div id="jocket-current-page" data-page="{escape(str(page))}"></di
 _mode_info = {
     "AI洞察": ("AI洞察", "询问大盘主线、板块催化或个股消息面，获取结合最新信号的深度研判。"),
     "个股行情": ("个股行情", "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图。"),
-    "市场情绪": ("市场情绪", "复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池。"),
+    "市场情绪": ("市场情绪", "复盘全市场涨停生态、情绪周期、板块梯队 and 次日条件观察池。"),
     "投研分析": ("深度投研", "多智能体协作完成高质量A股研报分析，提供全面的个股深度剖析。"),
+    "量化对冲": ("量化对冲", "多元投研智能体群共识决策，以及大模型驱动的历史绩效对冲回测模拟。"),
 }
 config.setdefault("data", {})["provider"] = "auto"
 
@@ -2839,6 +2840,7 @@ _mode_info = {
     "AI洞察": ("AI洞察", "询问大盘主线、板块催化或个股消息面，获取结合最新信号的深度研判。"),
     "个股行情": ("个股行情", "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图。"),
     "市场情绪": ("市场情绪", "复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池。"),
+    "量化对冲": ("量化对冲", "多元投研智能体群共识决策，以及大模型驱动的历史绩效对冲回测模拟。"),
 }
 
 # Default Hero Values
@@ -2909,19 +2911,22 @@ elif market_job_running:
         "市场情绪分析进行中",
         "正在拉取涨停生态、板块梯队、资金验证和观察池信号。可以先切到其他功能页；任务完成后会自动接上结果。",
     )
-elif run_error:
+elif run_error and page in {"个股行情", "市场情绪"}:
     with st.container(border=True):
         st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
         st.error(f"本次请求没有成功生成结果。请稍后重试，或更换个股验证最新行情源。\n\n**错误详情：** `{run_error}`")
         with st.expander("调试信息（Streamlit Cloud / Railway 排错用）"):
             st.code(run_error)
-elif analysis_result:
+elif page == "个股行情" and analysis_result:
     score, hist, report_path = analysis_result
     _render_analysis_dashboard(score, hist, report_path, dcf_assumptions, fundamental_context_result)
-elif sentiment_result:
+elif page == "市场情绪" and sentiment_result:
     _render_market_sentiment_dashboard(sentiment_result, int(sentiment_window or 60))
 elif page == "投研分析":
     render_tradingagents_dashboard()
+elif page == "量化对冲":
+    from src.hedge_ui import render_hedge_dashboard
+    render_hedge_dashboard()
 else:
     # Empty state handled by dynamic hero above
     pass
