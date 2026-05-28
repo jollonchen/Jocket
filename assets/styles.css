@@ -5579,21 +5579,15 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
 }
 
 /* Force standard, group, and last-child containers of options to display as a 2-column grid to stretch 100% of container */
-#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [role="radiogroup"],
-#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [data-baseweb="button-group"],
-#root .st-key-hedge_mode [aria-label="button group"],
-#root .st-key-hedge_mode [role="radiogroup"],
-#root .st-key-hedge_mode [role="group"],
-#root .st-key-hedge_mode [data-baseweb="button-group"],
-.st-key-hedge_mode [aria-label="button group"],
 .st-key-hedge_mode [role="radiogroup"],
 .st-key-hedge_mode [role="group"],
 .st-key-hedge_mode [data-baseweb="button-group"],
-.st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child,
+.st-key-hedge_mode [aria-label="button group"],
 .st-key-hedge_mode .stButtonGroup > div:last-child {
   display: grid !important;
   grid-template-columns: 1fr 1fr !important; /* Two options: 单日决策 and 回测模拟 */
   width: 100% !important;
+  max-width: none !important;
   height: 100% !important;
   min-height: 100% !important;
   gap: 8px !important;
