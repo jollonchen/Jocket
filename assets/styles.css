@@ -5578,14 +5578,18 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
   pointer-events: none !important;
 }
 
+/* Force standard, group, and last-child containers of options to display as a 2-column grid to stretch 100% of container */
 #root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [role="radiogroup"],
 #root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [data-baseweb="button-group"],
 #root .st-key-hedge_mode [aria-label="button group"],
 #root .st-key-hedge_mode [role="radiogroup"],
+#root .st-key-hedge_mode [role="group"],
 #root .st-key-hedge_mode [data-baseweb="button-group"],
 .st-key-hedge_mode [aria-label="button group"],
 .st-key-hedge_mode [role="radiogroup"],
+.st-key-hedge_mode [role="group"],
 .st-key-hedge_mode [data-baseweb="button-group"],
+.st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child,
 .st-key-hedge_mode .stButtonGroup > div:last-child {
   display: grid !important;
   grid-template-columns: 1fr 1fr !important; /* Two options: 单日决策 and 回测模拟 */
@@ -5605,6 +5609,7 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
 .st-key-hedge_mode button,
 .st-key-hedge_mode [data-testid="stSegmentedControlOption"] {
   width: 100% !important;
+  flex: 1 1 0 !important;
   max-width: none !important;
   min-width: 0 !important;
   height: 100% !important;
@@ -5690,3 +5695,28 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
     radial-gradient(circle at 50% 0%, rgba(255, 92, 122, 0.35), transparent 54%),
     linear-gradient(135deg, rgba(255, 92, 122, 0.28), rgba(155, 92, 255, 0.2)) !important;
 }
+
+/* Neutralize the double-border, rounded-corner container overlap on the initial cash input field */
+[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) .st-key-hedge_initial_cash [data-baseweb="input"],
+[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stNumberInput"].st-key-hedge_initial_cash [data-baseweb="input"],
+.st-key-hedge_initial_cash [data-baseweb="input"] {
+  border-radius: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Bulletproof hover scaling animation on the "来财来财" button */
+.st-key-run_hedge_analysis button:hover,
+#root .st-key-run_hedge_analysis button:hover,
+[data-testid="stVerticalBlockBorderWrapper"] .st-key-run_hedge_analysis button:hover,
+[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) .st-key-run_hedge_analysis button:hover {
+  transform: scale(1.04) translateY(-1px) !important;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+  box-shadow: 
+    0 0 16px rgba(55, 232, 255, 0.45),
+    0 0 32px rgba(155, 92, 255, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+

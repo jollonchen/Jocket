@@ -592,34 +592,55 @@ def render_hedge_dashboard() -> None:
             
             default_start = (pd.Timestamp(default_end) - pd.offsets.BDay(60)).date()
 
-            extra_cols = st.columns(3)
-            with extra_cols[0]:
-                st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
-                start_date = st.date_input(
-                    "hedge_start",
-                    value=default_start,
-                    key="hedge_start_date",
-                    label_visibility="collapsed"
-                )
-            with extra_cols[1]:
-                st.markdown('<div class="command-field-label">结束日期</div>', unsafe_allow_html=True)
-                end_date = st.date_input(
-                    "hedge_end",
-                    value=default_end,
-                    key="hedge_end_date",
-                    label_visibility="collapsed"
-                )
-            with extra_cols[2]:
-                st.markdown('<div class="command-field-label">初始资金</div>', unsafe_allow_html=True)
-                initial_cash = st.number_input(
-                    "hedge_cash",
-                    min_value=1000,
-                    value=100000,
-                    step=10000,
-                    format="%d",
-                    key="hedge_initial_cash",
-                    label_visibility="collapsed"
-                )
+            if mode == "回测模拟":
+                extra_cols = st.columns(3)
+                with extra_cols[0]:
+                    st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
+                    start_date = st.date_input(
+                        "hedge_start",
+                        value=default_start,
+                        key="hedge_start_date",
+                        label_visibility="collapsed"
+                    )
+                with extra_cols[1]:
+                    st.markdown('<div class="command-field-label">结束日期</div>', unsafe_allow_html=True)
+                    end_date = st.date_input(
+                        "hedge_end",
+                        value=default_end,
+                        key="hedge_end_date",
+                        label_visibility="collapsed"
+                    )
+                with extra_cols[2]:
+                    st.markdown('<div class="command-field-label">初始资金</div>', unsafe_allow_html=True)
+                    initial_cash = st.number_input(
+                        "hedge_cash",
+                        min_value=1000,
+                        value=100000,
+                        step=10000,
+                        format="%d",
+                        key="hedge_initial_cash",
+                        label_visibility="collapsed"
+                    )
+            else:
+                extra_cols = st.columns(2)
+                with extra_cols[0]:
+                    st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
+                    start_date = st.date_input(
+                        "hedge_start",
+                        value=default_start,
+                        key="hedge_start_date",
+                        label_visibility="collapsed"
+                    )
+                with extra_cols[1]:
+                    st.markdown('<div class="command-field-label">分析日期</div>', unsafe_allow_html=True)
+                    end_date = st.date_input(
+                        "hedge_end",
+                        value=default_end,
+                        key="hedge_end_date",
+                        label_visibility="collapsed"
+                    )
+                initial_cash = 100000.0
+
 
             # Analyst Multiselect replaced by Jocket expander + skill buttons container
             st.markdown('<div class="command-field-label">参与决策的智能体</div>', unsafe_allow_html=True)
