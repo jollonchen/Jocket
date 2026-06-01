@@ -92,6 +92,30 @@ def _statement_to_records(income: pd.DataFrame, balance: pd.DataFrame, cashflow:
         shares = _row_value(balance, ["Ordinary Shares Number", "Share Issued"], period)
         if equity and shares:
             bvps = equity / shares
+
+        # Extra fields for Buffett and other models
+        capex = _row_value(cashflow, ["Capital Expenditure", "Capital Expenditure Net", "Capital Expenditures"], period)
+        depr = _row_value(cashflow, ["Depreciation And Amortization", "Depreciation & Amortization", "Depreciation", "Depreciation and Amortization"], period)
+        dividends = _row_value(cashflow, ["Dividends Paid", "Dividends Paid Common Stock", "Cash Dividends Paid", "Common Stock Dividends Paid"], period)
+        issuance = _row_value(cashflow, ["Repurchase Of Capital Stock", "Common Stock Issuance", "Net Common Stock Issuance", "Common Stock Repurchase", "Net Issuance Payments Of Common Stock"], period)
+
+        ebit = _row_value(income, ["EBIT", "Operating Income", "Operating Profit"], period)
+        ebitda = _row_value(income, ["EBITDA"], period)
+        operating_income = _row_value(income, ["Operating Income", "Operating Profit", "EBIT"], period)
+        interest_expense = _row_value(income, ["Interest Expense", "Interest Expense Non Operating"], period)
+        current_assets = _row_value(balance, ["Total Current Assets", "Current Assets"], period)
+        current_liabilities = _row_value(balance, ["Total Current Liabilities", "Current Liabilities"], period)
+        cash_and_equivalents = _row_value(balance, ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments", "Cash"], period)
+        research_and_development = _row_value(income, ["Research And Development", "Research & Development"], period)
+        operating_expense = _row_value(income, ["Total Operating Expenses", "Operating Expense", "Operating Expenses"], period)
+        goodwill_and_intangible_assets = _row_value(balance, ["Goodwill And Other Intangible Assets", "Goodwill", "Intangible Assets"], period)
+
+        if ebitda is None and ebit is not None and depr is not None:
+            try:
+                ebitda = float(ebit) + float(depr)
+            except Exception:
+                pass
+
         rows.append(
             {
                 "period": pd.to_datetime(period).strftime("%Y-%m-%d"),
@@ -111,8 +135,23 @@ def _statement_to_records(income: pd.DataFrame, balance: pd.DataFrame, cashflow:
                 "debtToEquity": total_liab / equity if total_liab and equity else None,
                 "eps": eps,
                 "bvps": bvps,
-                "dividend": None,
+                "dividend": dividends,
                 "dividendYield": None,
+                "outstandingShares": shares,
+                "capitalExpenditure": capex,
+                "depreciationAndAmortization": depr,
+                "dividends": dividends,
+                "issuance": issuance,
+                "ebit": ebit,
+                "ebitda": ebitda,
+                "operatingIncome": operating_income,
+                "interestExpense": interest_expense,
+                "currentAssets": current_assets,
+                "currentLiabilities": current_liabilities,
+                "cashAndEquivalents": cash_and_equivalents,
+                "researchDevelopment": research_and_development,
+                "operatingExpense": operating_expense,
+                "goodwillAndIntangibleAssets": goodwill_and_intangible_assets,
             }
         )
     return pd.DataFrame(rows)
@@ -134,20 +173,20 @@ class FundamentalFetcher:
             cached.setdefault("profile", {})["latest_price"] = latest_price or cached.get("profile", {}).get("latest_price")
             cached.setdefault("profile", {})["data_source"] = str(cached.get("profile", {}).get("data_source", "")) + " + cache"
             return cached
-            
+
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_y = executor.submit(self._fetch_yfinance, yahoo_code, latest_price)
             future_ak = executor.submit(self._fetch_akshare, ticker)
             future_a = executor.submit(self._fetch_a_stock_data, ticker)
             future_cn = executor.submit(self._fetch_chinese_profile, ticker)
             future_sec = executor.submit(SectorFetcher(self.config).fetch, ticker)
-            
+
             y = future_y.result()
             ak_payload = future_ak.result()
             a_stock_payload = future_a.result()
             cn_profile = future_cn.result()
             sector_payload = future_sec.result()
-            
+
         if yahoo_code.endswith((".SS", ".SZ")):
             if y.get("annual") is None or y["annual"].empty or y.get("quarterly") is None or y["quarterly"].empty:
                 try:
@@ -158,7 +197,7 @@ class FundamentalFetcher:
                         y["quarterly"] = sina_quarterly
                 except Exception as ex:
                     logger.warning("Failed to fetch Sina statements fallback for %s: %s", ticker, ex)
-            
+
         payload = self._merge_payload(ticker, yahoo_code, y, ak_payload, cn_profile, sector_payload, latest_price, a_stock_payload)
         self.cache.set_pickle("fundamentals", cache_key, payload)
         return payload
@@ -167,13 +206,13 @@ class FundamentalFetcher:
         """Fetch income, balance, and cashflow from Sina Finance and return annual/quarterly DataFrames formatted exactly like yfinance."""
         import requests
         import numpy as np
-        
+
         # Clean ticker (ensure 6-digit code)
         m = re.search(r'\d{6}', ticker)
         if not m:
             return pd.DataFrame(), pd.DataFrame()
         code = m.group(0)
-        
+
         # Helper to fetch and parse a report type
         def get_sina_report(source_type: str) -> list[dict]:
             prefix = "sh" if code.startswith("6") else "sz"
@@ -210,25 +249,25 @@ class FundamentalFetcher:
         fzb_records = get_sina_report("fzb")
         lrb_records = get_sina_report("lrb")
         llb_records = get_sina_report("llb")
-        
+
         if not fzb_records and not lrb_records and not llb_records:
             return pd.DataFrame(), pd.DataFrame()
-            
+
         # Combine records by date (YYYYMMDD)
         dates = sorted(list(set([r["报告日"] for r in fzb_records + lrb_records + llb_records])), reverse=True)
-        
+
         def find_record(records, d_str):
             for r in records:
                 if r["报告日"] == d_str:
                     return r
             return {}
-            
+
         rows = []
         for d_str in dates:
             fzb = find_record(fzb_records, d_str)
             lrb = find_record(lrb_records, d_str)
             llb = find_record(llb_records, d_str)
-            
+
             # Safe float parsing
             def val(d, keys):
                 for k in keys:
@@ -244,29 +283,59 @@ class FundamentalFetcher:
             revenue = val(lrb, ["营业总收入", "营业收入", "主营业务收入"])
             net_income = val(lrb, ["归属于母公司所有者的净利润", "归属于母公司股东的净利润", "净利润"])
             eps = val(lrb, ["基本每股收益", "稀释每股收益", "每股收益"])
-            
+
             total_assets = val(fzb, ["资产总计", "总资产", "资产合计"])
             total_liab = val(fzb, ["负债合计", "总负债", "负债总额"])
             equity = val(fzb, ["归属于母公司所有者权益合计", "所有者权益合计(或股东权益合计)", "归属于母公司股东权益合计", "股东权益合计"])
             shares = val(fzb, ["实收资本(或股本)", "股本"])
-            
+
             operating_cash_flow = val(llb, ["经营活动产生的现金流量净额"])
-            
+
             # FCF proxy
             capex = val(llb, ["购建固定资产、无形资产和其他长期资产支付的现金"])
             free_cash_flow = None
             if operating_cash_flow is not None:
                 free_cash_flow = operating_cash_flow - (capex or 0)
-                
+
             bvps = None
             if equity and shares:
                 bvps = equity / shares
-                
+
             gross_profit = val(lrb, ["营业利润", "利润总额"]) # proxy
             if gross_profit is None and revenue is not None:
                 cost = val(lrb, ["营业成本"])
                 if cost is not None:
                     gross_profit = revenue - cost
+
+            depr = val(llb, ["固定资产折旧", "固定资产折旧、油气资产折耗、生产性生物资产折旧"])
+            dividends = val(llb, ["分配股利、利润或偿付利息支付的现金"])
+            issuance = val(llb, ["吸收投资收到的现金"])
+
+            operating_income = val(lrb, ["营业利润"])
+            ebit = val(lrb, ["利润总额"]) or operating_income or net_income
+            ebitda = None
+            if ebit is not None:
+                ebitda = ebit + (depr or 0)
+
+            interest_expense = val(lrb, ["财务费用", "利息支出"])
+            current_assets = val(fzb, ["流动资产合计", "流动资产总计"])
+            current_liabilities = val(fzb, ["流动负债合计", "流动负债总计"])
+            cash_and_equivalents = val(fzb, ["货币资金", "现金及现金等价物"])
+            research_and_development = val(lrb, ["研发费用", "研究与开发支出"])
+
+            selling_exp = val(lrb, ["销售费用"]) or 0
+            admin_exp = val(lrb, ["管理费用"]) or 0
+            rd_exp = research_and_development or 0
+            fin_exp = interest_expense or 0
+            operating_expense = selling_exp + admin_exp + rd_exp + fin_exp
+            if operating_expense == 0:
+                operating_expense = None
+
+            intangibles = val(fzb, ["无形资产"]) or 0
+            goodwill = val(fzb, ["商誉"]) or 0
+            goodwill_and_intangible_assets = intangibles + goodwill
+            if goodwill_and_intangible_assets == 0:
+                goodwill_and_intangible_assets = None
 
             rows.append({
                 "period": pd.to_datetime(d_str, format="%Y%m%d", errors="coerce").strftime("%Y-%m-%d"),
@@ -286,21 +355,36 @@ class FundamentalFetcher:
                 "debtToEquity": total_liab / equity if total_liab and equity else None,
                 "eps": eps,
                 "bvps": bvps,
-                "dividend": None,
+                "dividend": dividends,
                 "dividendYield": None,
+                "outstandingShares": shares,
+                "capitalExpenditure": capex,
+                "depreciationAndAmortization": depr,
+                "dividends": dividends,
+                "issuance": issuance,
+                "ebit": ebit,
+                "ebitda": ebitda,
+                "operatingIncome": operating_income,
+                "interestExpense": interest_expense,
+                "currentAssets": current_assets,
+                "currentLiabilities": current_liabilities,
+                "cashAndEquivalents": cash_and_equivalents,
+                "researchDevelopment": research_and_development,
+                "operatingExpense": operating_expense,
+                "goodwillAndIntangibleAssets": goodwill_and_intangible_assets,
             })
-            
+
         df = pd.DataFrame(rows)
         if df.empty:
             return pd.DataFrame(), pd.DataFrame()
-            
+
         df["dt"] = pd.to_datetime(df["period"])
-        
+
         # Split into annual and quarterly
         # Annual: reports ending on Dec 31
         annual = df[df["dt"].dt.month == 12].copy().drop(columns=["dt"]).head(5)
         quarterly = df.copy().drop(columns=["dt"]).head(limit)
-        
+
         return annual, quarterly
 
     def _fetch_yfinance(self, yahoo_code: str, latest_price: float | None) -> dict:
@@ -393,7 +477,7 @@ class FundamentalFetcher:
         cninfo, e_cninfo = results["cninfo"]
 
         out["errors"].extend(e_zyjs + e_cninfo)
-        
+
         zyjs_info = self._parse_zyjs(zyjs)
         if zyjs_info:
             out["info"].update(zyjs_info)

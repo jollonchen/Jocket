@@ -35,6 +35,7 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
 
         # Pull the most recent financial metrics
         metrics = financial_metrics[0]
+        source_quality = getattr(metrics, "source_quality", {}) or {}
 
         # Initialize signals list for different fundamental aspects
         signals = []
@@ -117,6 +118,19 @@ def fundamentals_analyst_agent(state: AgentState, agent_id: str = "fundamentals_
             "signal": signals[3],
             "details": (f"P/E: {pe_ratio:.2f}" if pe_ratio else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio else "P/S: N/A"),
         }
+
+        if source_quality:
+            proxy_fields = [item for item in source_quality.get("proxy_fields", []) if item]
+            missing_fields = source_quality.get("missing_fields", [])
+            reasoning["data_quality"] = {
+                "signal": "neutral",
+                "details": (
+                    f"数据源: {source_quality.get('data_sources') or '未标注'}; "
+                    f"增长口径: {source_quality.get('growth_basis') or '未标注'}; "
+                    f"代理字段: {', '.join(proxy_fields) if proxy_fields else '无'}; "
+                    f"缺失字段: {', '.join(missing_fields) if missing_fields else '无'}"
+                ),
+            }
 
         progress.update_status(agent_id, ticker, "Calculating final signal")
         # Determine overall signal

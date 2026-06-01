@@ -340,6 +340,163 @@ def load_css(path: str = "assets/styles.css") -> None:
                 });
               };
 
+              const enhanceHedgeMode = () => {
+                const hMarker = doc.getElementById("jocket-hedge-mode");
+                const hCurrent = hMarker ? hMarker.getAttribute("data-mode") : "";
+                const hedgeLabels = ["单日决策", "回测模拟"];
+                let hButtons = [...doc.querySelectorAll(".st-key-hedge_mode button")];
+                if (hButtons.length < 2) {
+                  const seenHedgeLabels = new Set();
+                  hButtons = [...doc.querySelectorAll("button")].filter((button) => {
+                    const text = (button.innerText || button.textContent || "").trim();
+                    if (!hedgeLabels.includes(text) || seenHedgeLabels.has(text)) return false;
+                    seenHedgeLabels.add(text);
+                    return true;
+                  });
+                }
+                const hWrap = doc.querySelector(".st-key-hedge_mode");
+                const rootsFor = (ancestor) => {
+                  if (!ancestor) return [];
+                  return hButtons.map((button) => {
+                    let node = button;
+                    while (node.parentElement && node.parentElement !== ancestor) {
+                      node = node.parentElement;
+                    }
+                    return node;
+                  });
+                };
+                let hTrack = null;
+                let probe = hButtons.length ? hButtons[0].parentElement : null;
+                while (probe) {
+                  if (hButtons.every((button) => probe.contains(button))) {
+                    const roots = [...new Set(rootsFor(probe))];
+                    if (roots.length === 2) {
+                      hTrack = probe;
+                      break;
+                    }
+                  }
+                  if (hWrap && probe === hWrap) break;
+                  probe = probe.parentElement;
+                }
+                if (!hTrack) {
+                  hTrack = hButtons.length ? hButtons[0].parentElement : null;
+                  while (hTrack && !hButtons.every((button) => hTrack.contains(button))) {
+                    hTrack = hTrack.parentElement;
+                  }
+                }
+                const hShell = hWrap || hTrack;
+                if (hShell) {
+                  hShell.dataset.jocketHedgeModeEnhanced = "true";
+                  hShell.style.setProperty("display", "block", "important");
+                  hShell.style.setProperty("max-width", "100%", "important");
+                  hShell.style.setProperty("margin", "0 auto 14px", "important");
+                  hShell.style.setProperty("border", "1px solid rgba(55, 232, 255, 0.26)", "important");
+                  hShell.style.setProperty("background", "rgba(255, 255, 255, 0.055)", "important");
+                  hShell.style.setProperty("box-shadow", "inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 14px 34px rgba(0, 0, 0, 0.18)", "important");
+                  hShell.style.setProperty("width", "100%", "important");
+                  hShell.style.setProperty("height", "64px", "important");
+                  hShell.style.setProperty("min-height", "64px", "important");
+                  hShell.style.setProperty("padding", "6px", "important");
+                  hShell.style.setProperty("box-sizing", "border-box", "important");
+                  hShell.style.setProperty("border-radius", "999px", "important");
+                  hShell.style.setProperty("overflow", "visible", "important");
+                }
+                let ancestor = hTrack;
+                let guard = 0;
+                while (ancestor && ancestor !== hShell && guard < 8) {
+                  ancestor.style.setProperty("width", "100%", "important");
+                  ancestor.style.setProperty("max-width", "100%", "important");
+                  ancestor.style.setProperty("min-width", "0", "important");
+                  ancestor.style.setProperty("height", "100%", "important");
+                  ancestor.style.setProperty("min-height", "0", "important");
+                  ancestor.style.setProperty("margin", "0", "important");
+                  ancestor.style.setProperty("padding", "0", "important");
+                  ancestor.style.setProperty("overflow", "visible", "important");
+                  ancestor = ancestor.parentElement;
+                  guard += 1;
+                }
+                if (hTrack) {
+                  const hItems = [...new Set(rootsFor(hTrack))];
+                  hTrack.style.setProperty("display", "grid", "important");
+                  hTrack.style.setProperty("grid-template-columns", "repeat(2, minmax(0, 1fr))", "important");
+                  hTrack.style.setProperty("align-items", "stretch", "important");
+                  hTrack.style.setProperty("align-content", "stretch", "important");
+                  hTrack.style.setProperty("gap", "6px", "important");
+                  hTrack.style.setProperty("width", "100%", "important");
+                  hTrack.style.setProperty("height", "100%", "important");
+                  hTrack.style.setProperty("min-height", "0", "important");
+                  hTrack.style.setProperty("margin", "0", "important");
+                  hTrack.style.setProperty("padding", "0", "important");
+                  hTrack.style.setProperty("overflow", "visible", "important");
+                  hItems.forEach((child) => {
+                    child.style.setProperty("display", "flex", "important");
+                    child.style.setProperty("align-items", "stretch", "important");
+                    child.style.setProperty("justify-content", "stretch", "important");
+                    child.style.setProperty("width", "100%", "important");
+                    child.style.setProperty("min-width", "0", "important");
+                    child.style.setProperty("height", "100%", "important");
+                    child.style.setProperty("min-height", "0", "important");
+                    child.style.setProperty("align-self", "stretch", "important");
+                    child.style.setProperty("margin", "0", "important");
+                    child.style.setProperty("padding", "0", "important");
+                  });
+                }
+                hButtons.forEach((button) => {
+                  const text = (button.innerText || button.textContent || "").trim();
+                  const selected =
+                    text === hCurrent ||
+                    button.getAttribute("aria-checked") === "true" ||
+                    button.getAttribute("aria-selected") === "true" ||
+                    button.getAttribute("aria-pressed") === "true" ||
+                    button.getAttribute("data-selected") === "true" ||
+                    !!button.querySelector("input:checked");
+                  const targets = new Set([
+                    button,
+                    button.closest('[data-testid="stSegmentedControlOption"]'),
+                    button.closest('[role="radio"]'),
+                    button.closest('[role="button"]'),
+                  ].filter(Boolean));
+                  targets.forEach((target) => {
+                    target.dataset.jocketProviderActive = selected ? "true" : "false";
+                    target.classList.toggle("jocket-provider-active", selected);
+                  });
+                  button.style.setProperty("width", "100%", "important");
+                  button.style.setProperty("min-width", "0", "important");
+                  button.style.setProperty("max-width", "none", "important");
+                  button.style.setProperty("height", "52px", "important");
+                  button.style.setProperty("min-height", "52px", "important");
+                  button.style.setProperty("max-height", "52px", "important");
+                  button.style.setProperty("margin", "0", "important");
+                  button.style.setProperty("padding", "0 12px", "important");
+                  button.style.setProperty("border-radius", "999px", "important");
+                  button.style.setProperty("display", "inline-flex", "important");
+                  button.style.setProperty("align-items", "center", "important");
+                  button.style.setProperty("justify-content", "center", "important");
+                  button.style.setProperty("align-self", "stretch", "important");
+                  button.style.setProperty("transform-origin", "center center", "important");
+                  button.style.setProperty("transition", "transform 150ms cubic-bezier(0.2, 0.9, 0.2, 1), filter 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease", "important");
+                  button.style.setProperty(
+                    "transform",
+                    button.dataset.jocketWindowHover === "true" ? "translateY(-2px) scale(1.035)" : selected ? "translateY(-1px)" : "none",
+                    "important"
+                  );
+                  if (!button.dataset.jocketWindowHoverBound) {
+                    button.dataset.jocketWindowHoverBound = "true";
+                    button.addEventListener("pointerenter", () => {
+                      button.dataset.jocketWindowHover = "true";
+                      button.style.setProperty("transform", "translateY(-2px) scale(1.035)", "important");
+                      button.style.setProperty("filter", "brightness(1.12)", "important");
+                    });
+                    button.addEventListener("pointerleave", () => {
+                      button.dataset.jocketWindowHover = "false";
+                      const isActive = button.dataset.jocketProviderActive === "true";
+                      button.style.setProperty("transform", isActive ? "translateY(-1px)" : "none", "important");
+                      button.style.removeProperty("filter");
+                    });
+                  }
+                });
+              };
+
               // Fix skill buttons layout safely
               const fixSkillsLayout = () => {
                 const containers = doc.querySelectorAll('.ai-skill-buttons-container');
@@ -632,12 +789,13 @@ def load_css(path: str = "assets/styles.css") -> None:
               animateCommandBarHeight();
               enhanceNav();
               enhanceProvider();
+              enhanceHedgeMode();
               fixSkillsLayout();
               fixHistoryLayout();
               enhanceLaicaiButtons();
               enhanceDetailsTransition();
-              setInterval(() => { enhanceNav(); enhanceProvider(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }, 120);
-              new MutationObserver(() => { enhanceNav(); enhanceProvider(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }).observe(doc.body, { childList: true, subtree: true });
+              setInterval(() => { enhanceNav(); enhanceProvider(); enhanceHedgeMode(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }, 120);
+              new MutationObserver(() => { enhanceNav(); enhanceProvider(); enhanceHedgeMode(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }).observe(doc.body, { childList: true, subtree: true });
               
               // Cancel button speed-up listener: closes the modal instantly on client-side!
               doc.addEventListener("click", (event) => {

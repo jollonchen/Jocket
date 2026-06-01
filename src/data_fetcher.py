@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 import os
 import re
 import signal
@@ -185,6 +188,19 @@ class DataFetcher:
             df = pd.read_csv(cache_path, parse_dates=['date'])
             if not df.empty:
                 df.attrs['from_cache'] = True
+                df.attrs['cache_path'] = str(cache_path)
+                df.attrs['cache_created_at'] = datetime.fromtimestamp(cache_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                latest_date = pd.to_datetime(df["date"].max(), errors="coerce") if "date" in df else pd.NaT
+                if not pd.isna(latest_date):
+                    df.attrs["cache_latest_date"] = latest_date.strftime("%Y-%m-%d")
+                    expected_date = self._expected_latest_trade_date(end)
+                    end_ts = pd.to_datetime(end, errors="coerce")
+                    if not pd.isna(expected_date) and not pd.isna(end_ts) and end_ts.normalize() >= expected_date:
+                        if latest_date.normalize() < expected_date:
+                            df.attrs["cache_stale_warning"] = (
+                                f"缓存最新交易日 {latest_date.strftime('%Y-%m-%d')} "
+                                f"早于预期最新交易日 {expected_date.strftime('%Y-%m-%d')}"
+                            )
                 return df
         return None
 
@@ -218,6 +234,28 @@ class DataFetcher:
     def _is_a_share(code: str) -> bool:
         ycode = normalize_a_share_code(code)
         return ycode.endswith((".SS", ".SZ"))
+
+    @staticmethod
+    def _previous_weekday(day: pd.Timestamp) -> pd.Timestamp:
+        day = pd.to_datetime(day).normalize()
+        while day.weekday() >= 5:
+            day = day - pd.Timedelta(days=1)
+        return day
+
+    def _expected_latest_trade_date(self, end: str | pd.Timestamp | None = None) -> pd.Timestamp:
+        """Best-effort latest A-share trading day without relying on cached prices."""
+        now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
+        today = now.normalize()
+        if today.weekday() < 5 and now.time() >= pd.Timestamp("15:10").time():
+            expected = today
+        else:
+            expected = self._previous_weekday(today - pd.Timedelta(days=1))
+
+        if end is not None:
+            end_ts = pd.to_datetime(end, errors="coerce")
+            if not pd.isna(end_ts) and end_ts.normalize() < expected:
+                return self._previous_weekday(end_ts)
+        return expected
 
     @staticmethod
     def _num(value):
@@ -832,6 +870,8 @@ class DataFetcher:
     def _with_realtime_quote(self, df: pd.DataFrame, code: str, end: str) -> pd.DataFrame:
         realtime_row = None
         errors = []
+        is_a_share = self._is_a_share(code)
+        expected_trade_date = self._expected_latest_trade_date(end) if is_a_share else pd.NaT
 
         realtime_attempts = [
             ("AkShare雪球实时", lambda: self._get_akshare_xq_spot_row(self._to_xq_code(code))),
@@ -847,7 +887,7 @@ class DataFetcher:
                 realtime_row = row
                 break
 
-        if not realtime_row:
+        if not realtime_row and (not is_a_share or not self.require_realtime):
             try:
                 yf_hist = self._get_hist_yfinance(
                     code,
@@ -863,7 +903,8 @@ class DataFetcher:
                         "amount_est": amount,
                         "data_source": "yfinance:recent_quote",
                         "quote_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "realtime_price": True,
+                        "realtime_price": False,
+                        "price_status": "recent_history_close",
                     })
                     missing = self._missing_realtime_fields(last_row)
                     if missing:
@@ -882,12 +923,23 @@ class DataFetcher:
         quote_date = pd.to_datetime(realtime_row.get("date"), errors="coerce")
         end_ts = pd.to_datetime(end)
         latest_hist_date = pd.to_datetime(df["date"].max(), errors="coerce") if "date" in df and not df.empty else pd.NaT
-        if bool(realtime_row.get("date_inferred")) and not pd.isna(latest_hist_date):
-            quote_date = latest_hist_date
+        if bool(realtime_row.get("date_inferred")):
+            quote_date = expected_trade_date if not pd.isna(expected_trade_date) else latest_hist_date
             realtime_row["date"] = quote_date
         if pd.isna(quote_date) or quote_date > end_ts:
             if self.require_realtime:
                 raise RuntimeError(f"实时行情日期不可用或超出查询区间：{realtime_row.get('date')}")
+            return df
+        if not pd.isna(expected_trade_date) and end_ts.normalize() >= expected_trade_date and quote_date.normalize() < expected_trade_date:
+            if self.require_realtime:
+                raise RuntimeError(
+                    f"行情日期已过期，行情日期 {quote_date.strftime('%Y-%m-%d')} "
+                    f"早于预期最新交易日 {expected_trade_date.strftime('%Y-%m-%d')}；"
+                    f"来源：{realtime_row.get('data_source', '-')}"
+                )
+            df.attrs["stale_quote_warning"] = (
+                f"行情日期 {quote_date.strftime('%Y-%m-%d')} 早于预期最新交易日 {expected_trade_date.strftime('%Y-%m-%d')}"
+            )
             return df
         if not pd.isna(latest_hist_date) and quote_date < latest_hist_date:
             if self.require_realtime:
@@ -905,9 +957,13 @@ class DataFetcher:
         out = pd.concat([out, pd.DataFrame([realtime_row])], ignore_index=True, sort=False)
         out = out.sort_values("date").reset_index(drop=True)
         out.attrs.update(df.attrs)
-        out.attrs["realtime_quote"] = True
+        out.attrs["realtime_quote"] = bool(realtime_row.get("realtime_price"))
         out.attrs["realtime_updated_at"] = realtime_row.get("quote_updated_at")
         out.attrs["realtime_source"] = realtime_row.get("data_source")
+        out.attrs["price_date"] = quote_date.strftime("%Y-%m-%d")
+        out.attrs["price_status"] = realtime_row.get("price_status") or ("realtime" if realtime_row.get("realtime_price") else "recent_history_close")
+        if not pd.isna(expected_trade_date):
+            out.attrs["expected_latest_trade_date"] = expected_trade_date.strftime("%Y-%m-%d")
         return out
 
     def _get_efinance_realtime_row(self, code: str) -> tuple[dict | None, list[dict]]:

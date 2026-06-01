@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage
 from src.hedge_src.graph.state import AgentState, show_agent_reasoning
 from src.hedge_src.utils.progress import progress
 from src.hedge_src.utils.api_key import get_api_key_from_state
+from src.hedge_src.utils.numeric import finite_float_values
 from src.hedge_src.tools.api import (
     get_financial_metrics,
     get_market_cap,
@@ -291,9 +292,14 @@ def calculate_ev_ebitda_value(financial_metrics: list):
         return 0
 
     ebitda_now = m0.enterprise_value / m0.enterprise_value_to_ebitda_ratio
-    med_mult = statistics.median([
-        m.enterprise_value_to_ebitda_ratio for m in financial_metrics if m.enterprise_value_to_ebitda_ratio
-    ])
+    multiples = finite_float_values(
+        m.enterprise_value_to_ebitda_ratio
+        for m in financial_metrics
+        if m.enterprise_value_to_ebitda_ratio
+    )
+    if not multiples:
+        return 0
+    med_mult = statistics.median(multiples)
     ev_implied = med_mult * ebitda_now
     net_debt = (m0.enterprise_value or 0) - (m0.market_cap or 0)
     return max(ev_implied - net_debt, 0)
@@ -379,7 +385,7 @@ def calculate_fcf_volatility(fcf_history: list[float]) -> float:
         return 0.5  # Default moderate volatility
     
     # Filter out zeros and negatives for volatility calc
-    positive_fcf = [fcf for fcf in fcf_history if fcf > 0]
+    positive_fcf = [fcf for fcf in finite_float_values(fcf_history) if fcf > 0]
     if len(positive_fcf) < 2:
         return 0.8  # High volatility if mostly negative FCF
     

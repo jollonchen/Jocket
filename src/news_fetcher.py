@@ -13,10 +13,9 @@ from .cache_utils import FileCache, safe_fetch
 from .providers.a_stock_data_provider import AStockDataProvider
 from .utils import display_code, ensure_dirs, normalize_a_share_code
 
-try:
-    import akshare as ak
-except Exception:  # pragma: no cover
-    ak = None
+# Disable akshare news fetching due to high latency, large payload download, and hanging endpoints.
+# Rely on robust, lightweight, and direct public endpoints from Eastmoney and Cailianpress instead.
+ak = None
 
 
 UA = "Mozilla/5.0 (Jocket news reference)"
@@ -154,16 +153,17 @@ class NewsFetcher:
         entries: list[dict] = []
         highlights: list[str] = []
 
-        em_news, err = safe_fetch(
-            "akshare",
-            "stock_news_em",
-            lambda: ak.stock_news_em(symbol=ticker) if ak is not None else pd.DataFrame(),
-            retries=1,
-            min_interval=1.0,
-            cache=self.cache,
-        )
-        errors.extend(err)
-        entries.extend(self._normalize_stock_news_em(em_news))
+        if ak is not None:
+            em_news, err = safe_fetch(
+                "akshare",
+                "stock_news_em",
+                lambda: ak.stock_news_em(symbol=ticker),
+                retries=1,
+                min_interval=1.0,
+                cache=self.cache,
+            )
+            errors.extend(err)
+            entries.extend(self._normalize_stock_news_em(em_news))
         try:
             provider = AStockDataProvider(self.cache, self.config)
             result = provider.eastmoney_stock_news(ticker)
@@ -263,15 +263,16 @@ class NewsFetcher:
 
         errors: list[dict] = []
         entries: list[dict] = []
-        sources = [
-            ("财联社电报", "stock_info_global_cls", lambda: ak.stock_info_global_cls(symbol="全部") if ak is not None else pd.DataFrame()),
-            ("同花顺财经直播", "stock_info_global_ths", lambda: ak.stock_info_global_ths() if ak is not None else pd.DataFrame()),
-            ("东方财富快讯", "stock_info_global_em", lambda: ak.stock_info_global_em() if ak is not None else pd.DataFrame()),
-        ]
-        for source_name, interface, func in sources:
-            df, err = safe_fetch("akshare", interface, func, retries=1, min_interval=1.0, cache=self.cache)
-            errors.extend(err)
-            entries.extend(self._normalize_global_news(df, source_name))
+        if ak is not None:
+            sources = [
+                ("财联社电报", "stock_info_global_cls", lambda: ak.stock_info_global_cls(symbol="全部")),
+                ("同花顺财经直播", "stock_info_global_ths", lambda: ak.stock_info_global_ths()),
+                ("东方财富快讯", "stock_info_global_em", lambda: ak.stock_info_global_em()),
+            ]
+            for source_name, interface, func in sources:
+                df, err = safe_fetch("akshare", interface, func, retries=1, min_interval=1.0, cache=self.cache)
+                errors.extend(err)
+                entries.extend(self._normalize_global_news(df, source_name))
         try:
             provider = AStockDataProvider(self.cache, self.config)
             cls_result = provider.cls_telegraph(50)

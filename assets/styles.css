@@ -546,6 +546,177 @@ textarea {
     linear-gradient(135deg, rgba(255, 92, 122, 0.28), rgba(155, 92, 255, 0.2)) !important;
 }
 
+/* Custom Jocket styling for the Running Mode button (运行模式) */
+.st-key-hedge_mode {
+  width: 100% !important;
+  margin: 0 auto 14px !important;
+  padding: 6px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 999px !important;
+  height: 64px !important;
+  min-height: 64px !important;
+  box-sizing: border-box !important;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(255, 255, 255, 0.06), transparent 44%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -16px 28px rgba(0, 0, 0, 0.06),
+    0 12px 28px rgba(0, 0, 0, 0.18) !important;
+  backdrop-filter: blur(18px) !important;
+  display: block !important;
+  overflow: hidden !important;
+}
+
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup,
+.st-key-hedge_mode [data-testid="stButtonGroup"],
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup,
+#root .st-key-hedge_mode .stButtonGroup,
+.st-key-hedge_mode [data-testid="stButtonGroup"],
+.st-key-hedge_mode > div,
+.st-key-hedge_mode > div > div,
+.st-key-hedge_mode [data-testid="stSegmentedControl"],
+.st-key-hedge_mode .stButtonGroup {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Hide native label completely to prevent pushing the grid container */
+#root .st-key-hedge_mode label[data-testid="stWidgetLabel"],
+.st-key-hedge_mode label[data-testid="stWidgetLabel"] {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  position: absolute !important;
+  pointer-events: none !important;
+}
+
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [role="radiogroup"],
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [data-baseweb="button-group"],
+#root .st-key-hedge_mode [aria-label="button group"],
+#root .st-key-hedge_mode [role="radiogroup"],
+#root .st-key-hedge_mode [data-baseweb="button-group"],
+.st-key-hedge_mode [aria-label="button group"],
+.st-key-hedge_mode [role="radiogroup"],
+.st-key-hedge_mode [data-baseweb="button-group"],
+.st-key-hedge_mode .stButtonGroup > div:last-child {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+#root .st-key-hedge_mode button,
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"],
+.st-key-hedge_mode button,
+.st-key-hedge_mode [data-testid="stSegmentedControlOption"] {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  border-radius: 999px !important;
+  border: 1px solid transparent !important;
+  color: rgba(245, 247, 250, 0.52) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: filter 160ms ease, border-color 160ms ease, background 160ms ease !important;
+  transform: none !important;
+}
+
+/* Neutralize any custom Streamlit paddings/margins/heights on button children to force perfect vertical centering */
+#root .st-key-hedge_mode button *,
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"] *,
+.st-key-hedge_mode button *,
+.st-key-hedge_mode [data-testid="stSegmentedControlOption"] * {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: auto !important;
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+  font-size: 1.05rem !important;
+  font-weight: 900 !important;
+  white-space: nowrap !important;
+}
+
+/* Completely hide underlying raw radio tags from layout flow */
+.st-key-hedge_mode button input[type="radio"],
+.st-key-hedge_mode [data-testid="stSegmentedControlOption"] input[type="radio"],
+.st-key-hedge_mode input[type="radio"] {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  position: absolute !important;
+  pointer-events: none !important;
+}
+
+/* Unselected button hover - gentle glassmorphic overlay, no transform scale */
+#root .st-key-hedge_mode button[data-testid="stBaseButton-segmented_control"]:hover,
+#root .st-key-hedge_mode button[kind="segmented_control"]:hover,
+.st-key-hedge_mode button[data-testid="stBaseButton-segmented_control"]:hover,
+.st-key-hedge_mode button[kind="segmented_control"]:hover {
+  transform: none !important;
+  filter: brightness(1.15) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(245, 247, 250, 0.88) !important;
+}
+
+/* Selected button styling using ultra-high specificity Streamlit native active attributes */
+#root .st-key-hedge_mode button[data-testid="stBaseButton-segmented_controlActive"],
+#root .st-key-hedge_mode button[kind="segmented_controlActive"],
+.st-key-hedge_mode button[data-testid="stBaseButton-segmented_controlActive"],
+.st-key-hedge_mode button[kind="segmented_controlActive"] {
+  color: #fff !important;
+  border-color: rgba(255, 92, 122, 0.72) !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 92, 122, 0.30), transparent 54%),
+    linear-gradient(135deg, rgba(255, 92, 122, 0.24), rgba(155, 92, 255, 0.18)) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 92, 122, 0.16),
+    0 12px 28px rgba(255, 92, 122, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
+  transform: none !important;
+}
+
+#root .st-key-hedge_mode button[data-testid="stBaseButton-segmented_controlActive"]:hover,
+#root .st-key-hedge_mode button[kind="segmented_controlActive"]:hover,
+.st-key-hedge_mode button[data-testid="stBaseButton-segmented_controlActive"]:hover,
+.st-key-hedge_mode button[kind="segmented_controlActive"]:hover {
+  transform: none !important;
+  filter: brightness(1.12) !important;
+  border-color: rgba(255, 92, 122, 0.8) !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 92, 122, 0.35), transparent 54%),
+    linear-gradient(135deg, rgba(255, 92, 122, 0.28), rgba(155, 92, 255, 0.2)) !important;
+}
+
 .st-key-ai_market_provider_label [data-testid="stSegmentedControl"] > div:last-child,
 .st-key-ai_market_provider_label div[role="group"],
 .st-key-ai_market_provider_label [role="radiogroup"] {
@@ -1272,11 +1443,8 @@ div[role="group"]:has(button) button {
   flex-direction: column !important;
 }
 
-/* Style the entire control block container as a single premium glassmorphic pill capsule */
-[data-testid="stExpander"] [data-testid="stNumberInput"] > div:has([data-baseweb="input"]),
-[data-testid="stExpander"] [data-testid="stNumberInput"] > div:not([data-testid="stWidgetLabel"]),
-.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:has([data-baseweb="input"]),
-.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:not([data-testid="stWidgetLabel"]) {
+/* Style the entire control block container as a single premium glassmorphic pill capsule for stExpander inputs (52px) */
+[data-testid="stExpander"] [data-testid="stNumberInput"] > div:has([data-baseweb="input"]) {
   border-radius: 999px !important; /* Perfect unified capsule pill! */
   overflow: hidden !important;
   border: 1px solid rgba(255, 255, 255, 0.16) !important;
@@ -1296,10 +1464,36 @@ div[role="group"]:has(button) button {
   transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
-[data-testid="stExpander"] [data-testid="stNumberInput"] > div:has([data-baseweb="input"]):hover,
-[data-testid="stExpander"] [data-testid="stNumberInput"] > div:not([data-testid="stWidgetLabel"]):hover,
-.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:has([data-baseweb="input"]):hover,
-.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:not([data-testid="stWidgetLabel"]):hover {
+[data-testid="stExpander"] [data-testid="stNumberInput"] > div:has([data-baseweb="input"]):hover {
+  border-color: rgba(255, 92, 122, 0.42) !important;
+  box-shadow:
+    0 0 12px rgba(255, 92, 122, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 12px 28px rgba(0, 0, 0, 0.22) !important;
+}
+
+/* Style the entire control block container as a single premium glassmorphic pill capsule for initial cash (64px) */
+.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:has([data-baseweb="input"]) {
+  border-radius: 999px !important; /* Perfect unified capsule pill! */
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  height: 64px !important;
+  min-height: 64px !important;
+  display: flex !important;
+  align-items: center !important;
+  /* EXACT MATCH to other premium input pill styles in Jocket */
+  background:
+    radial-gradient(circle at 8% 0%, rgba(255, 255, 255, 0.06), transparent 44%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -16px 28px rgba(0, 0, 0, 0.06),
+    0 12px 28px rgba(0, 0, 0, 0.18) !important;
+  backdrop-filter: blur(18px) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+.st-key-hedge_initial_cash [data-testid="stNumberInput"] > div:has([data-baseweb="input"]):hover {
   border-color: rgba(255, 92, 122, 0.42) !important;
   box-shadow:
     0 0 12px rgba(255, 92, 122, 0.12),
@@ -5578,11 +5772,14 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
   pointer-events: none !important;
 }
 
-/* Force standard, group, and last-child containers of options to display as a 2-column grid to stretch 100% of container */
-.st-key-hedge_mode [role="radiogroup"],
-.st-key-hedge_mode [role="group"],
-.st-key-hedge_mode [data-baseweb="button-group"],
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [role="radiogroup"],
+#root [data-testid="column"] .st-key-hedge_mode .stButtonGroup [data-baseweb="button-group"],
+#root .st-key-hedge_mode [aria-label="button group"],
+#root .st-key-hedge_mode [role="radiogroup"],
+#root .st-key-hedge_mode [data-baseweb="button-group"],
 .st-key-hedge_mode [aria-label="button group"],
+.st-key-hedge_mode [role="radiogroup"],
+.st-key-hedge_mode [data-baseweb="button-group"],
 .st-key-hedge_mode .stButtonGroup > div:last-child {
   display: grid !important;
   grid-template-columns: 1fr 1fr !important; /* Two options: 单日决策 and 回测模拟 */
@@ -5617,7 +5814,7 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  transition: filter 160ms ease, border-color 160ms ease, background 160ms ease !important;
+  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 160ms ease, border-color 160ms ease, background 160ms ease !important;
   transform: none !important;
 }
 
@@ -5654,13 +5851,35 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
 #root .st-key-hedge_mode button[kind="segmented_control"]:hover,
 .st-key-hedge_mode button[data-testid="stBaseButton-segmented_control"]:hover,
 .st-key-hedge_mode button[kind="segmented_control"]:hover {
-  transform: none !important;
+  transform: translateY(-2px) scale(1.035) !important;
   filter: brightness(1.15) !important;
   border-color: rgba(255, 255, 255, 0.08) !important;
   background: rgba(255, 255, 255, 0.06) !important;
   color: rgba(245, 247, 250, 0.88) !important;
 }
 
+#root .st-key-hedge_mode button[aria-pressed="true"],
+#root .st-key-hedge_mode button[aria-checked="true"],
+#root .st-key-hedge_mode button[aria-selected="true"],
+#root .st-key-hedge_mode button[data-selected="true"],
+#root .st-key-hedge_mode button[data-jocket-provider-active="true"],
+#root .st-key-hedge_mode button.jocket-provider-active,
+#root .st-key-hedge_mode button[kind="primary"],
+#root .st-key-hedge_mode button[kind="segmented_controlActive"],
+#root .st-key-hedge_mode button[data-testid="stBaseButton-segmented_controlActive"],
+#root .st-key-hedge_mode button:has(input:checked),
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"][aria-pressed="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"][aria-checked="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"][aria-selected="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"][data-selected="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"][data-jocket-provider-active="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"].jocket-provider-active,
+#root .st-key-hedge_mode [data-testid="stSegmentedControlOption"]:has(input:checked),
+#root .st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child > [aria-checked="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child > [data-selected="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child > [data-jocket-provider-active="true"],
+#root .st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child > .jocket-provider-active,
+#root .st-key-hedge_mode [data-testid="stSegmentedControl"] > div:last-child > :has(input:checked),
 .st-key-hedge_mode button[aria-pressed="true"],
 .st-key-hedge_mode button[aria-checked="true"],
 .st-key-hedge_mode button[aria-selected="true"],
@@ -5697,6 +5916,16 @@ div[class*="st-key-run_hedge_analysis"] .stButton {
   animation: tabBreath 2.8s ease-in-out infinite !important;
 }
 
+#root .st-key-hedge_mode button:hover[aria-pressed="true"],
+#root .st-key-hedge_mode button:hover[aria-checked="true"],
+#root .st-key-hedge_mode button:hover[aria-selected="true"],
+#root .st-key-hedge_mode button:hover[data-selected="true"],
+#root .st-key-hedge_mode button:hover[data-jocket-provider-active="true"],
+#root .st-key-hedge_mode button.jocket-provider-active:hover,
+#root .st-key-hedge_mode button:hover[kind="primary"],
+#root .st-key-hedge_mode button:hover[kind="segmented_controlActive"],
+#root .st-key-hedge_mode button:hover[data-testid="stBaseButton-segmented_controlActive"],
+#root .st-key-hedge_mode button:hover:has(input:checked),
 .st-key-hedge_mode button:hover[aria-pressed="true"],
 .st-key-hedge_mode button:hover[aria-checked="true"],
 .st-key-hedge_mode button:hover[aria-selected="true"],

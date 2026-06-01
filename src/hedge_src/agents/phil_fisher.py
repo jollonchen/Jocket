@@ -14,6 +14,7 @@ from src.hedge_src.utils.progress import progress
 from src.hedge_src.utils.llm import call_llm
 import statistics
 from src.hedge_src.utils.api_key import get_api_key_from_state
+from src.hedge_src.utils.numeric import finite_float_values
 
 class PhilFisherSignal(BaseModel):
     signal: Literal["bullish", "bearish", "neutral"]
@@ -273,7 +274,9 @@ def analyze_margins_stability(financial_line_items: list) -> dict:
     raw_score = 0  # up to 6 => scale to 0-10
 
     # 1. Operating Margin Consistency
-    op_margins = [fi.operating_margin for fi in financial_line_items if fi.operating_margin is not None]
+    op_margins = finite_float_values(
+        fi.operating_margin for fi in financial_line_items
+    )
     if len(op_margins) >= 2:
         # Check if margins are stable or improving (comparing oldest to newest)
         oldest_op_margin = op_margins[-1]

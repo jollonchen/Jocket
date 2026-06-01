@@ -7,6 +7,77 @@ from src.hedge_src.utils.progress import progress
 from src.hedge_src.graph.state import AgentState
 
 
+def ensure_chinese_prompt(prompt):
+    """
+    Modifies the prompt/messages to strictly request Chinese output.
+    """
+    from langchain_core.messages import SystemMessage
+
+    chinese_instruction = (
+        "\n\n【重要指令】：为了提供最专业的中文投研分析，请务必直接使用简体中文（Simplified Chinese）生成所有的研究分析过程、论据及最终的 'reasoning'（分析理由）字段内容。不要先以英文生成再翻译，而要直接以专业、严谨、生动的中文投研智囊风格进行原生写作。最终返回的 JSON 结构中，'reasoning' 字段必须为纯中文。"
+    )
+
+    # 1. Check if it's a LangChain PromptValue or has a to_messages method
+    if hasattr(prompt, "to_messages"):
+        try:
+            messages = prompt.to_messages()
+            modified = False
+            for msg in messages:
+                if getattr(msg, "type", "") == "system" or isinstance(msg, SystemMessage):
+                    msg.content = msg.content + chinese_instruction
+                    modified = True
+                    break
+            if not modified and messages:
+                messages[0].content = messages[0].content + chinese_instruction
+            return messages
+        except Exception:
+            pass
+
+    # 2. Check if it is a list of messages
+    if isinstance(prompt, list):
+        try:
+            modified = False
+            for msg in prompt:
+                if hasattr(msg, "type") and msg.type == "system":
+                    msg.content = msg.content + chinese_instruction
+                    modified = True
+                    break
+            if not modified and prompt:
+                if hasattr(prompt[0], "content"):
+                    prompt[0].content = prompt[0].content + chinese_instruction
+            return prompt
+        except Exception:
+            pass
+
+    # 3. Check if it is a string
+    if isinstance(prompt, str):
+        return prompt + chinese_instruction
+
+    return prompt
+
+
+def translate_fallback_reasoning(result: BaseModel) -> BaseModel:
+    """Helper to translate typical English default fallback strings to professional Chinese."""
+    if result and hasattr(result, "reasoning") and isinstance(result.reasoning, str):
+        err_msgs = {
+            "error in analysis, defaulting to neutral": "分析中出现错误，默认选择中性信号",
+            "error in analysis, using default": "分析中出现错误，使用默认值",
+            "parsing error; defaulting to neutral": "解析错误，默认选择中性信号",
+            "error in generating analysis; defaulting to neutral.": "生成分析时出错，默认选择中性信号",
+            "parsing error – defaulting to neutral": "解析错误，默认选择中性信号",
+            "error in analysis; defaulting to neutral": "分析中出现错误，默认选择中性信号",
+            "insufficient data": "数据不足，默认选择中性信号",
+            "default decision: hold": "默认决策：保持观望",
+            "no valid trade available": "无有效交易机会",
+        }
+        reasoning_lower = result.reasoning.strip().lower()
+        for eng, chn in err_msgs.items():
+            if eng in reasoning_lower or reasoning_lower == eng:
+                result.reasoning = chn
+                break
+    return result
+
+
 def call_llm(
     prompt: any,
     pydantic_model: type[BaseModel],
@@ -29,7 +100,9 @@ def call_llm(
     Returns:
         An instance of the specified Pydantic model
     """
-    
+    # Force the prompt to request Chinese output
+    prompt = ensure_chinese_prompt(prompt)
+
     # Extract model configuration if state is provided and agent_name is available
     if state and agent_name:
         model_name, model_provider = get_agent_model_config(state, agent_name)
@@ -65,9 +138,9 @@ def call_llm(
             if model_info and not model_info.has_json_mode():
                 parsed_result = extract_json_from_response(result.content)
                 if parsed_result:
-                    return pydantic_model(**parsed_result)
+                    return translate_fallback_reasoning(pydantic_model(**parsed_result))
             else:
-                return result
+                return translate_fallback_reasoning(result)
 
         except Exception as e:
             if agent_name:
@@ -77,11 +150,11 @@ def call_llm(
                 print(f"Error in LLM call after {max_retries} attempts: {e}")
                 # Use default_factory if provided, otherwise create a basic default
                 if default_factory:
-                    return default_factory()
-                return create_default_response(pydantic_model)
+                    return translate_fallback_reasoning(default_factory())
+                return translate_fallback_reasoning(create_default_response(pydantic_model))
 
     # This should never be reached due to the retry logic above
-    return create_default_response(pydantic_model)
+    return translate_fallback_reasoning(create_default_response(pydantic_model))
 
 
 def create_default_response(model_class: type[BaseModel]) -> BaseModel:
@@ -89,7 +162,7 @@ def create_default_response(model_class: type[BaseModel]) -> BaseModel:
     default_values = {}
     for field_name, field in model_class.model_fields.items():
         if field.annotation == str:
-            default_values[field_name] = "Error in analysis, using default"
+            default_values[field_name] = "分析中出现错误，使用默认值"
         elif field.annotation == float:
             default_values[field_name] = 0.0
         elif field.annotation == int:
@@ -166,20 +239,20 @@ def get_agent_model_config(state, agent_name):
     Always returns valid model_name and model_provider values.
     """
     request = state.get("metadata", {}).get("request")
-    
+
     if request and hasattr(request, 'get_agent_model_config'):
         # Get agent-specific model configuration
         model_name, model_provider = request.get_agent_model_config(agent_name)
         # Ensure we have valid values
         if model_name and model_provider:
             return model_name, model_provider.value if hasattr(model_provider, 'value') else str(model_provider)
-    
+
     # Fall back to global configuration (system defaults)
     model_name = state.get("metadata", {}).get("model_name") or "gpt-4.1"
     model_provider = state.get("metadata", {}).get("model_provider") or "OPENAI"
-    
+
     # Convert enum to string if necessary
     if hasattr(model_provider, 'value'):
         model_provider = model_provider.value
-    
+
     return model_name, model_provider

@@ -274,15 +274,17 @@ class AIMarketAssistant:
             yield f"\n\n{self._format_request_error(exc)}"
 
     def _build_messages(self, question: str, history: list[dict], context: dict) -> list[dict]:
+        current_day = datetime.now().strftime("%Y-%m-%d")
         system_prompt = (
-            "你是项目内的智能 AI 行情助手。当前系统时间是 2026 年 5 月。\n"
+            f"你是项目内的智能 AI 行情助手。当前系统日期是 {current_day}。\n"
             "【核心原则】数据至上，客观分析，严控幻觉。\n"
             "【关键指令：强制执行】\n"
-            "1. **禁止使用预训练知识**：你的模型内部可能存有 2024 年或更早的股票价格记忆（如亨通光电 15-18 元等），这些数据在 2026 年已完全失效。你必须**彻底忽略**任何关于股价、市值、财务数值的内部记忆，仅使用下方提供的“最新行情数据”进行回答。\n"
-            "2. **严禁捏造数值**：如果上下文显示“最新价：74.99”，你绝对不能说成“18.50”。如果数据缺失，请直接告知“暂无最新行情”，严禁编写任何数字。\n"
+            "1. **禁止使用预训练知识**：你的模型内部可能存有过期股票价格记忆。你必须彻底忽略任何关于股价、市值、财务数值的内部记忆，仅使用下方提供的行情上下文回答。\n"
+            "2. **严禁捏造数值和日期**：如果上下文显示价格、交易日期、数据来源或是否实时盘口，你必须一并引用；如果数据缺失，请直接告知“暂无有效行情”，严禁编写任何数字。\n"
             "3. **锚定上下文**：所有分析必须基于提供的 Skill 上下文。如果上下文中的数据与你的常识不符，请以此上下文为准，因为这是 2026 年的实测数据。\n"
             "4. **回答规范**：逻辑闭环，严禁截断。确保最后一个字是标点符号。回答字数控制在 500 字以内，结论先行。\n"
-            "5. **动态数据请求（主动询问）**：所有可用的数据都在下方的上下文中。如果缺少所需数据（例如未获取到某只股票的最新行情），**请直接在回答中询问用户是否允许你调用对应技能**。例如：'当前未获取到利通电子(SH603629)的最新行情，请问是否允许我调用【Alphaear Stock】技能来获取？' 如果用户回复'允许'或'可以'，系统会自动在下一轮补全数据并继续分析。严禁直接回复“无法判断”来终止对话。"
+            "5. **行情口径约束**：只有上下文明确“是否实时盘口：是”且交易日期不早于“预期最新交易日”时，才可称为实时价或最新行情；否则必须称为“最近历史收盘价”，并说明交易日期、来源和限制。\n"
+            "6. **动态数据请求（主动询问）**：所有可用的数据都在下方的上下文中。如果缺少所需数据（例如未获取到某只股票的有效行情），请直接在回答中询问用户是否允许你调用对应技能。严禁用旧数据伪装为最新行情。"
         )
         quant_context = context.get("quant_backtest")
         context_text = (
@@ -516,6 +518,14 @@ class AIMarketAssistant:
             return self._rule_stock_one_liner(code, name, score)
             
         latest_price = score.get("latest", {}).get("close", 0)
+        latest_row = hist.iloc[-1] if hist is not None and not hist.empty else {}
+        latest_date = ""
+        if hasattr(latest_row, "get"):
+            latest_date_value = latest_row.get("date", "")
+            latest_date = latest_date_value.strftime("%Y-%m-%d") if hasattr(latest_date_value, "strftime") else str(latest_date_value or "")
+        source = latest_row.get("data_source", "-") if hasattr(latest_row, "get") else "-"
+        realtime = bool(latest_row.get("realtime_price", False)) if hasattr(latest_row, "get") else False
+        price_word = "实时价" if realtime else "最近收盘价"
         ret_1d = score.get("latest", {}).get("ret_1d", 0) * 100
         short_score = score.get("short_score", 0)
         long_score = score.get("long_score", 0)
@@ -540,7 +550,7 @@ class AIMarketAssistant:
         
         prompt = (
             f"请用一句话总结 {name}（{code}）的今日行情并给出明确研究评级，句首用方括号评级。\n"
-            f"价格与评分：最新价 {latest_price:.2f}，今日涨跌幅 {ret_1d:.2f}%，短线 {short_score:.1f}/100，中长线 {long_score:.1f}/100，系统评级：{rating}。\n"
+            f"价格与评分：{price_word} {latest_price:.2f}，交易日期 {latest_date or '未提供'}，数据来源 {source}，是否实时盘口 {'是' if realtime else '否'}，今日涨跌幅 {ret_1d:.2f}%，短线 {short_score:.1f}/100，中长线 {long_score:.1f}/100，系统评级：{rating}。\n"
             f"系统解释：{rating_explanation}\n"
             f"基本面：{fundamental_line}\n"
             f"高价值信号卡片：\n{signal_text}\n"
@@ -551,6 +561,7 @@ class AIMarketAssistant:
             "1. 必须综合技术、基本面、新闻和风险，不要只看涨跌幅。\n"
             "1.1 如存在 a-stock-data 信号卡片，必须引用其中最关键的一条，但不能捏造未给出的数值。\n"
             "2. 不要输出含糊的等待类结论，要给明确结果，例如“偏强观察”“基本面较强，短线暂不追入”“暂不优先”。\n"
+            "2.1 如果不是实时盘口，不得称为最新价，只能称为最近收盘价，并保留交易日期。\n"
             "3. 80字以内，结论完整，以句号结尾。"
         )
         try:
@@ -793,8 +804,9 @@ class AIMarketAssistant:
 
         reports = []
         # Force nominal price (no adjustment) for AI reports to match user expectation
-        nominal_config = self.config.copy()
-        nominal_config['adjust'] = '' # Empty string means nominal in many interfaces
+        nominal_config = dict(self.config)
+        nominal_config["data"] = dict((self.config or {}).get("data", {}))
+        nominal_config["data"]["akshare_adjust"] = ""
 
         for idx, stock in enumerate(stocks):
             code = stock["code"]
@@ -819,10 +831,22 @@ class AIMarketAssistant:
                 amount = float(latest.get("amount", 0) or 0)
                 turnover = float(latest.get("turnover_rate", 0) or 0)
                 latest_date = latest.get("date", "").strftime("%Y-%m-%d") if hasattr(latest.get("date"), "strftime") else str(latest.get("date", ""))
-                
-                # Check for stale data
-                days_diff = (datetime.now() - pd.to_datetime(latest_date)).days
-                is_stale = days_diff > 3
+                expected_trade_date = ""
+                try:
+                    expected_trade_date = DataFetcher(self.config)._expected_latest_trade_date().strftime("%Y-%m-%d")
+                except Exception:
+                    expected_trade_date = ""
+                row_is_realtime = bool(latest.get("realtime_price", False))
+                row_source = str(latest.get("data_source") or hist.attrs.get("realtime_source") or hist.attrs.get("source") or "项目行情接口")
+                quote_updated_at = str(latest.get("quote_updated_at") or hist.attrs.get("realtime_updated_at") or "")
+                cache_warning = str(hist.attrs.get("cache_stale_warning") or hist.attrs.get("stale_quote_warning") or hist.attrs.get("fallback_warning") or "")
+                latest_ts = pd.to_datetime(latest_date, errors="coerce")
+                expected_ts = pd.to_datetime(expected_trade_date, errors="coerce")
+                is_stale = pd.isna(latest_ts) or (not pd.isna(expected_ts) and latest_ts.normalize() < expected_ts.normalize())
+                price_label = "实时价(不复权)" if row_is_realtime else "最近收盘价(不复权)"
+                data_status = "实时行情" if row_is_realtime and not is_stale else "最近历史收盘"
+                if is_stale:
+                    data_status = "失效/过期"
 
                 # Keep AI chat responsive: the AlphaEar Stock fundamentals
                 # helper can block on remote refreshes. The app still provides
@@ -833,11 +857,19 @@ class AIMarketAssistant:
                 cols = ["date", "close", "volume"]
                 if "amount" in hist.columns: cols.append("amount")
                 if "turnover_rate" in hist.columns: cols.append("turnover_rate")
+                if "data_source" in hist.columns: cols.append("data_source")
+                if "realtime_price" in hist.columns: cols.append("realtime_price")
                 
                 tail = hist.tail(6)[cols].copy()
                 tail_str = tail.to_string(index=False)
 
-                integrity_warning = "【⚠️数据警告：行情已过期超过3天】" if is_stale else ""
+                integrity_warning = ""
+                if is_stale:
+                    integrity_warning = f"【数据警告：行情日期早于预期最新交易日 {expected_trade_date or '未知'}】"
+                elif not row_is_realtime:
+                    integrity_warning = "【口径提示：未取得实时盘口，仅可作为最近历史收盘价使用】"
+                if cache_warning:
+                    integrity_warning = f"{integrity_warning}【{cache_warning}】"
                 a_stock_text = "暂无"
                 try:
                     latest_date_for_signal = latest_date if latest_date else None
@@ -851,11 +883,14 @@ class AIMarketAssistant:
                     "\n".join(
                         [
                             f"## {name}（{code}）",
-                            f"【✅2026年实测行情数据 - 绝对真实 - 严禁忽略】",
-                            f"数据状态：{'最新' if not is_stale else '失效/过期'} {integrity_warning}",
-                            f"- 数据来源：项目最新行情接口 (akshare/efinance/yfinance)",
+                            f"【行情数据基准】",
+                            f"数据状态：{data_status} {integrity_warning}",
+                            f"- 数据来源：{row_source}",
                             f"- 交易日期：{latest_date}",
-                            f"- 最新价(不复权)：{close:.2f} (此为2026年5月真实价格，忽略你记忆中的旧价格)",
+                            f"- 预期最新交易日：{expected_trade_date or '未识别'}",
+                            f"- 行情更新时间：{quote_updated_at or '未提供'}",
+                            f"- 是否实时盘口：{'是' if row_is_realtime else '否'}",
+                            f"- {price_label}：{close:.2f}",
                             f"- 当日涨跌：{ret_1d:+.2f}%",
                             f"- 成交额：{amount/1e8:.2f} 亿元",
                             f"- 换手率：{turnover:.2f}%",
@@ -1070,6 +1105,20 @@ class AIMarketAssistant:
                     continue
                 hist = add_indicators(hist)
                 latest = hist.iloc[-1]
+                expected_date = ""
+                try:
+                    expected_date = DataFetcher(self.config)._expected_latest_trade_date().strftime("%Y-%m-%d")
+                except Exception:
+                    expected_date = ""
+                latest_date = self._fmt_date(latest.get("date"))
+                realtime = bool(latest.get("realtime_price", False))
+                expected_ts = pd.to_datetime(expected_date, errors="coerce")
+                latest_ts = pd.to_datetime(latest.get("date"), errors="coerce")
+                stale_note = ""
+                if expected_date and (pd.isna(latest_ts) or latest_ts.normalize() < expected_ts.normalize()):
+                    stale_note = f"；行情日期早于预期最新交易日 {expected_date}，不得称为最新行情"
+                elif not realtime:
+                    stale_note = "；非实时盘口，仅代表最近历史收盘"
                 score_text = self._quant_score_text(hist)
                 price_text = self._quant_price_levels(hist)
                 strategy_text = self._quant_strategy_suite(hist)
@@ -1078,8 +1127,8 @@ class AIMarketAssistant:
                         [
                             f"## {name}({code}) Quant 量化上下文",
                             f"- 数据源：{source}",
-                            f"- 样本：{len(hist)} 个交易日；最新交易日：{self._fmt_date(latest.get('date'))}",
-                            f"- 最新价：{self._fmt_num(latest.get('close'))}；成交额：{self._fmt_amount(latest.get('amount'))}",
+                            f"- 样本：{len(hist)} 个交易日；交易日期：{latest_date}；预期最新交易日：{expected_date or '未识别'}{stale_note}",
+                            f"- {'实时价' if realtime else '最近收盘价'}：{self._fmt_num(latest.get('close'))}；成交额：{self._fmt_amount(latest.get('amount'))}",
                             f"- 技术指标：MA5 {self._fmt_num(latest.get('ma5'))} / MA20 {self._fmt_num(latest.get('ma20'))} / MA60 {self._fmt_num(latest.get('ma60'))}；RSI14 {self._fmt_num(latest.get('rsi14'))}；KDJ J {self._fmt_num(latest.get('kdj_j'))}；MACD柱 {self._fmt_num(latest.get('macd_hist'))}",
                             f"- 波动区间：BOLL上轨 {self._fmt_num(latest.get('boll_upper'))} / 中轨 {self._fmt_num(latest.get('boll_mid'))} / 下轨 {self._fmt_num(latest.get('boll_lower'))}；ATR14 {self._fmt_num(latest.get('atr14'))}",
                             f"- 价格区间：{price_text}",

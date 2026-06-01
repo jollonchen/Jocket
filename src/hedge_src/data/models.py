@@ -16,6 +16,8 @@ class PriceResponse(BaseModel):
 
 
 class FinancialMetrics(BaseModel):
+    model_config = {"extra": "allow"}
+
     ticker: str
     report_period: str
     period: str

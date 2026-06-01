@@ -81,11 +81,12 @@ def run_hedge_in_thread(
     # Intercept progress updates from agents
     def progress_handler(agent_name, ticker, status, analysis, timestamp):
         tracker.current_ticker = ticker
-        tracker.current_status = f"{agent_name.replace('_agent', '').title()}: {status}"
-        
+        agent_display = hedge_progress._get_display_name(agent_name)
+        tracker.current_status = f"{agent_display}: {status}"
+
         # Track active agents and messages
         tracker.agent_updates.append({
-            "agent": agent_name.replace('_agent', '').replace('_', ' ').title(),
+            "agent": agent_display,
             "ticker": ticker,
             "status": status,
             "analysis": _strip_think(analysis) if analysis else "",
@@ -125,15 +126,16 @@ def run_hedge_in_thread(
                 selected_analysts=selected_analysts,
                 initial_margin_requirement=portfolio["margin_requirement"],
             )
-            
+
             # Wrap execution to increment progress
             metrics = engine.run_backtest()
-            
+
             tracker.backtest_metrics = metrics
             tracker.backtest_values = engine.get_portfolio_values()
             tracker.is_complete = True
-            
+
     except Exception as e:
+        logger.exception("Hedge analysis failed")
         tracker.error = str(e)
     finally:
         tracker.is_running = False
@@ -212,10 +214,10 @@ def render_hedge_progress(tracker: HedgeProgressTracker) -> None:
         """,
         unsafe_allow_html=True
     )
-    
+
     mins = int(tracker.elapsed // 60)
     secs = int(tracker.elapsed % 60)
-    
+
     st.markdown(
         f"""
         <div class="hedge-progress-wrapper">
@@ -233,7 +235,7 @@ def render_hedge_progress(tracker: HedgeProgressTracker) -> None:
         """,
         unsafe_allow_html=True
     )
-    
+
     # Stats Bento Row
     metrics_html = f"""
     <div class="ta-stats-container" style="margin-bottom:2rem;">
@@ -289,6 +291,15 @@ def _format_reasoning_to_chinese(reasoning) -> str:
         "pe_analysis": "市盈率分析",
         "pb_analysis": "市净率分析",
         "ps_analysis": "市销率分析",
+        "portfolio_value": "投资组合总值",
+        "current_position_value": "当前持仓市值",
+        "base_position_limit_pct": "基准持仓限额比例",
+        "correlation_multiplier": "相关性调整系数",
+        "combined_position_limit_pct": "综合持仓限额比例",
+        "position_limit": "最高持仓限额",
+        "remaining_limit": "剩余可入持仓额度",
+        "available_cash": "可用现金存量",
+        "risk_adjustment": "风险控制建议",
     }
     _signal_colors = {
         "bullish": "#33D69F",
@@ -326,9 +337,14 @@ def _format_reasoning_to_chinese(reasoning) -> str:
                 f'</div>'
             )
         else:
+            val_str = str(val)
+            if key == "risk_adjustment" and "Volatility x Correlation adjusted:" in val_str:
+                val_str = val_str.replace("Volatility x Correlation adjusted:", "已根据波动率与相关性调整为：")
+                val_str = val_str.replace("base", "基准")
+
             html_parts.append(
                 f'<div style="padding:4px 0; color:#A7ADBA; font-size:0.85rem;">'
-                f'<span style="color:#37E8FF; font-weight:600;">{escape(label)}</span>: {escape(str(val))}'
+                f'<span style="color:#37E8FF; font-weight:600;">{escape(label)}</span>: {escape(val_str)}'
                 f'</div>'
             )
 
@@ -378,11 +394,11 @@ def render_single_day_report(result: dict, tickers: list[str]) -> None:
 
     # Renders analyst tabs detailing individual reasoning
     render_section_title("投研智囊团视角", "多位AI分析师与风控专家的独立推理")
-    
+
     # Sort agents to show active ones first
     active_agent_keys = sorted(list(analyst_signals.keys()))
     if active_agent_keys:
-        tabs = st.tabs([a.replace("_agent", "").replace("_", " ").title() for a in active_agent_keys])
+        tabs = st.tabs([hedge_progress._get_display_name(a) for a in active_agent_keys])
         for idx, agent_key in enumerate(active_agent_keys):
             with tabs[idx]:
                 with st.container(border=True):
@@ -391,7 +407,7 @@ def render_single_day_report(result: dict, tickers: list[str]) -> None:
                         s_action = str(sig.get("signal", "neutral")).upper()
                         s_conf = sig.get("confidence", 0)
                         s_reason = sig.get("reasoning", "")
-                        
+
                         # Format reasoning: convert dicts to structured Chinese HTML
                         if isinstance(s_reason, dict):
                             reason_html = _format_reasoning_to_chinese(s_reason)
@@ -399,13 +415,13 @@ def render_single_day_report(result: dict, tickers: list[str]) -> None:
                             reason_html = f'<p style="color:#A7ADBA; margin-top:8px; line-height:1.5; font-size:0.88rem;">{escape(s_reason)}</p>'
                         else:
                             reason_html = '<p style="color:#A7ADBA; font-size:0.85rem;">暂无详细推理</p>'
-                        
+
                         sig_color = "#33D69F" if "BULL" in s_action else "#FF5C7A" if "BEAR" in s_action else "#FFB86B"
                         st.markdown(
                             f"""
                             <div style="padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
-                                <span style="font-weight:800; color:#37E8FF; font-size:1.05rem;">{escape(ticker)}</span> | 
-                                信号：<strong style="color:{sig_color};">{escape(s_action)}</strong> | 
+                                <span style="font-weight:800; color:#37E8FF; font-size:1.05rem;">{escape(ticker)}</span> |
+                                信号：<strong style="color:{sig_color};">{escape(s_action)}</strong> |
                                 信心：<strong>{escape(str(s_conf))}%</strong>
                                 <div style="margin-top:8px;">{reason_html}</div>
                             </div>
@@ -419,7 +435,7 @@ def render_single_day_report(result: dict, tickers: list[str]) -> None:
 def render_backtest_report(tracker: HedgeProgressTracker) -> None:
     metrics = tracker.backtest_metrics
     values_data = tracker.backtest_values
-    
+
     render_section_title("回测表现评估", "历史资金曲线与多维绩效评价指标")
 
     # Bento statistics grid
@@ -442,13 +458,13 @@ def render_backtest_report(tracker: HedgeProgressTracker) -> None:
     if values_data:
         df_vals = pd.DataFrame(values_data)
         df_vals["Date"] = pd.to_datetime(df_vals["Date"])
-        
+
         # Calculate returns
         initial_val = df_vals["Portfolio Value"].iloc[0]
         df_vals["Portfolio Return"] = (df_vals["Portfolio Value"] / initial_val - 1.0) * 100.0
 
         fig = go.Figure()
-        
+
         # Glow effect wrapper
         fig.add_trace(
             go.Scatter(
@@ -505,7 +521,7 @@ def render_backtest_report(tracker: HedgeProgressTracker) -> None:
 
         # Step-by-Step transaction data logs
         render_section_title("每日交易流水", "回测期间组合每日持仓变动与资产明细")
-        
+
         view_df = df_vals.copy()
         view_df["Date"] = view_df["Date"].dt.strftime("%Y-%m-%d")
         view_df = view_df.rename(
@@ -518,7 +534,7 @@ def render_backtest_report(tracker: HedgeProgressTracker) -> None:
                 "Net Exposure": "净敞口",
             }
         )
-        
+
         # Formatting
         view_df["组合总值"] = view_df["组合总值"].map(lambda x: f"${x:,.2f}")
         view_df["累计回报"] = view_df["累计回报"].map(lambda x: f"{x:+.2f}%")
@@ -528,16 +544,20 @@ def render_backtest_report(tracker: HedgeProgressTracker) -> None:
 
         keep_cols = ["日期", "组合总值", "累计回报", "多头敞口", "空头敞口", "净敞口"]
         view_df = view_df[[c for c in keep_cols if c in view_df.columns]]
-        
+
         render_glass_dataframe(view_df.head(100), height=520)
 
 
 def render_hedge_dashboard() -> None:
+    if "selected_hedge_agents" not in st.session_state:
+        st.session_state["selected_hedge_agents"] = []
+    selected_agent_keys = st.session_state["selected_hedge_agents"]
+
     # 1. Parameter Command Bar
     with st.container(border=True):
         st.markdown('<div class="command-bar-title">量化对冲参数与策略</div>', unsafe_allow_html=True)
         command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
-        
+
         with command_cols[0]:
             inner_cols = st.columns(2)
             with inner_cols[0]:
@@ -549,21 +569,21 @@ def render_hedge_dashboard() -> None:
                     key="hedge_tickers",
                     label_visibility="collapsed"
                 )
-                
+
                 # Resolve stock names and matching
                 resolved_stocks = []
                 unmatched_tokens = []
                 try:
                     directory = get_stock_directory_cache()
                     tokens = [t.strip() for t in tickers_input.split(",") if t.strip()]
-                    
+
                     for token in tokens:
                         matches = resolve_stock_query(token, directory, limit=1)
                         if matches:
                             resolved_stocks.append(matches[0])
                         else:
                             unmatched_tokens.append(token)
-                    
+
                     if resolved_stocks:
                         matched_str = ", ".join([f"{s['name']} ({s['code']})" for s in resolved_stocks])
                         st.caption(f"已匹配：{matched_str}")
@@ -572,7 +592,7 @@ def render_hedge_dashboard() -> None:
                         st.warning(f"未匹配：{unmatched_str}")
                 except Exception as ex:
                     logger.warning("Failed to resolve stock query in hedge UI: %s", ex)
-            
+
             with inner_cols[1]:
                 st.markdown('<div class="command-field-label">运行模式</div>', unsafe_allow_html=True)
                 mode = st.segmented_control(
@@ -582,14 +602,15 @@ def render_hedge_dashboard() -> None:
                     key="hedge_mode",
                     label_visibility="collapsed"
                 )
-            
+                st.markdown(f'<div id="jocket-hedge-mode" data-mode="{mode}"></div>', unsafe_allow_html=True)
+
             # Additional parameters (domestic trading hour aware default dates)
             _now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
             if _now.dayofweek < 5 and _now.hour >= 16:
                 default_end = _now.normalize().date()
             else:
                 default_end = (_now.normalize() - pd.offsets.BDay(1)).date()
-            
+
             default_start = (pd.Timestamp(default_end) - pd.offsets.BDay(60)).date()
 
             if mode == "回测模拟":
@@ -641,50 +662,11 @@ def render_hedge_dashboard() -> None:
                     )
                 initial_cash = 100000.0
 
-
-            # Analyst Multiselect replaced by Jocket expander + skill buttons container
-            st.markdown('<div class="command-field-label">智能体分析师</div>', unsafe_allow_html=True)
-            if "selected_hedge_agents" not in st.session_state:
-                st.session_state["selected_hedge_agents"] = []
-            selected_agent_keys = st.session_state["selected_hedge_agents"]
-            
-            # Display active selection above the expander capsule
-            agent_map = {a["key"]: a["display_name"] for a in get_agents_list()}
-            selected_names = [agent_map[k] for k in selected_agent_keys if k in agent_map]
-            if selected_names:
-                st.caption(f"当前选择：{', '.join(selected_names)}")
-            else:
-                st.caption("当前选择：无")
-            
-            def toggle_hedge_agent(agent_key):
-                agents = set(st.session_state.get("selected_hedge_agents", []))
-                if agent_key in agents:
-                    agents.remove(agent_key)
-                else:
-                    agents.add(agent_key)
-                st.session_state["selected_hedge_agents"] = list(agents)
-
-            with st.expander("选择智能体分析师", expanded=False):
-                st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
-                
-                for agent in get_agents_list():
-                    agent_key = agent["key"]
-                    display_name = agent["display_name"]
-                    st.button(
-                        display_name,
-                        key=f"ai_skill_{agent_key}",
-                        help=agent["description"],
-                        type="primary" if agent_key in selected_agent_keys else "secondary",
-                        use_container_width=False,
-                        on_click=toggle_hedge_agent,
-                        args=(agent_key,)
-                    )
-
         with command_cols[1]:
             st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
             tracker = st.session_state.get("hedge_tracker")
             is_busy = tracker is not None and tracker.is_running
-            
+
             if st.button("来财来财", type="primary", use_container_width=True, disabled=is_busy, key="run_hedge_analysis"):
                 parsed_tickers = [s["code"] for s in resolved_stocks] if resolved_stocks else [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
                 if not parsed_tickers:
@@ -714,11 +696,11 @@ def render_hedge_dashboard() -> None:
                             for ticker in parsed_tickers
                         },
                     }
-                    
+
                     # Initialize progress tracker
                     tracker = HedgeProgressTracker(parsed_tickers, mode)
                     st.session_state["hedge_tracker"] = tracker
-                    
+
                     # Launch analysis in daemon thread
                     t = threading.Thread(
                         target=run_hedge_in_thread,
@@ -736,23 +718,58 @@ def render_hedge_dashboard() -> None:
                     t.start()
                     st.rerun()
 
+        # Analyst Multiselect replaced by Jocket expander + skill buttons container
+        st.markdown('<div class="command-field-label">智能体分析师</div>', unsafe_allow_html=True)
+
+        # Display active selection above the expander capsule
+        agent_map = {a["key"]: a["display_name"] for a in get_agents_list()}
+        selected_names = [agent_map[k] for k in selected_agent_keys if k in agent_map]
+        if selected_names:
+            st.caption(f"当前选择：{', '.join(selected_names)}")
+        else:
+            st.caption("当前选择：无")
+
+        def toggle_hedge_agent(agent_key):
+            agents = set(st.session_state.get("selected_hedge_agents", []))
+            if agent_key in agents:
+                agents.remove(agent_key)
+            else:
+                agents.add(agent_key)
+            st.session_state["selected_hedge_agents"] = list(agents)
+
+        with st.expander("选择智能体分析师", expanded=False):
+            st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
+
+            for agent in get_agents_list():
+                agent_key = agent["key"]
+                display_name = agent["display_name"]
+                st.button(
+                    display_name,
+                    key=f"ai_skill_{agent_key}",
+                    help=agent["description"],
+                    type="primary" if agent_key in selected_agent_keys else "secondary",
+                    use_container_width=False,
+                    on_click=toggle_hedge_agent,
+                    args=(agent_key,)
+                )
+
 
     # 2. Rendering state machine logic
     tracker = st.session_state.get("hedge_tracker")
     if tracker:
         tracker.update_elapsed()
-        
+
         if tracker.is_running:
             render_hedge_progress(tracker)
             time.sleep(1.8)
             st.rerun()
-            
+
         elif tracker.error:
             st.error(f"❌ 运行失败: {tracker.error}")
             if st.button("重试", type="primary"):
                 st.session_state.pop("hedge_tracker", None)
                 st.rerun()
-                
+
         elif tracker.is_complete:
             if tracker.mode == "单日决策":
                 render_single_day_report(tracker.final_result, tracker.tickers)

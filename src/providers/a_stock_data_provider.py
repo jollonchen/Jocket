@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -225,7 +226,7 @@ class AStockDataProvider(BaseProvider):
             url = f"https://basic.10jqka.com.cn/new/{_code6(code)}/worth.html"
             r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://basic.10jqka.com.cn/"}, timeout=self.timeout)
             r.encoding = "gbk"
-            dfs = pd.read_html(r.text)
+            dfs = pd.read_html(StringIO(r.text))
             for df in dfs:
                 text = " ".join(map(str, df.columns)) + " " + " ".join(map(str, df.head(2).values.flatten()))
                 if "每股收益" in text or "均值" in text or "EPS" in text.upper():
