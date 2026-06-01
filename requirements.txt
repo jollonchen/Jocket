@@ -16,6 +16,7 @@ mootdx>=0.10
 stockstats>=0.6.2
 langchain-core
 backtrader
+colorama
 langchain-anthropic
 langchain-experimental
 langchain-openai
