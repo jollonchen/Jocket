@@ -34,6 +34,8 @@ _PROXY_ENV_KEYS = (
     "all_proxy",
 )
 
+_MARKET_DATE_CACHE = {"checked_at": 0.0, "value": pd.NaT}
+
 
 def _disable_process_proxies() -> None:
     if os.getenv("JOCKET_DISABLE_PROCESS_PROXIES", "").lower() not in {"1", "true", "yes"}:
@@ -242,8 +244,64 @@ class DataFetcher:
             day = day - pd.Timedelta(days=1)
         return day
 
+    def _latest_a_share_market_date(self) -> pd.Timestamp:
+        """Read the latest SSE/SZSE session date from Tencent index quotes.
+
+        Weekday arithmetic alone is not a trading calendar: it incorrectly
+        treats statutory weekday holidays as open sessions.  Requiring both
+        broad-market index quotes to agree keeps this correction conservative.
+        """
+        now_ts = datetime.now().timestamp()
+        if now_ts - float(_MARKET_DATE_CACHE["checked_at"] or 0) <= 300:
+            return _MARKET_DATE_CACHE["value"]
+
+        url = "https://qt.gtimg.cn/q=sh000001,sz399001"
+        result = pd.NaT
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 Jocket",
+                    "Referer": "https://finance.qq.com/",
+                },
+            )
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=self.timeout) as resp:
+                text = resp.read().decode("gbk", errors="ignore")
+            dates = []
+            for payload in re.findall(r'="([^"]*)"', text):
+                fields = payload.split("~")
+                if len(fields) <= 30:
+                    continue
+                quote_dt = pd.to_datetime(fields[30], format="%Y%m%d%H%M%S", errors="coerce")
+                if not pd.isna(quote_dt):
+                    dates.append(quote_dt.normalize())
+            if len(dates) >= 2 and len(set(dates)) == 1:
+                result = dates[0]
+        except Exception:
+            pass
+        _MARKET_DATE_CACHE.update({"checked_at": now_ts, "value": result})
+        return result
+
+    @staticmethod
+    def _reconcile_expected_trade_date(
+        weekday_date: pd.Timestamp,
+        market_date: pd.Timestamp,
+    ) -> pd.Timestamp:
+        """Allow an agreed market date to correct a nearby holiday gap."""
+        expected = pd.to_datetime(weekday_date, errors="coerce")
+        observed = pd.to_datetime(market_date, errors="coerce")
+        if pd.isna(expected) or pd.isna(observed):
+            return expected
+        expected = expected.normalize()
+        observed = observed.normalize()
+        gap = (expected - observed).days
+        if 0 <= gap <= 12:
+            return observed
+        return expected
+
     def _expected_latest_trade_date(self, end: str | pd.Timestamp | None = None) -> pd.Timestamp:
-        """Best-effort latest A-share trading day without relying on cached prices."""
+        """Best-effort latest A-share session, including weekday holidays."""
         now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
         today = now.normalize()
         if today.weekday() < 5 and now.time() >= pd.Timestamp("15:10").time():
@@ -255,7 +313,8 @@ class DataFetcher:
             end_ts = pd.to_datetime(end, errors="coerce")
             if not pd.isna(end_ts) and end_ts.normalize() < expected:
                 return self._previous_weekday(end_ts)
-        return expected
+        market_date = self._latest_a_share_market_date()
+        return self._reconcile_expected_trade_date(expected, market_date)
 
     @staticmethod
     def _num(value):

@@ -6,3 +6,8 @@ enableWebsocketCompression = false
 
 [theme]
 base = "dark"
+primaryColor = "#37e8ff"
+backgroundColor = "#110f17"
+secondaryBackgroundColor = "#1c1924"
+textColor = "#f4f7fb"
+font = "sans serif"

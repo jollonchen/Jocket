@@ -27,15 +27,27 @@ from src.ui_components import (
     format_number_cn,
     _rgba,
 )
-from src.hedge_src.main import run_hedge_fund
-from src.hedge_src.backtesting.engine import BacktestEngine
-from src.hedge_src.utils.analysts import get_agents_list
-from src.hedge_src.utils.progress import progress as hedge_progress
 from src.stock_lookup import build_stock_directory, resolve_stock_query
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def get_stock_directory_cache() -> pd.DataFrame:
     return build_stock_directory()
+
+
+def _load_hedge_runtime():
+    from src.hedge_src.backtesting.engine import BacktestEngine
+    from src.hedge_src.main import run_hedge_fund
+    from src.hedge_src.utils.progress import progress as hedge_progress
+
+    return run_hedge_fund, BacktestEngine, hedge_progress
+
+
+def _hedge_agent_display_name(agent_key: str) -> str:
+    try:
+        _, _, hedge_progress = _load_hedge_runtime()
+        return hedge_progress._get_display_name(agent_key)
+    except Exception:
+        return str(agent_key or "").replace("_", " ").title()
 
 
 
@@ -77,6 +89,7 @@ def run_hedge_in_thread(
 ):
     tracker.is_running = True
     tracker.start_time = time.time()
+    run_hedge_fund, BacktestEngine, hedge_progress = _load_hedge_runtime()
 
     # Intercept progress updates from agents
     def progress_handler(agent_name, ticker, status, analysis, timestamp):
@@ -142,100 +155,7 @@ def run_hedge_in_thread(
         hedge_progress.unregister_handler(progress_handler)
 
 
-def render_hedge_progress(tracker: HedgeProgressTracker) -> None:
-    # Custom Jocket-style visual progress layout
-    st.markdown(
-        """
-        <style>
-        .hedge-progress-wrapper {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 24px;
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            margin: 1rem 0 2rem;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.2);
-        }
-        .hedge-progress-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 14px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            font-size: 0.9rem;
-            color: #A7ADBA;
-        }
-        .hedge-progress-header strong {
-            color: #fff;
-        }
-        .hedge-spinner-bar {
-            height: 4px;
-            width: 100%;
-            background: rgba(255, 255, 255, 0.06);
-            border-radius: 2px;
-            overflow: hidden;
-            position: relative;
-            margin-bottom: 20px;
-        }
-        .hedge-spinner-fill {
-            height: 100%;
-            width: 50%;
-            background: linear-gradient(90deg, #37E8FF, #33D69F, #37E8FF);
-            position: absolute;
-            animation: hedgeFlow 1.8s ease-in-out infinite;
-            border-radius: 2px;
-            box-shadow: 0 0 8px rgba(55, 232, 255, 0.5);
-        }
-        @keyframes hedgeFlow {
-            0% { left: -50%; }
-            100% { left: 100%; }
-        }
-        .hedge-update-card {
-            background: rgba(255, 255, 255, 0.01);
-            border: 1px solid rgba(255, 255, 255, 0.03);
-            border-radius: 12px;
-            padding: 12px 16px;
-            margin-bottom: 10px;
-            font-size: 0.82rem;
-            line-height: 1.4;
-        }
-        .hedge-update-tag {
-            color: #37E8FF;
-            font-weight: 800;
-            margin-right: 6px;
-        }
-        .hedge-update-time {
-            color: #5B8CFF;
-            float: right;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-    mins = int(tracker.elapsed // 60)
-    secs = int(tracker.elapsed % 60)
-
-    st.markdown(
-        f"""
-        <div class="hedge-progress-wrapper">
-            <div class="hedge-progress-header">
-                <div>模式：<strong>{tracker.mode}</strong> | Tickers：<strong>{", ".join(tracker.tickers)}</strong></div>
-                <div>运行耗时：<strong>{mins}分{secs:02d}秒</strong></div>
-            </div>
-            <div class="hedge-spinner-bar">
-                <div class="hedge-spinner-fill"></div>
-            </div>
-            <div style="font-size:0.85rem; color:#A7ADBA; margin-bottom:12px;">
-                ● 正在处理：<span style="color:#FFF; font-weight:600;">{tracker.current_status or "初始化数据层"}</span> {f'({tracker.current_ticker})' if tracker.current_ticker else ''}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
+def render_hedge_progress_details(tracker: HedgeProgressTracker) -> None:
     # Stats Bento Row
     metrics_html = f"""
     <div class="ta-stats-container" style="margin-bottom:2rem;">
@@ -398,10 +318,10 @@ def render_single_day_report(result: dict, tickers: list[str]) -> None:
     # Sort agents to show active ones first
     active_agent_keys = sorted(list(analyst_signals.keys()))
     if active_agent_keys:
-        tabs = st.tabs([hedge_progress._get_display_name(a) for a in active_agent_keys])
+        tabs = st.tabs([_hedge_agent_display_name(a) for a in active_agent_keys])
         for idx, agent_key in enumerate(active_agent_keys):
             with tabs[idx]:
-                with st.container(border=True):
+                with st.container(border=False):
                     agent_signals = analyst_signals[agent_key]
                     for ticker, sig in agent_signals.items():
                         s_action = str(sig.get("signal", "neutral")).upper()
@@ -515,7 +435,7 @@ def render_backtest_report(tracker: HedgeProgressTracker) -> None:
             hovermode="x unified",
         )
 
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown('<div class="chart-title"><span>累计净值收益率曲线</span><span class="pill pill-cyan">回测模拟</span></div>', unsafe_allow_html=True)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
 
@@ -553,116 +473,80 @@ def render_hedge_dashboard() -> None:
         st.session_state["selected_hedge_agents"] = []
     selected_agent_keys = st.session_state["selected_hedge_agents"]
 
-    # 1. Parameter Command Bar
-    with st.container(border=True):
-        st.markdown('<div class="command-bar-title">量化对冲参数与策略</div>', unsafe_allow_html=True)
-        command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
+    _now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
+    if _now.dayofweek < 5 and _now.hour >= 16:
+        default_end = _now.normalize().date()
+    else:
+        default_end = (_now.normalize() - pd.offsets.BDay(1)).date()
+    default_start = (pd.Timestamp(default_end) - pd.offsets.BDay(60)).date()
 
-        with command_cols[0]:
-            inner_cols = st.columns(2)
-            with inner_cols[0]:
-                st.markdown('<div class="command-field-label">股票代码 / 名称</div>', unsafe_allow_html=True)
-                tickers_input = st.text_input(
-                    "股票代码 / 名称",
-                    value="",
-                    placeholder="输入 600519、贵州茅台、300750 等代码或名称",
-                    key="hedge_tickers",
-                    label_visibility="collapsed"
-                )
+    # 1. Floating parameter dock
+    with st.container(border=False):
+        st.markdown('<div class="jocket-bottom-dock style-bottom hedge-command-dock" data-jocket-dock-style="style bottom"></div>', unsafe_allow_html=True)
+        # Using 4 columns for simpler layout: Ticker, Start Date, End Date, Button
+        dock_cols = st.columns([0.44, 0.18, 0.18, 0.20], vertical_alignment="center")
 
-                # Resolve stock names and matching
-                resolved_stocks = []
-                unmatched_tokens = []
-                try:
+        with dock_cols[0]:
+            st.markdown('<div class="command-field-label">股票名称/代码</div>', unsafe_allow_html=True)
+            tickers_input = st.text_input(
+                "股票名称/代码",
+                value="",
+                placeholder="600519、宁德时代等",
+                key="hedge_tickers",
+                label_visibility="collapsed"
+            )
+
+            resolved_stocks = []
+            unmatched_tokens = []
+            matched_msg = ""
+            unmatched_msg = ""
+            tokens = [t.strip() for t in tickers_input.split(",") if t.strip()]
+            try:
+                directory = None
+                if tokens:
                     directory = get_stock_directory_cache()
-                    tokens = [t.strip() for t in tickers_input.split(",") if t.strip()]
 
-                    for token in tokens:
-                        matches = resolve_stock_query(token, directory, limit=1)
-                        if matches:
-                            resolved_stocks.append(matches[0])
-                        else:
-                            unmatched_tokens.append(token)
+                for token in tokens:
+                    matches = resolve_stock_query(token, directory, limit=1)
+                    if matches:
+                        resolved_stocks.append(matches[0])
+                    else:
+                        unmatched_tokens.append(token)
 
-                    if resolved_stocks:
-                        matched_str = ", ".join([f"{s['name']} ({s['code']})" for s in resolved_stocks])
-                        st.caption(f"已匹配：{matched_str}")
-                    if unmatched_tokens:
-                        unmatched_str = ", ".join(unmatched_tokens)
-                        st.warning(f"未匹配：{unmatched_str}")
-                except Exception as ex:
-                    logger.warning("Failed to resolve stock query in hedge UI: %s", ex)
+                if resolved_stocks:
+                    matched_str = ", ".join([f"{s['name']} ({s['code']})" for s in resolved_stocks])
+                    matched_msg = f"已匹配：{matched_str}"
+                if unmatched_tokens:
+                    unmatched_str = ", ".join(unmatched_tokens)
+                    unmatched_msg = f"未匹配：{unmatched_str}"
+            except Exception as ex:
+                logger.warning("Failed to resolve stock query in hedge UI: %s", ex)
 
-            with inner_cols[1]:
-                st.markdown('<div class="command-field-label">运行模式</div>', unsafe_allow_html=True)
-                mode = st.segmented_control(
-                    "运行模式",
-                    ["单日决策", "回测模拟"],
-                    default="单日决策",
-                    key="hedge_mode",
-                    label_visibility="collapsed"
-                )
-                st.markdown(f'<div id="jocket-hedge-mode" data-mode="{mode}"></div>', unsafe_allow_html=True)
+        mode = st.session_state.get("hedge_mode", "单日决策")
+        st.markdown(f'<div id="jocket-hedge-mode" data-mode="{escape(str(mode))}"></div>', unsafe_allow_html=True)
+        selected_agent_keys = st.session_state.get("selected_hedge_agents", ["warren_buffett", "charlie_munger", "fundamentals_analyst", "technical_analyst"])
 
-            # Additional parameters (domestic trading hour aware default dates)
-            _now = pd.Timestamp.now(tz="Asia/Shanghai").tz_localize(None)
-            if _now.dayofweek < 5 and _now.hour >= 16:
-                default_end = _now.normalize().date()
-            else:
-                default_end = (_now.normalize() - pd.offsets.BDay(1)).date()
+        with dock_cols[1]:
+            st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
+            start_date = st.date_input(
+                "hedge_start",
+                value=default_start,
+                key="hedge_start_date",
+                label_visibility="collapsed"
+            )
 
-            default_start = (pd.Timestamp(default_end) - pd.offsets.BDay(60)).date()
+        with dock_cols[2]:
+            st.markdown(f'<div class="command-field-label">{"结束日期" if mode == "回测模拟" else "分析日期"}</div>', unsafe_allow_html=True)
+            end_date = st.date_input(
+                "hedge_end",
+                value=default_end,
+                key="hedge_end_date",
+                label_visibility="collapsed"
+            )
 
-            if mode == "回测模拟":
-                extra_cols = st.columns(3)
-                with extra_cols[0]:
-                    st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
-                    start_date = st.date_input(
-                        "hedge_start",
-                        value=default_start,
-                        key="hedge_start_date",
-                        label_visibility="collapsed"
-                    )
-                with extra_cols[1]:
-                    st.markdown('<div class="command-field-label">结束日期</div>', unsafe_allow_html=True)
-                    end_date = st.date_input(
-                        "hedge_end",
-                        value=default_end,
-                        key="hedge_end_date",
-                        label_visibility="collapsed"
-                    )
-                with extra_cols[2]:
-                    st.markdown('<div class="command-field-label">初始资金</div>', unsafe_allow_html=True)
-                    initial_cash = st.number_input(
-                        "hedge_cash",
-                        min_value=1000,
-                        value=100000,
-                        step=10000,
-                        format="%d",
-                        key="hedge_initial_cash",
-                        label_visibility="collapsed"
-                    )
-            else:
-                extra_cols = st.columns(2)
-                with extra_cols[0]:
-                    st.markdown('<div class="command-field-label">开始日期</div>', unsafe_allow_html=True)
-                    start_date = st.date_input(
-                        "hedge_start",
-                        value=default_start,
-                        key="hedge_start_date",
-                        label_visibility="collapsed"
-                    )
-                with extra_cols[1]:
-                    st.markdown('<div class="command-field-label">分析日期</div>', unsafe_allow_html=True)
-                    end_date = st.date_input(
-                        "hedge_end",
-                        value=default_end,
-                        key="hedge_end_date",
-                        label_visibility="collapsed"
-                    )
-                initial_cash = 100000.0
+        initial_cash = 100000.0
 
-        with command_cols[1]:
+        with dock_cols[3]:
             st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
             tracker = st.session_state.get("hedge_tracker")
             is_busy = tracker is not None and tracker.is_running
@@ -718,41 +602,11 @@ def render_hedge_dashboard() -> None:
                     t.start()
                     st.rerun()
 
-        # Analyst Multiselect replaced by Jocket expander + skill buttons container
-        st.markdown('<div class="command-field-label">智能体分析师</div>', unsafe_allow_html=True)
-
-        # Display active selection above the expander capsule
-        agent_map = {a["key"]: a["display_name"] for a in get_agents_list()}
-        selected_names = [agent_map[k] for k in selected_agent_keys if k in agent_map]
-        if selected_names:
-            st.caption(f"当前选择：{', '.join(selected_names)}")
-        else:
-            st.caption("当前选择：无")
-
-        def toggle_hedge_agent(agent_key):
-            agents = set(st.session_state.get("selected_hedge_agents", []))
-            if agent_key in agents:
-                agents.remove(agent_key)
-            else:
-                agents.add(agent_key)
-            st.session_state["selected_hedge_agents"] = list(agents)
-
-        with st.expander("选择智能体分析师", expanded=False):
-            st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
-
-            for agent in get_agents_list():
-                agent_key = agent["key"]
-                display_name = agent["display_name"]
-                st.button(
-                    display_name,
-                    key=f"ai_skill_{agent_key}",
-                    help=agent["description"],
-                    type="primary" if agent_key in selected_agent_keys else "secondary",
-                    use_container_width=False,
-                    on_click=toggle_hedge_agent,
-                    args=(agent_key,)
-                )
-
+    # Render matching messages outside the floating dock as styled floating elements
+    if matched_msg:
+        st.markdown(f'<div class="dock-matching-msg matched">{escape(matched_msg)}</div>', unsafe_allow_html=True)
+    if unmatched_msg:
+        st.markdown(f'<div class="dock-matching-msg unmatched">{escape(unmatched_msg)}</div>', unsafe_allow_html=True)
 
     # 2. Rendering state machine logic
     tracker = st.session_state.get("hedge_tracker")
@@ -760,7 +614,14 @@ def render_hedge_dashboard() -> None:
         tracker.update_elapsed()
 
         if tracker.is_running:
-            render_hedge_progress(tracker)
+            from src.ui_components import render_jocket_unified_empty_state
+            with st.container(key="jocket_page_g_landing"):
+                render_jocket_unified_empty_state(
+                    "量化对冲",
+                    "",
+                    [],
+                    show_progress_key="hedge_tracker"
+                )
             time.sleep(1.8)
             st.rerun()
 
@@ -777,12 +638,74 @@ def render_hedge_dashboard() -> None:
                 render_backtest_report(tracker)
     else:
         # Initial visual landing
-        render_hero(
-            code="AI多智能体对冲",
-            data_source="自动更新",
-            latest_date="-",
-            updated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            title="22 位量化对冲智能体群就绪",
-            subtitle="在上方配置投资组合与历史周期，启动 LangGraph 协同式量化对冲决策与回测。系统会自动运行：数据门控 → 多元投研 → 仓位管理 → 压力测试 → 组合优化。",
-            ai_summary=None
-        )
+        from src.ui_components import render_jocket_unified_empty_state
+        with st.container(key="jocket_page_g_landing"):
+            render_jocket_unified_empty_state(
+                "量化对冲",
+                "多元投研智能体群共识决策，以及大模型驱动的历史绩效对冲回测模拟",
+                []
+            )
+
+            st.session_state.setdefault("hedge_mode", "单日决策")
+            if not st.session_state.get("selected_hedge_agents"):
+                st.session_state["selected_hedge_agents"] = ["warren_buffett", "charlie_munger", "fundamentals_analyst", "technical_analyst"]
+
+            # Analyst selection popover under empty state, matching ta dropdown
+            from src.hedge_src.utils.analysts import get_agents_list
+            selected_agent_keys = st.session_state.get("selected_hedge_agents", ["warren_buffett", "charlie_munger", "fundamentals_analyst", "technical_analyst"])
+
+            def toggle_hedge_agent(agent_key):
+                agents = set(st.session_state.get("selected_hedge_agents", []))
+                if agent_key in agents:
+                    agents.remove(agent_key)
+                else:
+                    agents.add(agent_key)
+                st.session_state["selected_hedge_agents"] = list(agents)
+
+            with st.container(key="hedge_agents_style_expander"):
+                agent_map = {a["key"]: a["display_name"] for a in get_agents_list()}
+                selected_names = [agent_map[k] for k in selected_agent_keys if k in agent_map]
+                current_sel_str = f"当前选择：{', '.join(selected_names)}" if selected_names else "当前选择：无"
+                
+                with st.popover("智能分析体", use_container_width=True, help=current_sel_str):
+                    st.markdown(
+                        """
+                        <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1" rel="stylesheet" />
+                        <div class="flex items-center justify-between" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <h2 style="font-size: 14px; font-weight: 600; color: #e1e2eb; margin: 0;">选择智能体分析师</h2>
+                            <span class="material-symbols-outlined" style="color: #00dbe7; font-size: 24px; font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;">group_add</span>
+                        </div>
+                        <p style="color: #b9cacb; font-size: 0.85rem; line-height: 1.4; margin: 0 0 20px 0;">选择一位或多位具备深度洞察力的 AI 智能体协助您的市场研究。</p>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    agents = get_agents_list()
+                    cols_per_row = 2
+                    for i in range(0, len(agents), cols_per_row):
+                        cols = st.columns(cols_per_row, gap="small")
+                        for j in range(cols_per_row):
+                            idx = i + j
+                            if idx < len(agents):
+                                agent = agents[idx]
+                                agent_key = agent["key"]
+                                display_name = agent["display_name"]
+                                with cols[j]:
+                                    if st.button(
+                                        display_name,
+                                        key=f"ai_skill_{agent_key}",
+                                        help=agent["description"],
+                                        type="primary" if agent_key in selected_agent_keys else "secondary",
+                                        use_container_width=True,
+                                    ):
+                                        toggle_hedge_agent(agent_key)
+                                        st.rerun()
+                    
+                    st.markdown('<div class="popover-divider" style="margin: 16px 0 12px 0; border-top: 1px solid rgba(255,255,255,0.08);"></div>', unsafe_allow_html=True)
+                    bottom_cols = st.columns([0.5, 0.5])
+                    with bottom_cols[0]:
+                        if st.button("重置", key="hedge_reset_agents", use_container_width=True):
+                            st.session_state["selected_hedge_agents"] = []
+                            st.rerun()
+                    with bottom_cols[1]:
+                        if st.button("确认选择", key="hedge_confirm_agents", type="primary", use_container_width=True):
+                            st.rerun()

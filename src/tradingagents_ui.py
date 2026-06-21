@@ -191,29 +191,46 @@ def render_jocket_report(state: dict, ticker: str, trade_date: str, signal: str,
 
     time_note = f"耗时 {int(elapsed)//60}:{int(elapsed)%60:02d}" if elapsed else "历史报告"
     debate_indicator, debate_tone = _infer_debate_result(state, signal)
-    cards = [
-        metric_card("最终决策信号", signal.upper(), f"报告日期：{trade_date}", signal_tone, indicator),
-        metric_card("分析对象", display_ticker, time_note, debate_tone, debate_indicator),
-    ]
-    render_bento_grid(cards)
+    col_left, col_right = st.columns([2.0, 0.45], vertical_alignment="center")
+    
+    with col_left:
+        cards = [
+            metric_card("最终决策信号", signal.upper(), f"报告日期：{trade_date}", signal_tone, indicator),
+            metric_card("分析对象", display_ticker, time_note, debate_tone, debate_indicator),
+        ]
+        render_bento_grid(cards)
 
+    pdf_bytes = None
     try:
         pdf_bytes = generate_pdf(state, ticker, trade_date, signal)
-        st.download_button(
-            "📥 下载专业 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"Jocket_TradingAgents_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
-            type="primary",
-            use_container_width=True
-        )
-    except Exception as e:
+    except Exception:
         pass
+
+    with col_right:
+        if pdf_bytes:
+            st.download_button(
+                "下载PDF报告",
+                data=pdf_bytes,
+                file_name=f"Jocket_TradingAgents_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True,
+                key="ta_download_pdf_btn"
+            )
+        else:
+            st.button("下载PDF报告", disabled=True, use_container_width=True, key="ta_download_pdf_btn", type="primary")
+            
+        st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
+        
+        if st.button("返回首页", key="ta_back_home_btn", type="primary", use_container_width=True):
+            st.session_state["ta_viewing_history"] = None
+            st.session_state["ta_tracker"] = None
+            st.rerun()
 
     inv_plan = state.get("investment_plan", "")
     if inv_plan:
         render_section_title("最终投资建议", "综合多方分析、辩论与风控的最终策略")
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown(_strip_think(inv_plan))
 
     render_section_title("多维分析师报告", "独立 AI 智能体生成的研究视图")
@@ -237,7 +254,7 @@ def render_jocket_report(state: dict, ticker: str, trade_date: str, signal: str,
     debate = state.get("investment_debate_state")
     if debate and isinstance(debate, dict):
         render_section_title("多空辩论", "多方与空方 AI 投研总监的深度交锋")
-        with st.container(border=True):
+        with st.container(border=False):
             t1, t2, t3 = st.tabs(["多方观点", "空方观点", "研究经理裁决"])
             with t1:
                 st.markdown(_strip_think(debate.get("bull_history", "") or "无数据"))
@@ -249,7 +266,7 @@ def render_jocket_report(state: dict, ticker: str, trade_date: str, signal: str,
     risk = state.get("risk_debate_state")
     if risk and isinstance(risk, dict):
         render_section_title("风控评估", "对当前交易计划的压力测试与风险暴露分析")
-        with st.container(border=True):
+        with st.container(border=False):
             t1, t2, t3, t4 = st.tabs(["激进策略", "保守策略", "中性策略", "风控决策"])
             with t1:
                 st.markdown(_strip_think(risk.get("aggressive_history", "") or "无数据"))
@@ -266,196 +283,8 @@ def render_jocket_report(state: dict, ticker: str, trade_date: str, signal: str,
             st.markdown(str(dqs))
 
 
-def _status_badge(status: str) -> str:
-    if status == "done":
-        return '<span style="color:#33D69F; font-size:1.4rem;">●</span>'
-    if status == "active":
-        return '<span style="color:#FFB86B; font-size:1.4rem; text-shadow: 0 0 8px rgba(255,184,107,0.6);">◉</span>'
-    return '<span style="color:#A7ADBA; font-size:1.4rem; opacity: 0.3;">○</span>'
-
-def _format_time(seconds: float) -> str:
-    m, s = divmod(int(seconds), 60)
-    return f"{m}:{s:02d}"
-
-def render_jocket_progress(tracker: ProgressTracker) -> None:
+def render_jocket_progress_details(tracker: ProgressTracker) -> None:
     from web.progress import PIPELINE_STAGES
-    
-    completed = len(tracker.completed_stages)
-    total = len(PIPELINE_STAGES)
-    pct = completed / total if total else 0
-    
-    # Base Styles
-    st.markdown(
-        f"""
-        <style>
-        .ta-progress-wrapper {{
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 24px;
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            margin: 1rem 0 2rem;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 32px rgba(0, 0, 0, 0.2);
-        }}
-        .ta-progress-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            font-size: 0.9rem;
-            color: #A7ADBA;
-            letter-spacing: 0.5px;
-        }}
-        .ta-progress-header strong {{
-            color: #fff;
-            font-weight: 600;
-        }}
-        .ta-progress-container {{
-            position: relative;
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            width: 100%;
-            padding-top: 10px;
-        }}
-        .ta-progress-track {{
-            position: absolute;
-            top: 21px; /* 10px padding + 12px half icon height */
-            left: 30px;
-            right: 30px;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 2px;
-            z-index: 0;
-        }}
-        .ta-progress-fill {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 100%;
-            background: linear-gradient(90deg, #33D69F, #37E8FF, #33D69F);
-            background-size: 200% 100%;
-            animation: flowLight 1.5s linear infinite;
-            border-radius: 2px;
-            box-shadow: 0 0 10px rgba(55, 232, 255, 0.5);
-            transition: width 0.5s ease-out;
-            z-index: 1;
-        }}
-        .ta-stage-item {{
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            width: 60px;
-            z-index: 2; /* Above the track */
-        }}
-        .ta-stage-item.pending {{ opacity: 0.4; transform: scale(0.95); }}
-        .ta-stage-item.active {{ opacity: 1; transform: scale(1.15) translateY(-4px); z-index: 10; }}
-        .ta-stage-item.done {{ opacity: 1; transform: scale(1); }}
-        
-        .ta-stage-icon {{
-            width: 24px; height: 24px;
-            border-radius: 50%;
-            position: relative;
-            background: rgba(255, 255, 255, 0.08);
-            border: 2px solid rgba(255, 255, 255, 0.15);
-            transition: all 0.3s ease;
-        }}
-        .ta-stage-icon.active {{
-            background: rgba(55, 232, 255, 1);
-            border: 2px solid rgba(55, 232, 255, 0.8);
-            box-shadow: 0 0 12px rgba(55, 232, 255, 0.6);
-            animation: pulseGlow 2s infinite ease-in-out;
-        }}
-        .ta-stage-icon.done {{
-            background: rgba(51, 214, 159, 1);
-            border: 2px solid rgba(51, 214, 159, 0.8);
-            box-shadow: 0 0 8px rgba(51, 214, 159, 0.4);
-        }}
-        @keyframes pulseGlow {{
-            0% {{ box-shadow: 0 0 8px rgba(55, 232, 255, 0.4); }}
-            50% {{ box-shadow: 0 0 16px rgba(55, 232, 255, 0.8); }}
-            100% {{ box-shadow: 0 0 8px rgba(55, 232, 255, 0.4); }}
-        }}
-        .ta-stage-label {{ font-size: 0.75rem; letter-spacing: 0.5px; white-space: nowrap; }}
-        .ta-stage-label.pending {{ color: #A7ADBA; }}
-        .ta-stage-label.active {{ color: #fff; font-weight: 700; text-shadow: 0 0 8px rgba(255,255,255,0.6); }}
-        .ta-stage-label.done {{ color: #33D69F; }}
-        
-        @keyframes flowLight {{
-            0% {{ background-position: 100% 0; }}
-            100% {{ background-position: -100% 0; }}
-        }}
-        
-        .ta-stats-container {{
-            display: flex; gap: 16px; margin: 2rem 0; width: 100%;
-        }}
-        .ta-stat-card {{
-            flex: 1;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
-            padding: 16px 20px;
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 24px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-            position: relative; overflow: hidden;
-        }}
-        .ta-stat-card:hover {{
-            transform: translateY(-3px);
-            background: rgba(255, 255, 255, 0.06);
-            border-color: rgba(255, 255, 255, 0.18);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 12px 32px rgba(0, 0, 0, 0.3);
-        }}
-        .ta-stat-card::before {{
-            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-            background: linear-gradient(90deg, var(--card-color), transparent); opacity: 0.7;
-        }}
-        .ta-stat-title {{ color: var(--card-color); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }}
-        .ta-stat-value {{ font-size: 2.2rem; font-weight: 700; color: var(--card-color); text-shadow: 0 2px 10px rgba(0,0,0,0.3); font-family: 'Inter', -apple-system, sans-serif; line-height: 1.1; }}
-        </style>
-        """, unsafe_allow_html=True
-    )
-    
-    # Remove st.progress completely to avoid default UI flashing
-    
-    # Generate HTML for stages
-    mins = int(tracker.elapsed // 60)
-    secs = int(tracker.elapsed % 60)
-    
-    # Calculate the fill percentage for the track
-    fill_pct = 0
-    if total > 1:
-        fill_pct = (completed / (total - 1)) * 100
-        
-    stages_html = ""
-    stages_html += '<div class="ta-progress-wrapper">\n'
-    stages_html += '  <div class="ta-progress-header">\n'
-    stages_html += f'    <div>分析进度：<strong>{completed}/{total}</strong> 阶段完成</div>\n'
-    stages_html += f'    <div>耗时：<strong>{mins}分{secs:02d}秒</strong></div>\n'
-    stages_html += '  </div>\n'
-    stages_html += '  <div class="ta-progress-container">\n'
-    stages_html += '    <div class="ta-progress-track">\n'
-    stages_html += f'      <div class="ta-progress-fill" style="width: {fill_pct}%;"></div>\n'
-    stages_html += '    </div>\n'
-    
-    for i, stage in enumerate(PIPELINE_STAGES):
-        status = tracker.stage_status(stage["id"])
-        
-        stages_html += f'    <div class="ta-stage-item {status}">\n'
-        stages_html += f'      <div class="ta-stage-icon {status}"></div>\n'
-        stages_html += f'      <div class="ta-stage-label {status}">{stage["name"]}</div>\n'
-        stages_html += '    </div>\n'
-        
-    stages_html += '  </div>\n'
-    stages_html += '</div>\n'
-    
-    st.markdown(stages_html, unsafe_allow_html=True)
 
     # Stats Cards
     metrics_html = f"""
@@ -479,16 +308,16 @@ def render_jocket_progress(tracker: ProgressTracker) -> None:
     </div>
     """
     st.markdown(metrics_html, unsafe_allow_html=True)
-
+ 
     if tracker.error:
         st.error(f"错误: {tracker.error}")
-
+ 
     completed_reports = [
         (stage["name"], stage["icon"], tracker.stage_reports[stage["id"]])
         for stage in PIPELINE_STAGES
         if stage["id"] in tracker.stage_reports
     ]
-
+ 
     if completed_reports:
         for name, icon, report in reversed(completed_reports):
             is_latest = (name == completed_reports[-1][0])
@@ -502,14 +331,14 @@ def render_tradingagents_dashboard() -> None:
         confirm_delete_dialog(target)
 
     # 1. Command Bar
-    with st.container(border=True):
-        st.markdown('<div class="command-bar-title">参数与操作</div>', unsafe_allow_html=True)
-        command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
+    with st.container(border=False):
+        st.markdown('<div class="jocket-bottom-dock style-bottom" data-jocket-dock-style="style bottom"></div>', unsafe_allow_html=True)
+        command_cols = st.columns([0.76, 0.24], vertical_alignment="center")
         
         with command_cols[0]:
             inner_cols = st.columns(2)
             with inner_cols[0]:
-                st.markdown('<div class="command-field-label">股票代码 / 名称</div>', unsafe_allow_html=True)
+                st.markdown('<div class="command-field-label">股票名称/代码</div>', unsafe_allow_html=True)
                 ticker = st.text_input(
                     "ticker",
                     placeholder="例如: 300750",
@@ -520,18 +349,20 @@ def render_tradingagents_dashboard() -> None:
                 from src.stock_lookup import resolve_stock_query, build_stock_directory
                 resolved_code = ticker.strip()
                 resolved_name = ticker.strip()
+                matched_msg = ""
+                unmatched_msg = ""
                 if resolved_code:
                     matches = resolve_stock_query(resolved_code, build_stock_directory())
                     if matches:
                         selected = matches[0]
                         resolved_code = str(selected.get("code") or "")
                         resolved_name = str(selected.get("name") or "")
-                        st.caption(f"已匹配：{resolved_name}（{resolved_code}）")
+                        matched_msg = f"已匹配：{resolved_name}（{resolved_code}）"
                     else:
-                        st.warning("没有匹配到股票。可以尝试输入代码或更短的名称关键词。")
+                        unmatched_msg = "没有匹配到股票。可以尝试输入代码或更短的名称关键词。"
             
             with inner_cols[1]:
-                st.markdown('<div class="command-field-label">分析日期</div>', unsafe_allow_html=True)
+                st.markdown('<div class="command-field-label">选择日期</div>', unsafe_allow_html=True)
                 trade_date = st.date_input(
                     "date",
                     value=date.today(),
@@ -558,126 +389,15 @@ def render_tradingagents_dashboard() -> None:
                     }
                     st.session_state["ta_viewing_history"] = None
 
-        # History Selection Area inside the container
-        history = get_history()
-        if history:
-            with st.expander("历史投研报告", expanded=False):
-                # Use inline script via st.markdown to force-style the history buttons and layout.
-                # Using st.markdown instead of components.html() avoids creating an iframe
-                # that takes space in the flex layout and causes a visible gap.
-                st.markdown(
-                    """
-                    <script>
-                    (() => {
-                      const doc = document;
-                      const fixHistoryLayout = () => {
-                        // 1. Force expander content to horizontal flex row
-                        const expanderDetails = doc.querySelectorAll('[data-testid="stExpanderDetails"]');
-                        expanderDetails.forEach(detail => {
-                          const hasHistBtn = detail.querySelector('[class*="st-key-ta_hist_"]');
-                          if (!hasHistBtn) return;
-                          const vBlock = detail.querySelector('[data-testid="stVerticalBlock"]');
-                          if (vBlock) {
-                            vBlock.style.setProperty('display', 'flex', 'important');
-                            vBlock.style.setProperty('flex-direction', 'row', 'important');
-                            vBlock.style.setProperty('flex-wrap', 'wrap', 'important');
-                            vBlock.style.setProperty('align-items', 'center', 'important');
-                            vBlock.style.setProperty('justify-content', 'flex-start', 'important');
-                            vBlock.style.setProperty('gap', '6px 8px', 'important');
-                            // Make each element-container auto width, hide empty ones
-                            vBlock.querySelectorAll('[data-testid="element-container"]').forEach(el => {
-                              el.style.setProperty('width', 'auto', 'important');
-                              el.style.setProperty('flex', '0 0 auto', 'important');
-                              el.style.setProperty('margin', '0', 'important');
-                              el.style.setProperty('padding', '0', 'important');
-                              // Hide containers that only have a script/style or iframe (the JS injection container)
-                              if (!el.querySelector('[class*="st-key-ta_hist_"], [class*="st-key-ta_del_"]')) {
-                                el.style.setProperty('display', 'none', 'important');
-                              }
-                            });
-                          }
-                        });
-
-                        // 2. Force delete buttons to be tiny 20px solid pink circles
-                        doc.querySelectorAll('[class*="st-key-ta_del_"] button').forEach(btn => {
-                          btn.style.setProperty('width', '20px', 'important');
-                          btn.style.setProperty('min-width', '20px', 'important');
-                          btn.style.setProperty('max-width', '20px', 'important');
-                          btn.style.setProperty('height', '20px', 'important');
-                          btn.style.setProperty('min-height', '20px', 'important');
-                          btn.style.setProperty('max-height', '20px', 'important');
-                          btn.style.setProperty('padding', '0', 'important');
-                          btn.style.setProperty('margin', '0', 'important');
-                          btn.style.setProperty('border-radius', '50%', 'important');
-                          btn.style.setProperty('border', 'none', 'important');
-                          btn.style.setProperty('background', 'rgba(255, 92, 122, 0.8)', 'important');
-                          btn.style.setProperty('color', '#fff', 'important');
-                          btn.style.setProperty('display', 'inline-flex', 'important');
-                          btn.style.setProperty('align-items', 'center', 'important');
-                          btn.style.setProperty('justify-content', 'center', 'important');
-                          btn.style.setProperty('overflow', 'hidden', 'important');
-                          btn.style.setProperty('flex-shrink', '0', 'important');
-                          btn.style.setProperty('box-shadow', '0 4px 10px rgba(255, 92, 122, 0.3)', 'important');
-                        });
-
-                        // 3. Force history pill button containers to tight margin
-                        doc.querySelectorAll('[data-testid="element-container"]').forEach(el => {
-                          const histChild = el.querySelector(':scope > [class*="st-key-ta_hist_"]');
-                          const delChild = el.querySelector(':scope > [class*="st-key-ta_del_"]');
-                          if (histChild) {
-                            el.style.setProperty('margin-right', '-4px', 'important');
-                            el.style.setProperty('z-index', '2', 'important');
-                          }
-                          if (delChild) {
-                            el.style.setProperty('z-index', '1', 'important');
-                            el.style.setProperty('display', 'flex', 'important');
-                            el.style.setProperty('align-items', 'center', 'important');
-                            el.style.setProperty('justify-content', 'center', 'important');
-                          }
-                        });
-                      };
-
-                       // Run immediately, then watch for DOM changes
-                      fixHistoryLayout();
-                      setTimeout(fixHistoryLayout, 100);
-                      setTimeout(fixHistoryLayout, 500);
-                      new MutationObserver(fixHistoryLayout).observe(doc.body, { childList: true, subtree: true });
-
-                      doc.addEventListener("click", (event) => {
-                        const cancelBtn = event.target.closest('[class*="st-key-cancel_del_btn"] button');
-                        if (cancelBtn) {
-                          const dialog = doc.querySelector('div[role="dialog"]');
-                          const backdrop = doc.querySelector('[data-testid="stDialog"], [data-testid="stModal"]');
-                          if (dialog) dialog.style.setProperty('display', 'none', 'important');
-                          if (backdrop) backdrop.style.setProperty('display', 'none', 'important');
-                          
-                          const closeBtn = doc.querySelector('button[aria-label="Close"], [class*="stDialogHeader"] button, [data-testid="stDialog"] button');
-                          if (closeBtn) closeBtn.click();
-                        }
-                      }, { passive: true });
-                    })();
-                    </script>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                
-                active_path = st.session_state.get("ta_viewing_history")
-                for idx, entry in enumerate(history[:12]): # Show recent 12
-                    t, d = entry["ticker"], entry["date"]
-                    name = entry.get("company_name") or _resolve_stock_name(t)
-                    label = f"{name} {t}\n{d}" if name else f"{t}\n{d}"
-                    is_active = active_path == entry["path"]
-                    
-                    if st.button(label, key=f"ta_hist_{t}_{d}_{idx}", use_container_width=False, type="primary" if is_active else "secondary"):
-                        st.session_state["ta_viewing_history"] = entry["path"]
-                        st.session_state["ta_start_analysis"] = None
-                        st.rerun()
-                        
-                    if st.button("✕", key=f"ta_del_{t}_{d}_{idx}", use_container_width=False):
-                        st.session_state["ta_delete_target"] = entry
-                        st.rerun()
 
 
+    # Render matching messages outside the floating dock
+    from html import escape
+    if ticker.strip():
+        if matched_msg:
+            st.markdown(f'<div class="dock-matching-msg matched">{escape(matched_msg)}</div>', unsafe_allow_html=True)
+        elif unmatched_msg:
+            st.markdown(f'<div class="dock-matching-msg unmatched">{escape(unmatched_msg)}</div>', unsafe_allow_html=True)
 
     # State Machine Logic
     start_req = st.session_state.pop("ta_start_analysis", None)
@@ -715,7 +435,14 @@ def render_tradingagents_dashboard() -> None:
             st.error(f"加载失败: {exc}")
 
     elif tracker and tracker.is_running:
-        render_jocket_progress(tracker)
+        from src.ui_components import render_jocket_unified_empty_state
+        with st.container(key="jocket_page_g_landing"):
+            render_jocket_unified_empty_state(
+                "投研分析",
+                "",
+                [],
+                show_progress_key="ta_tracker"
+            )
         time.sleep(2)
         st.rerun()
 
@@ -739,13 +466,43 @@ def render_tradingagents_dashboard() -> None:
             st.rerun()
 
     else:
-        # Empty state prompt using hero dashboard
-        render_hero(
-            code="未选择个股",
-            data_source="自动更新",
-            latest_date="-",
-            updated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            title="7 位 AI 分析师就绪",
-            subtitle="在上方输入股票代码，启动多 Agent 深度投研系统。将依次执行：质量门控 → 独立投研 → 多空辩论 → 交易决策 → 风控评估。",
-            ai_summary=None
-        )
+        from src.ui_components import render_jocket_unified_empty_state
+        with st.container(key="jocket_page_g_landing"):
+            render_jocket_unified_empty_state(
+                "投研分析",
+                "多智能体群组分析及生成高质量投研报告，点击按钮或输入后运行",
+                []
+            )
+            
+            # Center history selector dropdown (replacing the previous 4 button position)
+            history = get_history()
+            if history:
+                with st.container(key="ta_history_style_expander"):
+                    with st.popover("历史报告", use_container_width=True):
+                        st.markdown(
+                            """
+                            <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1" rel="stylesheet" />
+                            <div class="flex items-center justify-between" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                <h2 style="font-size: 14px; font-weight: 600; color: #e1e2eb; margin: 0;">选择历史报告</h2>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        
+                        for idx, entry in enumerate(history[:12]):
+                            t, d = entry["ticker"], entry["date"]
+                            name = entry.get("company_name") or _resolve_stock_name(t)
+                            
+                            # Premium markdown label format for Streamlit 1.45.1 button
+                            markdown_label = f"**{name}**\n\n`{t}`   {d}" if name else f"**{t}**\n\n`{t}`   {d}"
+                            
+                            col_btn, col_del = st.columns([0.85, 0.15], vertical_alignment="center", gap="small")
+                            with col_btn:
+                                if st.button(markdown_label, key=f"ta_hist_select_{idx}", use_container_width=True):
+                                    st.session_state["ta_viewing_history"] = entry["path"]
+                                    st.session_state["ta_start_analysis"] = None
+                                    st.rerun()
+                            with col_del:
+                                if st.button("✕", key=f"ta_del_select_{idx}", use_container_width=True):
+                                    st.session_state["ta_delete_target"] = entry
+                                    st.rerun()

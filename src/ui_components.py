@@ -66,54 +66,1762 @@ def _add_glow_line(fig: go.Figure, *, x, y, name: str, color: str, width: float 
     )
 
 
-def load_css(path: str = "assets/styles.css") -> None:
+def load_css(path: str = "assets/jocket_final.css") -> None:
     css_path = Path(path)
     if css_path.exists():
         st.markdown(f"<style>{css_path.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+        if path != "assets/jocket_final.css":
+            return
         components.html(
             """
             <script>
             (() => {
               const doc = window.parent.document;
-              let orb = doc.getElementById("global-cursor-orb");
-              if (!orb) {
-                orb = doc.createElement("div");
-                orb.id = "global-cursor-orb";
-                doc.body.appendChild(orb);
+
+              // Dynamically inject Inter variable font if not present
+              if (!doc.querySelector('link[href*="fonts.googleapis.com/css2?family=Inter"]')) {
+                const link = doc.createElement("link");
+                link.rel = "stylesheet";
+                link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap";
+                doc.head.appendChild(link);
               }
-              const selector = [
-                ".hero-meta-item",
-                ".metric-card",
-                ".insight-card",
-                ".rank-card",
-                ".chart-card",
-                ".section-card",
-                ".profile-card",
-                ".sentiment-metric-card",
-                ".sentiment-plan-grid > div",
-                ".sentiment-time-row",
-                ".sentiment-index-card",
-                ".sentiment-board-card",
-                ".sentiment-method-card",
-                ".sentiment-alert",
-                ".profile-kv",
-                ".rating-row",
-                ".rating-overall",
-                ".mini-metric",
-                ".ai-message-bubble"
-              ].join(",");
-              let active = null;
+
+              // Clean up and remove global dot field and orbs to disable dot field effect
+              doc.getElementById("jocket-dot-field")?.remove();
+              doc.getElementById("global-cursor-orb")?.remove();
+              doc.querySelectorAll(".ai-orb-stage, .ai-breathing-orb").forEach((node) => node.remove());
+
+              // Plain-WebGL port of React Bits Aurora, using Streamlit's shared
+              // background canvas host.
+              const vertexShaderAurora = `#version 300 es
+                in vec2 position;
+                void main() {
+                  gl_Position = vec4(position, 0.0, 1.0);
+                }
+              `;
+
+              const fragmentShaderAurora = `#version 300 es
+                precision highp float;
+
+                uniform float uTime;
+                uniform float uAmplitude;
+                uniform vec3 uColorStops[3];
+                uniform vec2 uResolution;
+                uniform float uBlend;
+
+                out vec4 fragColor;
+
+                vec3 permute(vec3 x) {
+                  return mod(((x * 34.0) + 1.0) * x, 289.0);
+                }
+
+                float snoise(vec2 v) {
+                  const vec4 C = vec4(
+                    0.211324865405187, 0.366025403784439,
+                    -0.577350269189626, 0.024390243902439
+                  );
+                  vec2 i = floor(v + dot(v, C.yy));
+                  vec2 x0 = v - i + dot(i, C.xx);
+                  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                  vec4 x12 = x0.xyxy + C.xxzz;
+                  x12.xy -= i1;
+                  i = mod(i, 289.0);
+
+                  vec3 p = permute(
+                    permute(i.y + vec3(0.0, i1.y, 1.0))
+                    + i.x + vec3(0.0, i1.x, 1.0)
+                  );
+                  vec3 m = max(
+                    0.5 - vec3(
+                      dot(x0, x0),
+                      dot(x12.xy, x12.xy),
+                      dot(x12.zw, x12.zw)
+                    ),
+                    0.0
+                  );
+                  m = m * m;
+                  m = m * m;
+
+                  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                  vec3 h = abs(x) - 0.5;
+                  vec3 ox = floor(x + 0.5);
+                  vec3 a0 = x - ox;
+                  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+
+                  vec3 g;
+                  g.x = a0.x * x0.x + h.x * x0.y;
+                  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                  return 130.0 * dot(m, g);
+                }
+
+                struct ColorStop {
+                  vec3 color;
+                  float position;
+                };
+
+                #define COLOR_RAMP(colors, factor, finalColor) { \
+                  int index = 0; \
+                  for (int i = 0; i < 2; i++) { \
+                    ColorStop currentColor = colors[i]; \
+                    bool isInBetween = currentColor.position <= factor; \
+                    index = int(mix(float(index), float(i), float(isInBetween))); \
+                  } \
+                  ColorStop currentColor = colors[index]; \
+                  ColorStop nextColor = colors[index + 1]; \
+                  float range = nextColor.position - currentColor.position; \
+                  float lerpFactor = (factor - currentColor.position) / range; \
+                  finalColor = mix(currentColor.color, nextColor.color, lerpFactor); \
+                }
+
+                void main() {
+                  vec2 uv = gl_FragCoord.xy / uResolution;
+
+                  ColorStop colors[3];
+                  colors[0] = ColorStop(uColorStops[0], 0.0);
+                  colors[1] = ColorStop(uColorStops[1], 0.5);
+                  colors[2] = ColorStop(uColorStops[2], 1.0);
+
+                  vec3 rampColor;
+                  COLOR_RAMP(colors, uv.x, rampColor);
+
+                  float height = snoise(vec2(uv.x * 2.0 + uTime * 0.1, uTime * 0.25)) * 0.5 * uAmplitude;
+                  height = exp(height);
+                  height = uv.y * 2.0 - height + 0.2;
+                  float intensity = 0.6 * height;
+
+                  float midPoint = 0.20;
+                  float auroraAlpha = smoothstep(midPoint - uBlend * 0.5, midPoint + uBlend * 0.5, intensity);
+                  vec3 auroraColor = intensity * rampColor;
+                  fragColor = vec4(auroraColor * auroraAlpha, auroraAlpha);
+                }
+              `;
+
+              const initAurora = (doc, win, canvas) => {
+                const gl = canvas.getContext("webgl2", {
+                  alpha: true,
+                  premultipliedAlpha: true,
+                  antialias: true
+                });
+                if (!gl) return null;
+
+                gl.clearColor(0, 0, 0, 0);
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+                const vs = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vs, vertexShaderAurora);
+                gl.compileShader(vs);
+                if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+                  console.error("Aurora VS compile error:", gl.getShaderInfoLog(vs));
+                  return null;
+                }
+
+                const fs = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fs, fragmentShaderAurora);
+                gl.compileShader(fs);
+                if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+                  console.error("Aurora FS compile error:", gl.getShaderInfoLog(fs));
+                  return null;
+                }
+
+                const program = gl.createProgram();
+                gl.attachShader(program, vs);
+                gl.attachShader(program, fs);
+                gl.linkProgram(program);
+
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                  console.error("Aurora program link error:", gl.getProgramInfoLog(program));
+                  return null;
+                }
+
+                const positionLoc = gl.getAttribLocation(program, "position");
+                const uTimeLoc = gl.getUniformLocation(program, "uTime");
+                const uResolutionLoc = gl.getUniformLocation(program, "uResolution");
+                const uAmplitudeLoc = gl.getUniformLocation(program, "uAmplitude");
+                const uColorStopsLoc = gl.getUniformLocation(program, "uColorStops[0]");
+                const uBlendLoc = gl.getUniformLocation(program, "uBlend");
+
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                  -1, -1,
+                   3, -1,
+                  -1,  3
+                ]), gl.STATIC_DRAW);
+
+                let active = true;
+                let animFrameId = null;
+                const hexToVec3 = (hex) => {
+                  const h = hex.replace("#", "");
+                  return [
+                    parseInt(h.slice(0, 2), 16) / 255,
+                    parseInt(h.slice(2, 4), 16) / 255,
+                    parseInt(h.slice(4, 6), 16) / 255
+                  ];
+                };
+
+                const baseSpeed = 1.0;
+                const loadingSpeed = 1.35;
+                const getSpeed = () => {
+                  const marker = doc.querySelector('[data-jocket-loading-active]');
+                  return marker ? loadingSpeed : baseSpeed;
+                };
+                const amplitude = 1.0;
+                const blend = 0.5;
+                const colorStops = ["#5227FF", "#7CFF67", "#5227FF"]
+                  .flatMap(hexToVec3);
+
+                function renderFrame(time) {
+                  if (!active) return;
+                  animFrameId = win.requestAnimationFrame(renderFrame);
+
+                  const width = canvas.clientWidth || win.innerWidth || 1024;
+                  const height = canvas.clientHeight || win.innerHeight || 768;
+                  if (canvas.width !== width || canvas.height !== height) {
+                    canvas.width = width;
+                    canvas.height = height;
+                    gl.viewport(0, 0, width, height);
+                  }
+
+                  gl.clear(gl.COLOR_BUFFER_BIT);
+                  gl.useProgram(program);
+
+                  gl.uniform1f(uTimeLoc, time * 0.001 * getSpeed());
+                  gl.uniform2f(uResolutionLoc, canvas.width, canvas.height);
+                  gl.uniform1f(uAmplitudeLoc, amplitude);
+                  gl.uniform3fv(uColorStopsLoc, colorStops);
+                  gl.uniform1f(uBlendLoc, blend);
+
+                  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                  gl.enableVertexAttribArray(positionLoc);
+                  gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+                  gl.drawArrays(gl.TRIANGLES, 0, 3);
+                }
+
+                animFrameId = win.requestAnimationFrame(renderFrame);
+
+                setTimeout(() => {
+                  canvas.classList.add("active");
+                }, 50);
+
+                return {
+                  destroy() {
+                    active = false;
+                    if (animFrameId) {
+                      win.cancelAnimationFrame(animFrameId);
+                    }
+                    gl.getExtension('WEBGL_lose_context')?.loseContext();
+                  }
+                };
+              };
+
+              const initSplashCursor = (doc, win) => {
+                // Reuse existing container to avoid flash on Streamlit reruns
+                let container = doc.getElementById("jocket-splash-cursor-container");
+                let canvas = container && container.querySelector("#jocket-fluid-canvas");
+                let auroraCanvas = container && container.querySelector("#jocket-aurora-canvas");
+                let reuseAurora = !!(container && auroraCanvas);
+
+                if (!container) {
+                  container = doc.createElement("div");
+                  container.id = "jocket-splash-cursor-container";
+                  canvas = doc.createElement("canvas");
+                  canvas.id = "jocket-fluid-canvas";
+                  auroraCanvas = doc.createElement("canvas");
+                  auroraCanvas.id = "jocket-aurora-canvas";
+                  container.appendChild(auroraCanvas);
+                  container.appendChild(canvas);
+                  doc.body.prepend(container);
+                }
+
+                // Only init a new aurora if we created fresh canvas; reuse keeps opacity
+                const auroraInstance = reuseAurora ? null : initAurora(doc, win, auroraCanvas);
+
+                let isActive = true;
+                let animationFrameId = null;
+
+                function pointerPrototype() {
+                  this.id = -1;
+                  this.texcoordX = 0;
+                  this.texcoordY = 0;
+                  this.prevTexcoordX = 0;
+                  this.prevTexcoordY = 0;
+                  this.deltaX = 0;
+                  this.deltaY = 0;
+                  this.down = false;
+                  this.moved = false;
+                  this.color = [0, 0, 0];
+                }
+
+                let config = {
+                  SIM_RESOLUTION: 128,
+                  DYE_RESOLUTION: 1440,
+                  CAPTURE_RESOLUTION: 512,
+                  DENSITY_DISSIPATION: 3.5,
+                  VELOCITY_DISSIPATION: 2,
+                  PRESSURE: 0.2,
+                  PRESSURE_ITERATIONS: 20,
+                  CURL: 5,
+                  SPLAT_RADIUS: 0.15,
+                  SPLAT_FORCE: 5500,
+                  SHADING: true,
+                  COLOR_UPDATE_SPEED: 8,
+                  PAUSED: false,
+                  BACK_COLOR: { r: 0.5, g: 0, b: 0 },
+                  TRANSPARENT: true,
+                  RAINBOW_MODE: true,
+                  COLOR: '#ff0000'
+                };
+
+                let pointers = [new pointerPrototype()];
+
+                function getWebGLContext(canvas) {
+                  const params = {
+                    alpha: true,
+                    depth: false,
+                    stencil: false,
+                    antialias: false,
+                    preserveDrawingBuffer: false
+                  };
+                  let gl = canvas.getContext('webgl2', params);
+                  const isWebGL2 = !!gl;
+                  if (!isWebGL2) gl = canvas.getContext('webgl', params) || canvas.getContext('experimental-webgl', params);
+
+                  let halfFloat;
+                  let supportLinearFiltering;
+                  if (isWebGL2) {
+                    gl.getExtension('EXT_color_buffer_float');
+                    supportLinearFiltering = gl.getExtension('OES_texture_float_linear');
+                  } else {
+                    halfFloat = gl.getExtension('OES_texture_half_float');
+                    supportLinearFiltering = gl.getExtension('OES_texture_half_float_linear');
+                  }
+                  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+                  const halfFloatTexType = isWebGL2 ? gl.HALF_FLOAT : halfFloat && halfFloat.HALF_FLOAT_OES;
+                  let formatRGBA;
+                  let formatRG;
+                  let formatR;
+
+                  if (isWebGL2) {
+                    formatRGBA = getSupportedFormat(gl, gl.RGBA16F, gl.RGBA, halfFloatTexType, supportLinearFiltering);
+                    formatRG = getSupportedFormat(gl, gl.RG16F, gl.RG, halfFloatTexType, supportLinearFiltering);
+                    formatR = getSupportedFormat(gl, gl.R16F, gl.RED, halfFloatTexType, supportLinearFiltering);
+                  } else {
+                    formatRGBA = getSupportedFormat(gl, gl.RGBA, gl.RGBA, halfFloatTexType, supportLinearFiltering);
+                    formatRG = getSupportedFormat(gl, gl.RGBA, gl.RGBA, halfFloatTexType, supportLinearFiltering);
+                    formatR = getSupportedFormat(gl, gl.RGBA, gl.RGBA, halfFloatTexType, supportLinearFiltering);
+                  }
+
+                  return {
+                    gl,
+                    ext: {
+                      formatRGBA,
+                      formatRG,
+                      formatR,
+                      halfFloatTexType,
+                      supportLinearFiltering
+                    }
+                  };
+                }
+
+                function getSupportedFormat(gl, internalFormat, format, type, supportLinearFiltering) {
+                  if (!supportRenderTextureFormat(gl, internalFormat, format, type)) {
+                    switch (internalFormat) {
+                      case gl.R16F:
+                        return getSupportedFormat(gl, gl.RG16F, gl.RG, type, supportLinearFiltering);
+                      case gl.RG16F:
+                        return getSupportedFormat(gl, gl.RGBA16F, gl.RGBA, type, supportLinearFiltering);
+                      default:
+                        return null;
+                    }
+                  }
+                  return { internalFormat, format };
+                }
+
+                function supportRenderTextureFormat(gl, internalFormat, format, type) {
+                  const texture = gl.createTexture();
+                  gl.bindTexture(gl.TEXTURE_2D, texture);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, 4, 4, 0, format, type, null);
+                  const fbo = gl.createFramebuffer();
+                  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+                  return status === gl.FRAMEBUFFER_COMPLETE;
+                }
+
+                const { gl, ext } = getWebGLContext(canvas);
+                if (!ext.supportLinearFiltering) {
+                  config.DYE_RESOLUTION = 256;
+                  config.SHADING = false;
+                }
+
+                class Material {
+                  constructor(vertexShader, fragmentShaderSource) {
+                    this.vertexShader = vertexShader;
+                    this.fragmentShaderSource = fragmentShaderSource;
+                    this.programs = [];
+                    this.activeProgram = null;
+                    this.uniforms = [];
+                  }
+                  setKeywords(keywords) {
+                    let hash = 0;
+                    for (let i = 0; i < keywords.length; i++) hash += hashCode(keywords[i]);
+                    let program = this.programs[hash];
+                    if (program == null) {
+                      let fragmentShader = compileShader(gl.FRAGMENT_SHADER, this.fragmentShaderSource, keywords);
+                      program = createProgram(this.vertexShader, fragmentShader);
+                      this.programs[hash] = program;
+                    }
+                    if (program === this.activeProgram) return;
+                    this.uniforms = getUniforms(program);
+                    this.activeProgram = program;
+                  }
+                  bind() {
+                    gl.useProgram(this.activeProgram);
+                  }
+                }
+
+                class Program {
+                  constructor(vertexShader, fragmentShader) {
+                    this.uniforms = {};
+                    this.program = createProgram(vertexShader, fragmentShader);
+                    this.uniforms = getUniforms(this.program);
+                  }
+                  bind() {
+                    gl.useProgram(this.program);
+                  }
+                }
+
+                function createProgram(vertexShader, fragmentShader) {
+                  let program = gl.createProgram();
+                  gl.attachShader(program, vertexShader);
+                  gl.attachShader(program, fragmentShader);
+                  gl.bindAttribLocation(program, 0, "aPosition");
+                  gl.linkProgram(program);
+                  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) console.trace(gl.getProgramInfoLog(program));
+                  return program;
+                }
+
+                function getUniforms(program) {
+                  let uniforms = [];
+                  let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+                  for (let i = 0; i < uniformCount; i++) {
+                    let uniformName = gl.getActiveUniform(program, i).name;
+                    uniforms[uniformName] = gl.getUniformLocation(program, uniformName);
+                  }
+                  return uniforms;
+                }
+
+                function compileShader(type, source, keywords) {
+                  source = addKeywords(source, keywords);
+                  const shader = gl.createShader(type);
+                  gl.shaderSource(shader, source);
+                  gl.compileShader(shader);
+                  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) console.trace(gl.getShaderInfoLog(shader));
+                  return shader;
+                }
+
+                function addKeywords(source, keywords) {
+                  if (!keywords) return source;
+                  let keywordsString = '';
+                  keywords.forEach(keyword => {
+                    keywordsString += '#define ' + keyword + '\\n';
+                  });
+                  return keywordsString + source;
+                }
+
+                const baseVertexShader = compileShader(
+                  gl.VERTEX_SHADER,
+                  `
+                    precision highp float;
+                    attribute vec2 aPosition;
+                    varying vec2 vUv;
+                    varying vec2 vL;
+                    varying vec2 vR;
+                    varying vec2 vT;
+                    varying vec2 vB;
+                    uniform vec2 texelSize;
+
+                    void main () {
+                        vUv = aPosition * 0.5 + 0.5;
+                        vL = vUv - vec2(texelSize.x, 0.0);
+                        vR = vUv + vec2(texelSize.x, 0.0);
+                        vT = vUv + vec2(0.0, texelSize.y);
+                        vB = vUv - vec2(0.0, texelSize.y);
+                        gl_Position = vec4(aPosition, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const copyShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    uniform sampler2D uTexture;
+
+                    void main () {
+                        gl_FragColor = texture2D(uTexture, vUv);
+                    }
+                  `
+                );
+
+                const clearShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    uniform sampler2D uTexture;
+                    uniform float value;
+
+                    void main () {
+                        gl_FragColor = value * texture2D(uTexture, vUv);
+                    }
+                  `
+                );
+
+                const displayShaderSource = `
+                  precision highp float;
+                  precision highp sampler2D;
+                  varying vec2 vUv;
+                  varying vec2 vL;
+                  varying vec2 vR;
+                  varying vec2 vT;
+                  varying vec2 vB;
+                  uniform sampler2D uTexture;
+                  uniform sampler2D uDithering;
+                  uniform vec2 ditherScale;
+                  uniform vec2 texelSize;
+
+                  vec3 linearToGamma (vec3 color) {
+                      color = max(color, vec3(0));
+                      return max(1.055 * pow(color, vec3(0.416666667)) - 0.055, vec3(0));
+                  }
+
+                  void main () {
+                      vec3 c = texture2D(uTexture, vUv).rgb;
+                      #ifdef SHADING
+                          vec3 lc = texture2D(uTexture, vL).rgb;
+                          vec3 rc = texture2D(uTexture, vR).rgb;
+                          vec3 tc = texture2D(uTexture, vT).rgb;
+                          vec3 bc = texture2D(uTexture, vB).rgb;
+
+                          float dx = length(rc) - length(lc);
+                          float dy = length(tc) - length(bc);
+
+                          vec3 n = normalize(vec3(dx, dy, length(texelSize)));
+                          vec3 l = vec3(0.0, 0.0, 1.0);
+
+                          float diffuse = clamp(dot(n, l) + 0.7, 0.7, 1.0);
+                          c *= diffuse;
+                      #endif
+
+                      float a = max(c.r, max(c.g, c.b));
+                      gl_FragColor = vec4(c, a);
+                  }
+                `;
+
+                const splatShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision highp float;
+                    precision highp sampler2D;
+                    varying vec2 vUv;
+                    uniform sampler2D uTarget;
+                    uniform float aspectRatio;
+                    uniform vec3 color;
+                    uniform vec2 point;
+                    uniform float radius;
+
+                    void main () {
+                        vec2 p = vUv - point.xy;
+                        p.x *= aspectRatio;
+                        vec3 splat = exp(-dot(p, p) / radius) * color;
+                        vec3 base = texture2D(uTarget, vUv).xyz;
+                        gl_FragColor = vec4(base + splat, 1.0);
+                    }
+                  `
+                );
+
+                const advectionShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision highp float;
+                    precision highp sampler2D;
+                    varying vec2 vUv;
+                    uniform sampler2D uVelocity;
+                    uniform sampler2D uSource;
+                    uniform vec2 texelSize;
+                    uniform vec2 dyeTexelSize;
+                    uniform float dt;
+                    uniform float dissipation;
+
+                    vec4 bilerp (sampler2D sam, vec2 uv, vec2 tsize) {
+                        vec2 st = uv / tsize - 0.5;
+                        vec2 iuv = floor(st);
+                        vec2 fuv = fract(st);
+
+                        vec4 a = texture2D(sam, (iuv + vec2(0.5, 0.5)) * tsize);
+                        vec4 b = texture2D(sam, (iuv + vec2(1.5, 0.5)) * tsize);
+                        vec4 c = texture2D(sam, (iuv + vec2(0.5, 1.5)) * tsize);
+                        vec4 d = texture2D(sam, (iuv + vec2(1.5, 1.5)) * tsize);
+
+                        return mix(mix(a, b, fuv.x), mix(c, d, fuv.x), fuv.y);
+                    }
+
+                    void main () {
+                        #ifdef MANUAL_FILTERING
+                            vec2 coord = vUv - dt * bilerp(uVelocity, vUv, texelSize).xy * texelSize;
+                            vec4 result = bilerp(uSource, coord, dyeTexelSize);
+                        #else
+                            vec2 coord = vUv - dt * texture2D(uVelocity, vUv).xy * texelSize;
+                            vec4 result = texture2D(uSource, coord);
+                        #endif
+                        float decay = 1.0 + dissipation * dt;
+                        gl_FragColor = result / decay;
+                    }
+                  `,
+                  ext.supportLinearFiltering ? null : ['MANUAL_FILTERING']
+                );
+
+                const divergenceShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    varying highp vec2 vL;
+                    varying highp vec2 vR;
+                    varying highp vec2 vT;
+                    varying highp vec2 vB;
+                    uniform sampler2D uVelocity;
+
+                    void main () {
+                        float L = texture2D(uVelocity, vL).x;
+                        float R = texture2D(uVelocity, vR).x;
+                        float T = texture2D(uVelocity, vT).y;
+                        float B = texture2D(uVelocity, vB).y;
+
+                        vec2 C = texture2D(uVelocity, vUv).xy;
+                        if (vL.x < 0.0) { L = -C.x; }
+                        if (vR.x > 1.0) { R = -C.x; }
+                        if (vT.y > 1.0) { T = -C.y; }
+                        if (vB.y < 0.0) { B = -C.y; }
+
+                        float div = 0.5 * (R - L + T - B);
+                        gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const curlShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    varying highp vec2 vL;
+                    varying highp vec2 vR;
+                    varying highp vec2 vT;
+                    varying highp vec2 vB;
+                    uniform sampler2D uVelocity;
+
+                    void main () {
+                        float L = texture2D(uVelocity, vL).y;
+                        float R = texture2D(uVelocity, vR).y;
+                        float T = texture2D(uVelocity, vT).x;
+                        float B = texture2D(uVelocity, vB).x;
+                        float vorticity = R - L - T + B;
+                        gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const vorticityShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision highp float;
+                    precision highp sampler2D;
+                    varying vec2 vUv;
+                    varying vec2 vL;
+                    varying vec2 vR;
+                    varying vec2 vT;
+                    varying vec2 vB;
+                    uniform sampler2D uVelocity;
+                    uniform sampler2D uCurl;
+                    uniform float curl;
+                    uniform float dt;
+
+                    void main () {
+                        float L = texture2D(uCurl, vL).x;
+                        float R = texture2D(uCurl, vR).x;
+                        float T = texture2D(uCurl, vT).x;
+                        float B = texture2D(uCurl, vB).x;
+                        float C = texture2D(uCurl, vUv).x;
+
+                        vec2 force = 0.5 * vec2(abs(T) - abs(B), abs(R) - abs(L));
+                        force /= length(force) + 0.0001;
+                        force *= curl * C;
+                        force.y *= -1.0;
+
+                        vec2 velocity = texture2D(uVelocity, vUv).xy;
+                        velocity += force * dt;
+                        velocity = min(max(velocity, -1000.0), 1000.0);
+                        gl_FragColor = vec4(velocity, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const pressureShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    varying highp vec2 vL;
+                    varying highp vec2 vR;
+                    varying highp vec2 vT;
+                    varying highp vec2 vB;
+                    uniform sampler2D uPressure;
+                    uniform sampler2D uDivergence;
+
+                    void main () {
+                        float L = texture2D(uPressure, vL).x;
+                        float R = texture2D(uPressure, vR).x;
+                        float T = texture2D(uPressure, vT).x;
+                        float B = texture2D(uPressure, vB).x;
+                        float C = texture2D(uPressure, vUv).x;
+                        float divergence = texture2D(uDivergence, vUv).x;
+                        float pressure = (L + R + B + T - divergence) * 0.25;
+                        gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const gradientSubtractShader = compileShader(
+                  gl.FRAGMENT_SHADER,
+                  `
+                    precision mediump float;
+                    precision mediump sampler2D;
+                    varying highp vec2 vUv;
+                    varying highp vec2 vL;
+                    varying highp vec2 vR;
+                    varying highp vec2 vT;
+                    varying highp vec2 vB;
+                    uniform sampler2D uPressure;
+                    uniform sampler2D uVelocity;
+
+                    void main () {
+                        float L = texture2D(uPressure, vL).x;
+                        float R = texture2D(uPressure, vR).x;
+                        float T = texture2D(uPressure, vT).x;
+                        float B = texture2D(uPressure, vB).x;
+                        vec2 velocity = texture2D(uVelocity, vUv).xy;
+                        velocity.xy -= vec2(R - L, T - B);
+                        gl_FragColor = vec4(velocity, 0.0, 1.0);
+                    }
+                  `
+                );
+
+                const blit = (() => {
+                  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+                  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+                  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+                  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 0, 2, 3]), gl.STATIC_DRAW);
+                  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+                  gl.enableVertexAttribArray(0);
+                  return (target, clear = false) => {
+                    if (target == null) {
+                      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+                      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    } else {
+                      gl.viewport(0, 0, target.width, target.height);
+                      gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+                    }
+                    if (clear) {
+                      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                      gl.clear(gl.COLOR_BUFFER_BIT);
+                    }
+                    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+                  };
+                })();
+
+                let dye, velocity, divergence, curl, pressure;
+
+                const copyProgram = new Program(baseVertexShader, copyShader);
+                const clearProgram = new Program(baseVertexShader, clearShader);
+                const splatProgram = new Program(baseVertexShader, splatShader);
+                const advectionProgram = new Program(baseVertexShader, advectionShader);
+                const divergenceProgram = new Program(baseVertexShader, divergenceShader);
+                const curlProgram = new Program(baseVertexShader, curlShader);
+                const vorticityProgram = new Program(baseVertexShader, vorticityShader);
+                const pressureProgram = new Program(baseVertexShader, pressureShader);
+                const gradienSubtractProgram = new Program(baseVertexShader, gradientSubtractShader);
+                const displayMaterial = new Material(baseVertexShader, displayShaderSource);
+
+                function initFramebuffers() {
+                  let simRes = getResolution(config.SIM_RESOLUTION);
+                  let dyeRes = getResolution(config.DYE_RESOLUTION);
+                  const texType = ext.halfFloatTexType;
+                  const rgba = ext.formatRGBA;
+                  const rg = ext.formatRG;
+                  const r = ext.formatR;
+                  const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
+                  gl.disable(gl.BLEND);
+
+                  if (!dye)
+                    dye = createDoubleFBO(dyeRes.width, dyeRes.height, rgba.internalFormat, rgba.format, texType, filtering);
+                  else
+                    dye = resizeDoubleFBO(dye, dyeRes.width, dyeRes.height, rgba.internalFormat, rgba.format, texType, filtering);
+
+                  if (!velocity)
+                    velocity = createDoubleFBO(simRes.width, simRes.height, rg.internalFormat, rg.format, texType, filtering);
+                  else
+                    velocity = resizeDoubleFBO(
+                      velocity,
+                      simRes.width,
+                      simRes.height,
+                      rg.internalFormat,
+                      rg.format,
+                      texType,
+                      filtering
+                    );
+
+                  divergence = createFBO(simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
+                  curl = createFBO(simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
+                  pressure = createDoubleFBO(simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
+                }
+
+                function createFBO(w, h, internalFormat, format, type, param) {
+                  gl.activeTexture(gl.TEXTURE0);
+                  let texture = gl.createTexture();
+                  gl.bindTexture(gl.TEXTURE_2D, texture);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, param);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, param);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, w, h, 0, format, type, null);
+
+                  let fbo = gl.createFramebuffer();
+                  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+                  gl.viewport(0, 0, w, h);
+                  gl.clear(gl.COLOR_BUFFER_BIT);
+
+                  let texelSizeX = 1.0 / w;
+                  let texelSizeY = 1.0 / h;
+                  return {
+                    texture,
+                    fbo,
+                    width: w,
+                    height: h,
+                    texelSizeX,
+                    texelSizeY,
+                    attach(id) {
+                      gl.activeTexture(gl.TEXTURE0 + id);
+                      gl.bindTexture(gl.TEXTURE_2D, texture);
+                      return id;
+                    }
+                  };
+                }
+
+                function createDoubleFBO(w, h, internalFormat, format, type, param) {
+                  let fbo1 = createFBO(w, h, internalFormat, format, type, param);
+                  let fbo2 = createFBO(w, h, internalFormat, format, type, param);
+                  return {
+                    width: w,
+                    height: h,
+                    texelSizeX: fbo1.texelSizeX,
+                    texelSizeY: fbo1.texelSizeY,
+                    get read() {
+                      return fbo1;
+                    },
+                    set read(value) {
+                      fbo1 = value;
+                    },
+                    get write() {
+                      return fbo2;
+                    },
+                    set write(value) {
+                      fbo2 = value;
+                    },
+                    swap() {
+                      let temp = fbo1;
+                      fbo1 = fbo2;
+                      fbo2 = temp;
+                    }
+                  };
+                }
+
+                function resizeFBO(target, w, h, internalFormat, format, type, param) {
+                  let newFBO = createFBO(w, h, internalFormat, format, type, param);
+                  copyProgram.bind();
+                  gl.uniform1i(copyProgram.uniforms.uTexture, target.attach(0));
+                  blit(newFBO);
+                  return newFBO;
+                }
+
+                function resizeDoubleFBO(target, w, h, internalFormat, format, type, param) {
+                  if (target.width === w && target.height === h) return target;
+                  target.read = resizeFBO(target.read, w, h, internalFormat, format, type, param);
+                  target.write = createFBO(w, h, internalFormat, format, type, param);
+                  target.width = w;
+                  target.height = h;
+                  target.texelSizeX = 1.0 / w;
+                  target.texelSizeY = 1.0 / h;
+                  return target;
+                }
+
+                function updateKeywords() {
+                  let displayKeywords = [];
+                  if (config.SHADING) displayKeywords.push('SHADING');
+                  displayMaterial.setKeywords(displayKeywords);
+                }
+
+                updateKeywords();
+                initFramebuffers();
+                let lastUpdateTime = Date.now();
+                let colorUpdateTimer = 0.0;
+
+                function updateFrame() {
+                  if (!isActive) return;
+                  const dt = calcDeltaTime();
+                  if (resizeCanvas()) initFramebuffers();
+                  updateColors(dt);
+                  applyInputs();
+                  step(dt);
+                  render(null);
+                  animationFrameId = win.requestAnimationFrame(updateFrame);
+                }
+
+                function calcDeltaTime() {
+                  let now = Date.now();
+                  let dt = (now - lastUpdateTime) / 1000;
+                  dt = Math.min(dt, 0.016666);
+                  lastUpdateTime = now;
+                  return dt;
+                }
+
+                function resizeCanvas() {
+                  let clientW = canvas.clientWidth || win.innerWidth || 1024;
+                  let clientH = canvas.clientHeight || win.innerHeight || 768;
+                  let width = scaleByPixelRatio(clientW);
+                  let height = scaleByPixelRatio(clientH);
+                  if (canvas.width !== width || canvas.height !== height) {
+                    canvas.width = width;
+                    canvas.height = height;
+                    return true;
+                  }
+                  return false;
+                }
+
+                function updateColors(dt) {
+                  colorUpdateTimer += dt * config.COLOR_UPDATE_SPEED;
+                  if (colorUpdateTimer >= 1) {
+                    colorUpdateTimer = wrap(colorUpdateTimer, 0, 1);
+                    pointers.forEach(p => {
+                      p.color = generateColor();
+                    });
+                  }
+                }
+
+                function applyInputs() {
+                  pointers.forEach(p => {
+                    if (p.moved) {
+                      p.moved = false;
+                      splatPointer(p);
+                    }
+                  });
+                }
+
+                function step(dt) {
+                  gl.disable(gl.BLEND);
+                  curlProgram.bind();
+                  gl.uniform2f(curlProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  gl.uniform1i(curlProgram.uniforms.uVelocity, velocity.read.attach(0));
+                  blit(curl);
+
+                  vorticityProgram.bind();
+                  gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  gl.uniform1i(vorticityProgram.uniforms.uVelocity, velocity.read.attach(0));
+                  gl.uniform1i(vorticityProgram.uniforms.uCurl, curl.attach(1));
+                  gl.uniform1f(vorticityProgram.uniforms.curl, config.CURL);
+                  gl.uniform1f(vorticityProgram.uniforms.dt, dt);
+                  blit(velocity.write);
+                  velocity.swap();
+
+                  divergenceProgram.bind();
+                  gl.uniform2f(divergenceProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  gl.uniform1i(divergenceProgram.uniforms.uVelocity, velocity.read.attach(0));
+                  blit(divergence);
+
+                  clearProgram.bind();
+                  gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0));
+                  gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE);
+                  blit(pressure.write);
+                  pressure.swap();
+
+                  pressureProgram.bind();
+                  gl.uniform2f(pressureProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  gl.uniform1i(pressureProgram.uniforms.uDivergence, divergence.attach(0));
+                  for (let i = 0; i < config.PRESSURE_ITERATIONS; i++) {
+                    gl.uniform1i(pressureProgram.uniforms.uPressure, pressure.read.attach(1));
+                    blit(pressure.write);
+                    pressure.swap();
+                  }
+
+                  gradienSubtractProgram.bind();
+                  gl.uniform2f(gradienSubtractProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  gl.uniform1i(gradienSubtractProgram.uniforms.uPressure, pressure.read.attach(0));
+                  gl.uniform1i(gradienSubtractProgram.uniforms.uVelocity, velocity.read.attach(1));
+                  blit(velocity.write);
+                  velocity.swap();
+
+                  advectionProgram.bind();
+                  gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  if (!ext.supportLinearFiltering)
+                    gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, velocity.texelSizeX, velocity.texelSizeY);
+                  let velocityId = velocity.read.attach(0);
+                  gl.uniform1i(advectionProgram.uniforms.uVelocity, velocityId);
+                  gl.uniform1i(advectionProgram.uniforms.uSource, velocityId);
+                  gl.uniform1f(advectionProgram.uniforms.dt, dt);
+                  gl.uniform1f(advectionProgram.uniforms.dissipation, config.VELOCITY_DISSIPATION);
+                  blit(velocity.write);
+                  velocity.swap();
+
+                  if (!ext.supportLinearFiltering)
+                    gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
+                  gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0));
+                  gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
+                  gl.uniform1f(advectionProgram.uniforms.dissipation, config.DENSITY_DISSIPATION);
+                  blit(dye.write);
+                  dye.swap();
+                }
+
+                function render(target) {
+                  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+                  gl.enable(gl.BLEND);
+                  drawDisplay(target);
+                }
+
+                function drawDisplay(target) {
+                  let width = target == null ? gl.drawingBufferWidth : target.width;
+                  let height = target == null ? gl.drawingBufferHeight : target.height;
+                  displayMaterial.bind();
+                  if (config.SHADING) gl.uniform2f(displayMaterial.uniforms.texelSize, 1.0 / width, 1.0 / height);
+                  gl.uniform1i(displayMaterial.uniforms.uTexture, dye.read.attach(0));
+                  blit(target);
+                }
+
+                function splatPointer(pointer) {
+                  let dx = pointer.deltaX * config.SPLAT_FORCE;
+                  let dy = pointer.deltaY * config.SPLAT_FORCE;
+                  splat(pointer.texcoordX, pointer.texcoordY, dx, dy, pointer.color);
+                }
+
+                function clickSplat(pointer) {
+                  const color = generateColor();
+                  color.r *= 10.0;
+                  color.g *= 10.0;
+                  color.b *= 10.0;
+                  let dx = 10 * (Math.random() - 0.5);
+                  let dy = 30 * (Math.random() - 0.5);
+                  splat(pointer.texcoordX, pointer.texcoordY, dx, dy, color);
+                }
+
+                function splat(x, y, dx, dy, color) {
+                  splatProgram.bind();
+                  gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
+                  gl.uniform1f(splatProgram.uniforms.aspectRatio, canvas.width / canvas.height);
+                  gl.uniform2f(splatProgram.uniforms.point, x, y);
+                  gl.uniform3f(splatProgram.uniforms.color, dx, dy, 0.0);
+                  gl.uniform1f(splatProgram.uniforms.radius, correctRadius(config.SPLAT_RADIUS / 100.0));
+                  blit(velocity.write);
+                  velocity.swap();
+
+                  gl.uniform1i(splatProgram.uniforms.uTarget, dye.read.attach(0));
+                  gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b);
+                  blit(dye.write);
+                  dye.swap();
+                }
+
+                function correctRadius(radius) {
+                  let aspectRatio = canvas.width / canvas.height;
+                  if (aspectRatio > 1) radius *= aspectRatio;
+                  return radius;
+                }
+
+                function updatePointerDownData(pointer, id, posX, posY) {
+                  pointer.id = id;
+                  pointer.down = true;
+                  pointer.moved = false;
+                  pointer.texcoordX = posX / canvas.width;
+                  pointer.texcoordY = 1.0 - posY / canvas.height;
+                  pointer.prevTexcoordX = pointer.texcoordX;
+                  pointer.prevTexcoordY = pointer.texcoordY;
+                  pointer.deltaX = 0;
+                  pointer.deltaY = 0;
+                  pointer.color = generateColor();
+                }
+
+                function updatePointerMoveData(pointer, posX, posY, color) {
+                  pointer.prevTexcoordX = pointer.texcoordX;
+                  pointer.prevTexcoordY = pointer.texcoordY;
+                  pointer.texcoordX = posX / canvas.width;
+                  pointer.texcoordY = 1.0 - posY / canvas.height;
+                  pointer.deltaX = correctDeltaX(pointer.texcoordX - pointer.prevTexcoordX);
+                  pointer.deltaY = correctDeltaY(pointer.texcoordY - pointer.prevTexcoordY);
+                  pointer.moved = Math.abs(pointer.deltaX) > 0 || Math.abs(pointer.deltaY) > 0;
+                  pointer.color = color;
+                }
+
+                function updatePointerUpData(pointer) {
+                  pointer.down = false;
+                }
+
+                function correctDeltaX(delta) {
+                  let aspectRatio = canvas.width / canvas.height;
+                  if (aspectRatio < 1) delta *= aspectRatio;
+                  return delta;
+                }
+
+                function correctDeltaY(delta) {
+                  let aspectRatio = canvas.width / canvas.height;
+                  if (aspectRatio > 1) delta /= aspectRatio;
+                  return delta;
+                }
+
+                function hexToRGB(hex) {
+                  let val = hex.replace('#', '');
+                  if (val.length === 3) val = val[0] + val[0] + val[1] + val[1] + val[2] + val[2];
+                  const r = parseInt(val.slice(0, 2), 16) / 255;
+                  const g = parseInt(val.slice(2, 4), 16) / 255;
+                  const b = parseInt(val.slice(4, 6), 16) / 255;
+                  return { r: r * 0.15, g: g * 0.15, b: b * 0.15 };
+                }
+
+                function generateColor() {
+                  if (!config.RAINBOW_MODE) {
+                    return hexToRGB(config.COLOR);
+                  }
+                  let c = HSVtoRGB(Math.random(), 1.0, 1.0);
+                  c.r *= 0.15;
+                  c.g *= 0.15;
+                  c.b *= 0.15;
+                  return c;
+                }
+
+                function HSVtoRGB(h, s, v) {
+                  let r, g, b, i, f, p, q, t;
+                  i = Math.floor(h * 6);
+                  f = h * 6 - i;
+                  p = v * (1 - s);
+                  q = v * (1 - f * s);
+                  t = v * (1 - (1 - f) * s);
+                  switch (i % 6) {
+                    case 0:
+                      r = v;
+                      g = t;
+                      b = p;
+                      break;
+                    case 1:
+                      r = q;
+                      g = v;
+                      b = p;
+                      break;
+                    case 2:
+                      r = p;
+                      g = v;
+                      b = t;
+                      break;
+                    case 3:
+                      r = p;
+                      g = q;
+                      b = v;
+                      break;
+                    case 4:
+                      r = t;
+                      g = p;
+                      b = v;
+                      break;
+                    case 5:
+                      r = v;
+                      g = p;
+                      b = q;
+                      break;
+                    default:
+                      break;
+                  }
+                  return { r, g, b };
+                }
+
+                function wrap(value, min, max) {
+                  const range = max - min;
+                  if (range === 0) return min;
+                  return ((value - min) % range) + min;
+                }
+
+                function getResolution(resolution) {
+                  let aspectRatio = gl.drawingBufferWidth / gl.drawingBufferHeight;
+                  if (aspectRatio < 1) aspectRatio = 1.0 / aspectRatio;
+                  const min = Math.round(resolution);
+                  const max = Math.round(resolution * aspectRatio);
+                  if (gl.drawingBufferWidth > gl.drawingBufferHeight) return { width: max, height: min };
+                  else return { width: min, height: max };
+                }
+
+                function scaleByPixelRatio(input) {
+                  const pixelRatio = win.devicePixelRatio || 1;
+                  return Math.floor(input * pixelRatio);
+                }
+
+                function hashCode(s) {
+                  if (s.length === 0) return 0;
+                  let hash = 0;
+                  for (let i = 0; i < s.length; i++) {
+                    hash = (hash << 5) - hash + s.charCodeAt(i);
+                    hash |= 0;
+                  }
+                  return hash;
+                }
+
+                function handleMouseDown(e) {
+                  let pointer = pointers[0];
+                  let posX = scaleByPixelRatio(e.clientX);
+                  let posY = scaleByPixelRatio(e.clientY);
+                  updatePointerDownData(pointer, -1, posX, posY);
+                  clickSplat(pointer);
+                }
+
+                let firstMouseMoveHandled = false;
+                function handleMouseMove(e) {
+                  let pointer = pointers[0];
+                  let posX = scaleByPixelRatio(e.clientX);
+                  let posY = scaleByPixelRatio(e.clientY);
+                  if (!firstMouseMoveHandled) {
+                    let color = generateColor();
+                    updatePointerMoveData(pointer, posX, posY, color);
+                    firstMouseMoveHandled = true;
+                  } else {
+                    updatePointerMoveData(pointer, posX, posY, pointer.color);
+                  }
+                }
+
+                function handleTouchStart(e) {
+                  const touches = e.targetTouches;
+                  let pointer = pointers[0];
+                  for (let i = 0; i < touches.length; i++) {
+                    let posX = scaleByPixelRatio(touches[i].clientX);
+                    let posY = scaleByPixelRatio(touches[i].clientY);
+                    updatePointerDownData(pointer, touches[i].identifier, posX, posY);
+                  }
+                }
+
+                function handleTouchMove(e) {
+                  const touches = e.targetTouches;
+                  let pointer = pointers[0];
+                  for (let i = 0; i < touches.length; i++) {
+                    let posX = scaleByPixelRatio(touches[i].clientX);
+                    let posY = scaleByPixelRatio(touches[i].clientY);
+                    updatePointerMoveData(pointer, posX, posY, pointer.color);
+                  }
+                }
+
+                function handleTouchEnd(e) {
+                  const touches = e.changedTouches;
+                  let pointer = pointers[0];
+                  for (let i = 0; i < touches.length; i++) {
+                    updatePointerUpData(pointer);
+                  }
+                }
+
+                doc.addEventListener('mousedown', handleMouseDown, { passive: true });
+                doc.addEventListener('mousemove', handleMouseMove, { passive: true });
+                doc.addEventListener('touchstart', handleTouchStart, { passive: true });
+                doc.addEventListener('touchmove', handleTouchMove, { passive: true });
+                doc.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+                updateFrame();
+
+                return {
+                  destroy() {
+                    isActive = false;
+                    if (auroraInstance) {
+                      auroraInstance.destroy();
+                    }
+                    if (animationFrameId) {
+                      win.cancelAnimationFrame(animationFrameId);
+                      animationFrameId = null;
+                    }
+                    doc.removeEventListener('mousedown', handleMouseDown);
+                    doc.removeEventListener('mousemove', handleMouseMove);
+                    doc.removeEventListener('touchstart', handleTouchStart);
+                    doc.removeEventListener('touchmove', handleTouchMove);
+                    doc.removeEventListener('touchend', handleTouchEnd);
+                    container.remove();
+                  }
+                };
+              };
+
+              const win = window.parent;
+              const isIframeActive = (winObj) => {
+                try {
+                  if (!winObj) return false;
+                  if (winObj === winObj.parent) return true;
+                  return !!(winObj.frameElement && winObj.parent.document.body.contains(winObj.frameElement));
+                } catch (e) {
+                  return false;
+                }
+              };
+              const manageSplashCursor = () => {
+                const hasPageG = !!doc.querySelector(".page-g-standard");
+                const hasSpinner = !!doc.querySelector('div[data-testid="stSpinner"]');
+                const aiProcessing = doc.getElementById("jocket-ai-processing");
+                const isAiRunning = hasSpinner || (aiProcessing && aiProcessing.getAttribute("data-running") === "true");
+                const isAiChatActive = !!doc.getElementById("jocket-ai-chat-active");
+                const shouldBeActive = hasPageG || isAiRunning || isAiChatActive;
+
+                const ownerStale = win.__jocketSplashCursor__ && !isIframeActive(win.__jocketSplashCursor__.owner);
+
+                if (shouldBeActive) {
+                  if (ownerStale) {
+                    // Iframe was recreated by Streamlit rerun but cursor is
+                    // still alive in the parent DOM – just re-adopt it instead
+                    // of destroy+recreate which causes a black flash.
+                    win.__jocketSplashCursor__.owner = window;
+                  } else if (!win.__jocketSplashCursor__) {
+                    win.__jocketSplashCursor__ = initSplashCursor(doc, win);
+                    win.__jocketSplashCursor__.owner = window;
+                  }
+                } else {
+                  if (win.__jocketSplashCursor__) {
+                    try {
+                      win.__jocketSplashCursor__.destroy();
+                    } catch (e) {
+                      console.error("Error destroying splash cursor:", e);
+                    }
+                    delete win.__jocketSplashCursor__;
+                  }
+                }
+              };
+
+              const initDotField = (doc, win) => {
+                let container = doc.getElementById("jocket-dot-field-container");
+                let canvas = container && container.querySelector("#jocket-dot-field-canvas");
+                
+                if (!container) {
+                  container = doc.createElement("div");
+                  container.id = "jocket-dot-field-container";
+                  container.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 0 !important; width: 100vw !important; height: 100vh !important; pointer-events: none !important; overflow: hidden !important; background: transparent !important;";
+                  
+                  canvas = doc.createElement("canvas");
+                  canvas.id = "jocket-dot-field-canvas";
+                  canvas.style.cssText = "position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; pointer-events: none !important; display: block !important; opacity: 0 !important; transition: opacity 0.8s ease-in-out !important;";
+                  
+                  container.appendChild(canvas);
+                  doc.body.prepend(container);
+                  
+                  setTimeout(() => {
+                    if (canvas) canvas.style.opacity = "0.35";
+                  }, 50);
+                }
+                
+                let isActive = true;
+                let animationFrameId = null;
+                
+                const dotRadius = 1.5;
+                const dotSpacing = 14;
+                const cursorRadius = 500;
+                const cursorForce = 0.1;
+                const bulgeOnly = true;
+                const bulgeStrength = 67;
+                const gradientFrom = "#4a4a4a";
+                const gradientTo = "#272727";
+                
+                const ctx = canvas.getContext("2d", { alpha: true });
+                const dpr = Math.min(win.devicePixelRatio || 1, 2);
+                
+                let dots = [];
+                const mouse = {
+                  x: -9999,
+                  y: -9999,
+                  prevX: -9999,
+                  prevY: -9999,
+                  speed: 0
+                };
+                
+                let dimensions = { w: 0, h: 0, offsetX: 0, offsetY: 0 };
+                let speedFactor = 0;
+                let cursorOpacity = 0;
+                
+                let resizeTimer = null;
+                function handleResize() {
+                  clearTimeout(resizeTimer);
+                  resizeTimer = setTimeout(resizeCanvas, 100);
+                }
+                
+                function resizeCanvas() {
+                  if (!canvas || !isActive) return;
+                  const rect = canvas.parentElement.getBoundingClientRect();
+                  const w = rect.width;
+                  const h = rect.height;
+                  
+                  canvas.width = w * dpr;
+                  canvas.height = h * dpr;
+                  canvas.style.width = `${w}px`;
+                  canvas.style.height = `${h}px`;
+                  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                  
+                  dimensions = {
+                    w,
+                    h,
+                    offsetX: rect.left + win.scrollX,
+                    offsetY: rect.top + win.scrollY
+                  };
+                  
+                  initGrid(w, h);
+                }
+                
+                function initGrid(width, height) {
+                  const spacing = dotRadius + dotSpacing;
+                  const cols = Math.floor(width / spacing);
+                  const rows = Math.floor(height / spacing);
+                  const offsetX = (width % spacing) / 2;
+                  const offsetY = (height % spacing) / 2;
+                  
+                  dots = new Array(rows * cols);
+                  let index = 0;
+                  for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                      const x = offsetX + c * spacing + spacing / 2;
+                      const y = offsetY + r * spacing + spacing / 2;
+                      dots[index++] = {
+                        ax: x, ay: y,
+                        sx: x, sy: y,
+                        vx: 0, vy: 0,
+                        x: x, y: y
+                      };
+                    }
+                  }
+                }
+                
+                function handleMouseMove(e) {
+                  mouse.x = e.clientX - dimensions.offsetX;
+                  mouse.y = e.clientY - dimensions.offsetY;
+                }
+                
+                function handleMouseLeave() {
+                  mouse.x = -9999;
+                  mouse.y = -9999;
+                }
+                
+                function handleTouchMove(e) {
+                  if (e.touches && e.touches[0]) {
+                    mouse.x = e.touches[0].clientX - dimensions.offsetX;
+                    mouse.y = e.touches[0].clientY - dimensions.offsetY;
+                  }
+                }
+                
+                function updateSpeed() {
+                  const dx = mouse.prevX - mouse.x;
+                  const dy = mouse.prevY - mouse.y;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  mouse.speed += (dist - mouse.speed) * 0.5;
+                  if (mouse.speed < 0.001) mouse.speed = 0;
+                  mouse.prevX = mouse.x;
+                  mouse.prevY = mouse.y;
+                }
+                
+                const speedInterval = setInterval(updateSpeed, 20);
+                
+                function animate() {
+                  if (!isActive) return;
+                  
+                  const dotCount = dots.length;
+                  const normSpeed = Math.min(mouse.speed / 5, 1);
+                  speedFactor += (normSpeed - speedFactor) * 0.06;
+                  if (speedFactor < 0.001) speedFactor = 0;
+                  
+                  cursorOpacity += (speedFactor - cursorOpacity) * 0.08;
+                  
+                  ctx.clearRect(0, 0, dimensions.w, dimensions.h);
+                  
+                  const gradient = ctx.createLinearGradient(0, 0, dimensions.w, dimensions.h);
+                  gradient.addColorStop(0, gradientFrom);
+                  gradient.addColorStop(1, gradientTo);
+                  ctx.fillStyle = gradient;
+                  
+                  const maxDist = cursorRadius;
+                  const maxDistSq = maxDist * maxDist;
+                  const radiusHalf = dotRadius / 2;
+                  const twoPi = Math.PI * 2;
+                  
+                  ctx.beginPath();
+                  for (let i = 0; i < dotCount; i++) {
+                    const dot = dots[i];
+                    const dx = mouse.x - dot.ax;
+                    const dy = mouse.y - dot.ay;
+                    const distSq = dx * dx + dy * dy;
+                    
+                    if (distSq < maxDistSq && speedFactor > 0.01) {
+                      const dist = Math.sqrt(distSq);
+                      if (bulgeOnly) {
+                        const force = 1 - dist / maxDist;
+                        const shift = force * force * bulgeStrength * speedFactor;
+                        const angle = Math.atan2(dy, dx);
+                        dot.sx += (dot.ax - Math.cos(angle) * shift - dot.sx) * 0.15;
+                        dot.sy += (dot.ay - Math.sin(angle) * shift - dot.sy) * 0.15;
+                      } else {
+                        const angle = Math.atan2(dy, dx);
+                        const force = (500 / dist) * (mouse.speed * cursorForce);
+                        dot.vx += Math.cos(angle) * -force;
+                        dot.vy += Math.sin(angle) * -force;
+                      }
+                    } else if (bulgeOnly) {
+                      dot.sx += (dot.ax - dot.sx) * 0.1;
+                      dot.sy += (dot.ay - dot.sy) * 0.1;
+                    }
+                    
+                    if (!bulgeOnly) {
+                      dot.vx *= 0.9;
+                      dot.vy *= 0.9;
+                      dot.x = dot.ax + dot.vx;
+                      dot.y = dot.ay + dot.vy;
+                      dot.sx += (dot.x - dot.sx) * 0.1;
+                      dot.sy += (dot.y - dot.sy) * 0.1;
+                    }
+                    
+                    let finalX = dot.sx;
+                    let finalY = dot.sy;
+                    
+                    ctx.moveTo(finalX + radiusHalf, finalY);
+                    ctx.arc(finalX, finalY, radiusHalf, 0, twoPi);
+                  }
+                  ctx.fill();
+                  
+                  animationFrameId = requestAnimationFrame(animate);
+                }
+                
+                resizeCanvas();
+                win.addEventListener("resize", handleResize);
+                doc.addEventListener("mousemove", handleMouseMove, { passive: true });
+                doc.addEventListener("mouseleave", handleMouseLeave, { passive: true });
+                doc.addEventListener("touchmove", handleTouchMove, { passive: true });
+                
+                animationFrameId = requestAnimationFrame(animate);
+                
+                return {
+                  destroy() {
+                    isActive = false;
+                    if (animationFrameId) {
+                      cancelAnimationFrame(animationFrameId);
+                      animationFrameId = null;
+                    }
+                    clearInterval(speedInterval);
+                    clearTimeout(resizeTimer);
+                    win.removeEventListener("resize", handleResize);
+                    doc.removeEventListener("mousemove", handleMouseMove);
+                    doc.removeEventListener("mouseleave", handleMouseLeave);
+                    doc.removeEventListener("touchmove", handleTouchMove);
+                    
+                    if (canvas) {
+                      canvas.style.opacity = "0";
+                    }
+                    setTimeout(() => {
+                      if (container) container.remove();
+                    }, 800);
+                  }
+                };
+              };
+
+              const manageDotField = () => {
+                const currentPageEl = doc.getElementById("jocket-current-page");
+                const currentPage = currentPageEl ? currentPageEl.getAttribute("data-page") : "";
+                const hasLanding = !!doc.querySelector(".st-key-jocket_page_g_landing");
+                const hasLoading = !!doc.querySelector(".jocket-loading-marker");
+                
+                const shouldBeActive = currentPage && currentPage !== "AI洞察" && !hasLanding && !hasLoading;
+                const ownerStale = win.__jocketDotField__ && !isIframeActive(win.__jocketDotField__.owner);
+                
+                if (shouldBeActive) {
+                  if (ownerStale) {
+                    win.__jocketDotField__.owner = window;
+                  } else if (!win.__jocketDotField__) {
+                    win.__jocketDotField__ = initDotField(doc, win);
+                    win.__jocketDotField__.owner = window;
+                  }
+                } else {
+                  if (win.__jocketDotField__) {
+                    try {
+                      win.__jocketDotField__.destroy();
+                    } catch (e) {
+                      console.error("Error destroying dot field:", e);
+                    }
+                    delete win.__jocketDotField__;
+                  }
+                }
+              };
+
+              const decorateAsPillNav = (wrapSelector, buttonsOrSelector, currentActiveText) => {
+                const wraps = doc.querySelectorAll(wrapSelector);
+                wraps.forEach((wrap) => {
+                  wrap.setAttribute("data-jocket-nav-style", "pill-nav");
+                });
+
+                const buttons = typeof buttonsOrSelector === "string"
+                  ? [...doc.querySelectorAll(buttonsOrSelector)]
+                  : buttonsOrSelector;
+
+                buttons.forEach((button) => {
+                  const btn = button.matches("button") ? button : button.closest("button") || button.querySelector("button");
+                  if (!btn) return;
+                  
+                  const text =
+                    btn.getAttribute("data-jocket-nav-label") ||
+                    (btn.innerText || btn.textContent || "").trim();
+                  const btnTextArray = text.split('\\n').map(t => t.trim());
+                  const selected =
+                    btnTextArray.includes(currentActiveText) ||
+                    btn.getAttribute("kind") === "segmented_controlActive" ||
+                    btn.getAttribute("data-testid") === "stBaseButton-segmented_controlActive" ||
+                    btn.getAttribute("aria-checked") === "true" ||
+                    btn.getAttribute("aria-selected") === "true" ||
+                    btn.getAttribute("aria-pressed") === "true" ||
+                    btn.getAttribute("data-selected") === "true" ||
+                    !!btn.querySelector("input:checked");
+
+                  const targets = new Set([
+                    btn,
+                    btn.closest('[data-testid="stSegmentedControlOption"]'),
+                    btn.closest('[role="radio"]'),
+                    btn.closest('[role="button"]'),
+                  ].filter(Boolean));
+                  
+                  targets.forEach((target) => {
+                    target.setAttribute("data-jocket-nav-label", text);
+                    target.dataset.jocketNavActive = selected ? "true" : "false";
+                    target.classList.toggle("jocket-nav-active", selected);
+                  });
+
+                  btn.setAttribute("data-jocket-nav-label", text);
+                  btn.dataset.jocketNavActive = selected ? "true" : "false";
+
+                  // Reset background and borders
+                  if (selected) {
+                    btn.style.setProperty("background", "#ffffff", "important");
+                    btn.style.setProperty("background-color", "#ffffff", "important");
+                    btn.style.setProperty("color", "#09090b", "important");
+                    btn.style.setProperty("-webkit-text-fill-color", "#09090b", "important");
+                    btn.style.setProperty("border", "none", "important");
+                    btn.style.setProperty("box-shadow", "0 6px 18px rgba(6, 6, 12, 0.16)", "important");
+                  } else {
+                    btn.style.setProperty("background", "transparent", "important");
+                    btn.style.setProperty("background-color", "transparent", "important");
+                    btn.style.setProperty("color", "rgba(232, 229, 236, 0.52)", "important");
+                    btn.style.setProperty("-webkit-text-fill-color", "rgba(232, 229, 236, 0.52)", "important");
+                    btn.style.setProperty("border", "none", "important");
+                    btn.style.setProperty("box-shadow", "none", "important");
+                  }
+                  btn.style.removeProperty("filter");
+                  btn.style.removeProperty("transform");
+                  btn.style.removeProperty("transition");
+
+                  let circle = btn.querySelector(":scope > .jocket-pill-hover-circle");
+                  let label = btn.querySelector(".jocket-pill-label");
+                  let hoverLabel = btn.querySelector(".jocket-pill-label-hover");
+                  
+                  if (!circle || !label || !hoverLabel) {
+                    const paragraph = btn.querySelector('[data-testid="stMarkdownContainer"] p') || btn.querySelector("p") || btn;
+                    let labelText = text;
+                    if (paragraph !== btn) {
+                      paragraph.textContent = "";
+                    } else {
+                      btn.textContent = "";
+                    }
+
+                    circle = doc.createElement("span");
+                    circle.className = "jocket-pill-hover-circle";
+                    circle.setAttribute("aria-hidden", "true");
+
+                    const stack = doc.createElement("span");
+                    stack.className = "jocket-pill-label-stack";
+                    
+                    label = doc.createElement("span");
+                    label.className = "jocket-pill-label";
+                    label.textContent = labelText;
+                    
+                    hoverLabel = doc.createElement("span");
+                    hoverLabel.className = "jocket-pill-label-hover";
+                    hoverLabel.textContent = labelText;
+                    hoverLabel.setAttribute("aria-hidden", "true");
+                    
+                    stack.append(label, hoverLabel);
+                    
+                    if (paragraph !== btn) {
+                      paragraph.append(stack);
+                    } else {
+                      btn.append(stack);
+                    }
+                    btn.insertBefore(circle, btn.firstChild);
+                    btn.dataset.jocketPillDecorated = "true";
+                  }
+
+                  if (!btn.dataset.jocketPillHoverBound) {
+                    btn.dataset.jocketPillHoverBound = "true";
+                    const setPillHover = (active) => {
+                      btn.dataset.jocketPillHover = active ? "true" : "false";
+                    };
+                    btn.addEventListener("pointerenter", () => setPillHover(true));
+                    btn.addEventListener("pointerleave", () => setPillHover(false));
+                    btn.addEventListener("focus", () => setPillHover(true));
+                    btn.addEventListener("blur", () => setPillHover(false));
+                  }
+
+                  const rect = btn.getBoundingClientRect();
+                  const w = rect.width;
+                  const h = rect.height;
+                  if (w > 0 && h > 0 && circle) {
+                    const radius = ((w * w) / 4 + h * h) / (2 * h);
+                    const diameter = Math.ceil(2 * radius) + 2;
+                    const delta = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - (w * w) / 4))) + 1;
+                    circle.style.width = `${diameter}px`;
+                    circle.style.height = `${diameter}px`;
+                    circle.style.bottom = `-${delta}px`;
+                    circle.style.transformOrigin = `50% ${diameter - delta}px`;
+                  }
+                });
+              };
+
               const enhanceNav = () => {
                 const navWrap = doc.querySelector(".st-key-analysis_mode_top");
-                const navScope = navWrap || doc;
+                if (!navWrap) return;
+                navWrap.classList.add("container-t");
+                navWrap.setAttribute("data-jocket-container", "container t");
+                navWrap.setAttribute("data-jocket-nav-style", "pill-nav");
+                const navScope = navWrap;
                 const navLabels = ["AI洞察", "个股行情", "市场情绪", "投研分析", "量化对冲"];
+                const getNavLabel = (item) => {
+                  const saved = item.getAttribute("data-jocket-nav-label");
+                  if (saved && navLabels.includes(saved)) return saved;
+                  const raw = (item.innerText || item.textContent || "").replace(/\\s+/g, "").trim();
+                  return navLabels.find((label) => raw === label || raw === `${label}${label}`) || "";
+                };
                 const rawItems = [
                   ...navScope.querySelectorAll('[data-testid="stSegmentedControlOption"], button, label, [role="radio"], [role="button"]')
                 ];
                 const seen = new Set();
                 const navButtons = rawItems.filter((item) => {
-                  const text = (item.innerText || item.textContent || "").trim();
+                  const text = getNavLabel(item);
                   if (!navLabels.includes(text) || seen.has(text)) return false;
+                  item.setAttribute("data-jocket-nav-label", text);
                   seen.add(text);
                   return true;
                 });
@@ -122,33 +1830,14 @@ def load_css(path: str = "assets/styles.css") -> None:
                 if (!nav) return;
                 nav.dataset.jocketNavEnhanced = "true";
 
-                // Force nav wrapper to be compact (fit-content) regardless of Streamlit flex layout
-                if (navWrap) {
-                  const vw = window.parent.innerWidth || doc.documentElement.clientWidth || 768;
-                  const isMobile = vw <= 768;
-                  if (isMobile) {
-                    // Mobile: full width so the CSS media query distributes buttons evenly
-                    navWrap.style.setProperty("width", "100%", "important");
-                    navWrap.style.setProperty("max-width", "100%", "important");
-                    navWrap.style.setProperty("flex", "1 1 auto", "important");
-                    navWrap.style.setProperty("align-self", "stretch", "important");
-                    navWrap.style.setProperty("display", "block", "important");
-                  } else {
-                    // Desktop: compact width only as wide as the 4 buttons
-                    navWrap.style.setProperty("width", "fit-content", "important");
-                    navWrap.style.setProperty("max-width", "100%", "important");
-                    navWrap.style.setProperty("flex", "0 0 auto", "important");
-                    navWrap.style.setProperty("align-self", "flex-start", "important");
-                    navWrap.style.setProperty("display", "block", "important");
-                  }
-                }
-
                 const marker = doc.getElementById("jocket-current-page");
                 const currentPage = marker ? marker.getAttribute("data-page") : "";
                 navButtons.forEach((item) => {
-                  const text = (item.innerText || item.textContent || "").trim();
+                  const text = getNavLabel(item);
                   const selected =
                     currentPage === text ||
+                    item.getAttribute("kind") === "segmented_controlActive" ||
+                    item.getAttribute("data-testid") === "stBaseButton-segmented_controlActive" ||
                     item.getAttribute("aria-checked") === "true" ||
                     item.getAttribute("aria-selected") === "true" ||
                     item.getAttribute("aria-pressed") === "true" ||
@@ -163,26 +1852,76 @@ def load_css(path: str = "assets/styles.css") -> None:
                     item.closest('[role="button"]'),
                   ].filter(Boolean));
                   targets.forEach((target) => {
+                    target.setAttribute("data-jocket-nav-label", text);
                     target.dataset.jocketNavActive = selected ? "true" : "false";
                     target.classList.toggle("jocket-nav-active", selected);
                   });
+
+                  const button = item.matches("button") ? item : item.closest("button") || item.querySelector("button");
+                  if (!button) return;
+                  button.setAttribute("data-jocket-nav-label", text);
+
+                  let circle = button.querySelector(":scope > .jocket-pill-hover-circle");
+                  let label = button.querySelector(".jocket-pill-label");
+                  let hoverLabel = button.querySelector(".jocket-pill-label-hover");
+                  if (!circle || !label || !hoverLabel) {
+                    const paragraph = button.querySelector('[data-testid="stMarkdownContainer"] p') || button.querySelector("p");
+                    if (!paragraph) return;
+                    paragraph.textContent = "";
+
+                    circle = doc.createElement("span");
+                    circle.className = "jocket-pill-hover-circle";
+                    circle.setAttribute("aria-hidden", "true");
+
+                    const stack = doc.createElement("span");
+                    stack.className = "jocket-pill-label-stack";
+                    label = doc.createElement("span");
+                    label.className = "jocket-pill-label";
+                    label.textContent = text;
+                    hoverLabel = doc.createElement("span");
+                    hoverLabel.className = "jocket-pill-label-hover";
+                    hoverLabel.textContent = text;
+                    hoverLabel.setAttribute("aria-hidden", "true");
+                    stack.append(label, hoverLabel);
+                    paragraph.append(stack);
+                    button.insertBefore(circle, button.firstChild);
+                    button.dataset.jocketPillDecorated = "true";
+                  }
+
+                  if (!button.dataset.jocketPillHoverBound) {
+                    button.dataset.jocketPillHoverBound = "true";
+                    const setPillHover = (active) => {
+                      button.dataset.jocketPillHover = active ? "true" : "false";
+                    };
+                    button.addEventListener("pointerenter", () => setPillHover(true));
+                    button.addEventListener("pointerleave", () => setPillHover(false));
+                    button.addEventListener("focus", () => setPillHover(true));
+                    button.addEventListener("blur", () => setPillHover(false));
+                  }
+
+                  const rect = button.getBoundingClientRect();
+                  const w = rect.width;
+                  const h = rect.height;
+                  if (w > 0 && h > 0 && circle) {
+                    const radius = ((w * w) / 4 + h * h) / (2 * h);
+                    const diameter = Math.ceil(2 * radius) + 2;
+                    const delta = Math.ceil(radius - Math.sqrt(Math.max(0, radius * radius - (w * w) / 4))) + 1;
+                    circle.style.width = `${diameter}px`;
+                    circle.style.height = `${diameter}px`;
+                    circle.style.bottom = `-${delta}px`;
+                    circle.style.transformOrigin = `50% ${diameter - delta}px`;
+                  }
                 });
+
+                if (!nav.dataset.jocketPillNavEntered) {
+                  nav.dataset.jocketPillNavEntered = "true";
+                  nav.classList.add("jocket-pill-nav-enter");
+                }
               };
               const enhanceProvider = () => {
                 const pMarker = doc.getElementById("jocket-ai-provider");
                 const pCurrent = pMarker ? pMarker.getAttribute("data-provider") : "";
-                const pButtons = [...doc.querySelectorAll(".st-key-ai_market_provider_label button")];
-                pButtons.forEach((button) => {
-                  const text = (button.innerText || button.textContent || "").trim();
-                  const selected =
-                    text === pCurrent ||
-                    button.getAttribute("aria-checked") === "true" ||
-                    button.getAttribute("aria-selected") === "true" ||
-                    button.getAttribute("aria-pressed") === "true" ||
-                    button.getAttribute("data-selected") === "true" ||
-                    !!button.querySelector("input:checked");
-                  button.dataset.jocketProviderActive = selected ? "true" : "false";
-                });
+                decorateAsPillNav('[class*="st-key-ai_market_provider_label"]', '[class*="st-key-ai_market_provider_label"] button', pCurrent);
                 
                 const wMarker = doc.getElementById("jocket-sentiment-window");
                 const wCurrent = wMarker ? wMarker.getAttribute("data-window") : "";
@@ -229,17 +1968,13 @@ def load_css(path: str = "assets/styles.css") -> None:
                 }
                 const wShell = wWrap || wTrack;
                 if (wShell) {
-                  wShell.dataset.jocketSentimentWindowEnhanced = "true";
                   wShell.style.setProperty("display", "block", "important");
                   wShell.style.setProperty("max-width", "100%", "important");
                   wShell.style.setProperty("margin", "0 auto 14px", "important");
-                  wShell.style.setProperty("border", "1px solid rgba(55, 232, 255, 0.26)", "important");
-                  wShell.style.setProperty("background", "rgba(255, 255, 255, 0.055)", "important");
-                  wShell.style.setProperty("box-shadow", "inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 14px 34px rgba(0, 0, 0, 0.18)", "important");
                   wShell.style.setProperty("width", "100%", "important");
-                  wShell.style.setProperty("height", "64px", "important");
-                  wShell.style.setProperty("min-height", "64px", "important");
-                  wShell.style.setProperty("padding", "6px", "important");
+                  wShell.style.setProperty("height", "62px", "important");
+                  wShell.style.setProperty("min-height", "62px", "important");
+                  wShell.style.setProperty("padding", "7px", "important");
                   wShell.style.setProperty("box-sizing", "border-box", "important");
                   wShell.style.setProperty("border-radius", "999px", "important");
                   wShell.style.setProperty("overflow", "visible", "important");
@@ -284,58 +2019,45 @@ def load_css(path: str = "assets/styles.css") -> None:
                     child.style.setProperty("padding", "0", "important");
                   });
                 }
-                wButtons.forEach((button) => {
-                  const text = (button.innerText || button.textContent || "").trim();
-                  const selected =
-                    text === wCurrent ||
-                    button.getAttribute("aria-checked") === "true" ||
-                    button.getAttribute("aria-selected") === "true" ||
-                    button.getAttribute("aria-pressed") === "true" ||
-                    button.getAttribute("data-selected") === "true" ||
-                    !!button.querySelector("input:checked");
-                  const targets = new Set([
-                    button,
-                    button.closest('[data-testid="stSegmentedControlOption"]'),
-                    button.closest('[role="radio"]'),
-                    button.closest('[role="button"]'),
-                  ].filter(Boolean));
-                  targets.forEach((target) => {
-                    target.dataset.jocketProviderActive = selected ? "true" : "false";
-                    target.classList.toggle("jocket-provider-active", selected);
-                  });
-                  button.style.setProperty("width", "100%", "important");
-                  button.style.setProperty("min-width", "0", "important");
-                  button.style.setProperty("max-width", "none", "important");
-                  button.style.setProperty("height", "52px", "important");
-                  button.style.setProperty("min-height", "52px", "important");
-                  button.style.setProperty("max-height", "52px", "important");
-                  button.style.setProperty("margin", "0", "important");
-                  button.style.setProperty("padding", "0 12px", "important");
-                  button.style.setProperty("border-radius", "999px", "important");
-                  button.style.setProperty("display", "inline-flex", "important");
-                  button.style.setProperty("align-items", "center", "important");
-                  button.style.setProperty("justify-content", "center", "important");
-                  button.style.setProperty("align-self", "stretch", "important");
-                  button.style.setProperty("transform-origin", "center center", "important");
-                  button.style.setProperty("transition", "transform 150ms cubic-bezier(0.2, 0.9, 0.2, 1), filter 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease", "important");
-                  button.style.setProperty(
-                    "transform",
-                    button.dataset.jocketWindowHover === "true" ? "translateY(-2px) scale(1.035)" : selected ? "translateY(-1px)" : "none",
-                    "important"
-                  );
-                  if (!button.dataset.jocketWindowHoverBound) {
-                    button.dataset.jocketWindowHoverBound = "true";
-                    button.addEventListener("pointerenter", () => {
-                      button.dataset.jocketWindowHover = "true";
-                      button.style.setProperty("transform", "translateY(-2px) scale(1.035)", "important");
-                      button.style.setProperty("filter", "brightness(1.12)", "important");
-                    });
-                    button.addEventListener("pointerleave", () => {
-                      button.dataset.jocketWindowHover = "false";
-                      const isActive = button.dataset.jocketProviderActive === "true";
-                      button.style.setProperty("transform", isActive ? "translateY(-1px)" : "none", "important");
-                      button.style.removeProperty("filter");
-                    });
+
+                // Decorate sentiment buttons with pill nav style
+                if (wButtons.length > 0) {
+                  const activeText = `${wCurrent}日`; // Convert e.g., 60 to "60日"
+                  decorateAsPillNav(".st-key-sentiment_window_segment", wButtons, activeText);
+                }
+              };
+
+              const enhanceDockHosts = () => {
+                doc.querySelectorAll(".jocket-dock-host").forEach((host) => {
+                  const marker = host.querySelector(".jocket-bottom-dock");
+                  if (!marker) {
+                    host.classList.remove("jocket-dock-host");
+                    host.classList.remove("container-b");
+                    host.classList.remove("style-bottom");
+                    host.removeAttribute("data-jocket-container");
+                    host.removeAttribute("data-jocket-dock-style");
+                  }
+                });
+                doc.querySelectorAll(".jocket-bottom-dock").forEach((marker) => {
+                  const host = marker.closest('[data-testid="stVerticalBlockBorderWrapper"]') || marker.closest('[data-testid="stVerticalBlock"]');
+                  if (host) {
+                    const template =
+                      host.querySelector('[class*="st-key-hedge_tickers"], [class*="st-key-hedge_start_date"], [class*="st-key-hedge_end_date"]')
+                        ? "multi-field"
+                        : host.querySelector('[class*="st-key-ta_input_ticker"], [class*="st-key-ta_input_date"]')
+                          ? "dual-field"
+                          : "single-field";
+                    host.classList.add("jocket-dock-host");
+                    host.classList.add("container-b");
+                    host.classList.add("style-bottom");
+                    host.setAttribute("data-jocket-container", "container b");
+                    host.setAttribute("data-jocket-dock-style", "style bottom");
+                    host.setAttribute("data-jocket-dock-template", template);
+                    if (template === "multi-field") {
+                      host.style.setProperty("width", "var(--j-page-g-dock)", "important");
+                    } else {
+                      host.style.removeProperty("width");
+                    }
                   }
                 });
               };
@@ -343,158 +2065,7 @@ def load_css(path: str = "assets/styles.css") -> None:
               const enhanceHedgeMode = () => {
                 const hMarker = doc.getElementById("jocket-hedge-mode");
                 const hCurrent = hMarker ? hMarker.getAttribute("data-mode") : "";
-                const hedgeLabels = ["单日决策", "回测模拟"];
-                let hButtons = [...doc.querySelectorAll(".st-key-hedge_mode button")];
-                if (hButtons.length < 2) {
-                  const seenHedgeLabels = new Set();
-                  hButtons = [...doc.querySelectorAll("button")].filter((button) => {
-                    const text = (button.innerText || button.textContent || "").trim();
-                    if (!hedgeLabels.includes(text) || seenHedgeLabels.has(text)) return false;
-                    seenHedgeLabels.add(text);
-                    return true;
-                  });
-                }
-                const hWrap = doc.querySelector(".st-key-hedge_mode");
-                const rootsFor = (ancestor) => {
-                  if (!ancestor) return [];
-                  return hButtons.map((button) => {
-                    let node = button;
-                    while (node.parentElement && node.parentElement !== ancestor) {
-                      node = node.parentElement;
-                    }
-                    return node;
-                  });
-                };
-                let hTrack = null;
-                let probe = hButtons.length ? hButtons[0].parentElement : null;
-                while (probe) {
-                  if (hButtons.every((button) => probe.contains(button))) {
-                    const roots = [...new Set(rootsFor(probe))];
-                    if (roots.length === 2) {
-                      hTrack = probe;
-                      break;
-                    }
-                  }
-                  if (hWrap && probe === hWrap) break;
-                  probe = probe.parentElement;
-                }
-                if (!hTrack) {
-                  hTrack = hButtons.length ? hButtons[0].parentElement : null;
-                  while (hTrack && !hButtons.every((button) => hTrack.contains(button))) {
-                    hTrack = hTrack.parentElement;
-                  }
-                }
-                const hShell = hWrap || hTrack;
-                if (hShell) {
-                  hShell.dataset.jocketHedgeModeEnhanced = "true";
-                  hShell.style.setProperty("display", "block", "important");
-                  hShell.style.setProperty("max-width", "100%", "important");
-                  hShell.style.setProperty("margin", "0 auto 14px", "important");
-                  hShell.style.setProperty("border", "1px solid rgba(55, 232, 255, 0.26)", "important");
-                  hShell.style.setProperty("background", "rgba(255, 255, 255, 0.055)", "important");
-                  hShell.style.setProperty("box-shadow", "inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 14px 34px rgba(0, 0, 0, 0.18)", "important");
-                  hShell.style.setProperty("width", "100%", "important");
-                  hShell.style.setProperty("height", "64px", "important");
-                  hShell.style.setProperty("min-height", "64px", "important");
-                  hShell.style.setProperty("padding", "6px", "important");
-                  hShell.style.setProperty("box-sizing", "border-box", "important");
-                  hShell.style.setProperty("border-radius", "999px", "important");
-                  hShell.style.setProperty("overflow", "visible", "important");
-                }
-                let ancestor = hTrack;
-                let guard = 0;
-                while (ancestor && ancestor !== hShell && guard < 8) {
-                  ancestor.style.setProperty("width", "100%", "important");
-                  ancestor.style.setProperty("max-width", "100%", "important");
-                  ancestor.style.setProperty("min-width", "0", "important");
-                  ancestor.style.setProperty("height", "100%", "important");
-                  ancestor.style.setProperty("min-height", "0", "important");
-                  ancestor.style.setProperty("margin", "0", "important");
-                  ancestor.style.setProperty("padding", "0", "important");
-                  ancestor.style.setProperty("overflow", "visible", "important");
-                  ancestor = ancestor.parentElement;
-                  guard += 1;
-                }
-                if (hTrack) {
-                  const hItems = [...new Set(rootsFor(hTrack))];
-                  hTrack.style.setProperty("display", "grid", "important");
-                  hTrack.style.setProperty("grid-template-columns", "repeat(2, minmax(0, 1fr))", "important");
-                  hTrack.style.setProperty("align-items", "stretch", "important");
-                  hTrack.style.setProperty("align-content", "stretch", "important");
-                  hTrack.style.setProperty("gap", "6px", "important");
-                  hTrack.style.setProperty("width", "100%", "important");
-                  hTrack.style.setProperty("height", "100%", "important");
-                  hTrack.style.setProperty("min-height", "0", "important");
-                  hTrack.style.setProperty("margin", "0", "important");
-                  hTrack.style.setProperty("padding", "0", "important");
-                  hTrack.style.setProperty("overflow", "visible", "important");
-                  hItems.forEach((child) => {
-                    child.style.setProperty("display", "flex", "important");
-                    child.style.setProperty("align-items", "stretch", "important");
-                    child.style.setProperty("justify-content", "stretch", "important");
-                    child.style.setProperty("width", "100%", "important");
-                    child.style.setProperty("min-width", "0", "important");
-                    child.style.setProperty("height", "100%", "important");
-                    child.style.setProperty("min-height", "0", "important");
-                    child.style.setProperty("align-self", "stretch", "important");
-                    child.style.setProperty("margin", "0", "important");
-                    child.style.setProperty("padding", "0", "important");
-                  });
-                }
-                hButtons.forEach((button) => {
-                  const text = (button.innerText || button.textContent || "").trim();
-                  const selected =
-                    text === hCurrent ||
-                    button.getAttribute("aria-checked") === "true" ||
-                    button.getAttribute("aria-selected") === "true" ||
-                    button.getAttribute("aria-pressed") === "true" ||
-                    button.getAttribute("data-selected") === "true" ||
-                    !!button.querySelector("input:checked");
-                  const targets = new Set([
-                    button,
-                    button.closest('[data-testid="stSegmentedControlOption"]'),
-                    button.closest('[role="radio"]'),
-                    button.closest('[role="button"]'),
-                  ].filter(Boolean));
-                  targets.forEach((target) => {
-                    target.dataset.jocketProviderActive = selected ? "true" : "false";
-                    target.classList.toggle("jocket-provider-active", selected);
-                  });
-                  button.style.setProperty("width", "100%", "important");
-                  button.style.setProperty("min-width", "0", "important");
-                  button.style.setProperty("max-width", "none", "important");
-                  button.style.setProperty("height", "52px", "important");
-                  button.style.setProperty("min-height", "52px", "important");
-                  button.style.setProperty("max-height", "52px", "important");
-                  button.style.setProperty("margin", "0", "important");
-                  button.style.setProperty("padding", "0 12px", "important");
-                  button.style.setProperty("border-radius", "999px", "important");
-                  button.style.setProperty("display", "inline-flex", "important");
-                  button.style.setProperty("align-items", "center", "important");
-                  button.style.setProperty("justify-content", "center", "important");
-                  button.style.setProperty("align-self", "stretch", "important");
-                  button.style.setProperty("transform-origin", "center center", "important");
-                  button.style.setProperty("transition", "transform 150ms cubic-bezier(0.2, 0.9, 0.2, 1), filter 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease", "important");
-                  button.style.setProperty(
-                    "transform",
-                    button.dataset.jocketWindowHover === "true" ? "translateY(-2px) scale(1.035)" : selected ? "translateY(-1px)" : "none",
-                    "important"
-                  );
-                  if (!button.dataset.jocketWindowHoverBound) {
-                    button.dataset.jocketWindowHoverBound = "true";
-                    button.addEventListener("pointerenter", () => {
-                      button.dataset.jocketWindowHover = "true";
-                      button.style.setProperty("transform", "translateY(-2px) scale(1.035)", "important");
-                      button.style.setProperty("filter", "brightness(1.12)", "important");
-                    });
-                    button.addEventListener("pointerleave", () => {
-                      button.dataset.jocketWindowHover = "false";
-                      const isActive = button.dataset.jocketProviderActive === "true";
-                      button.style.setProperty("transform", isActive ? "translateY(-1px)" : "none", "important");
-                      button.style.removeProperty("filter");
-                    });
-                  }
-                });
+                decorateAsPillNav('[class*="st-key-hedge_mode_widget"]', '[class*="st-key-hedge_mode_widget"] button', hCurrent);
               };
 
               // Fix skill buttons layout safely
@@ -522,33 +2093,95 @@ def load_css(path: str = "assets/styles.css") -> None:
                 });
               };
 
-              // Fix history report buttons layout (horizontal row + circular delete buttons)
+              // Fix history report buttons layout inside popover
               const fixHistoryLayout = () => {
-                const expanderDetails = doc.querySelectorAll('[data-testid="stExpanderDetails"]');
-                expanderDetails.forEach(detail => {
-                  const hasHistBtn = detail.querySelector('[class*="st-key-ta_hist_"]');
-                  if (!hasHistBtn) return;
-                  const vBlock = detail.querySelector('[data-testid="stVerticalBlock"]');
-                  if (vBlock) {
-                    vBlock.style.setProperty('display', 'flex', 'important');
-                    vBlock.style.setProperty('flex-direction', 'row', 'important');
-                    vBlock.style.setProperty('flex-wrap', 'wrap', 'important');
-                    vBlock.style.setProperty('align-items', 'center', 'important');
-                    vBlock.style.setProperty('justify-content', 'flex-start', 'important');
-                    vBlock.style.setProperty('gap', '6px 8px', 'important');
-                    vBlock.querySelectorAll('[data-testid="element-container"]').forEach(el => {
-                      el.style.setProperty('width', 'auto', 'important');
-                      el.style.setProperty('flex', '0 0 auto', 'important');
-                      el.style.setProperty('margin', '0', 'important');
-                      el.style.setProperty('padding', '0', 'important');
-                      // Hide containers that don't contain history/delete buttons (e.g. script injection containers)
-                      if (!el.querySelector('[class*="st-key-ta_hist_"], [class*="st-key-ta_del_"]')) {
-                        el.style.setProperty('display', 'none', 'important');
-                      }
+                // Target history items inside popover body
+                const popoverBody = doc.querySelector('[data-testid="stPopoverBody"]');
+                if (!popoverBody) return;
+
+                // CRITICAL: Also strip background from the outer BaseWeb portal wrapper
+                // (the div[data-baseweb="popover"] that wraps stPopoverBody carries BaseWeb's dark theme bg)
+                const outerWrapper = popoverBody.closest('[data-baseweb="popover"]') || popoverBody.parentElement;
+                if (outerWrapper && outerWrapper !== popoverBody) {
+                  outerWrapper.style.setProperty('background', 'transparent', 'important');
+                  outerWrapper.style.setProperty('background-color', 'transparent', 'important');
+                  outerWrapper.style.setProperty('border', 'none', 'important');
+                  outerWrapper.style.setProperty('box-shadow', 'none', 'important');
+                  outerWrapper.style.setProperty('padding', '0', 'important');
+                }
+
+                // Make popover body container clean frosted glass directly on the page background (matching top nav)
+                popoverBody.style.setProperty('background', 'rgba(20, 23, 28, 0.76)', 'important');
+                popoverBody.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.18)', 'important');
+                popoverBody.style.setProperty('backdrop-filter', 'blur(30px) saturate(155%)', 'important');
+                popoverBody.style.setProperty('-webkit-backdrop-filter', 'blur(30px) saturate(155%)', 'important');
+                popoverBody.style.setProperty('border-radius', '24px', 'important');
+                popoverBody.style.setProperty('box-shadow', '0 24px 70px rgba(0, 0, 0, 0.6)', 'important');
+
+                // Strip backgrounds from all intermediate Streamlit wrapper divs inside the popover
+                popoverBody.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stVerticalBlock"], [data-testid="stColumn"], [data-testid="stHorizontalBlock"], [data-testid="stElementContainer"]').forEach(el => {
+                  el.style.setProperty('background', 'transparent', 'important');
+                  el.style.setProperty('background-color', 'transparent', 'important');
+                  el.style.setProperty('border', 'none', 'important');
+                  el.style.setProperty('box-shadow', 'none', 'important');
+                });
+
+                // Tighten vertical spacing in popover
+                popoverBody.querySelectorAll('[data-testid="stVerticalBlock"]').forEach(vb => {
+                  vb.style.setProperty('gap', '4px', 'important');
+                });
+
+                // Fix each history row (horizontal block with report btn + delete btn)
+                popoverBody.querySelectorAll('[data-testid="stHorizontalBlock"]').forEach(row => {
+                  // Only apply this layout fix to history rows (which contain a delete key)
+                  const hasHistoryDel = row.querySelector('[class*="st-key-ta_del_select"]');
+                  if (!hasHistoryDel) return;
+
+                  row.style.setProperty('gap', '6px', 'important');
+                  row.style.setProperty('align-items', 'center', 'important');
+                  const cols = row.querySelectorAll('[data-testid="stColumn"]');
+                  if (cols.length === 2) {
+                    // Report button column: fill
+                    cols[0].style.setProperty('flex', '1 1 auto', 'important');
+                    cols[0].style.setProperty('min-width', '0', 'important');
+                    // Delete button column: narrow
+                    cols[1].style.setProperty('flex', '0 0 28px', 'important');
+                    cols[1].style.setProperty('max-width', '28px', 'important');
+                    cols[1].style.setProperty('min-width', '28px', 'important');
+                  }
+                });
+
+                // Force history select buttons to be capsule shape (pill cards)
+                doc.querySelectorAll('[class*="st-key-ta_hist_select_"] button').forEach(btn => {
+                  btn.style.setProperty('border-radius', '9999px', 'important');
+                  btn.style.setProperty('background', 'rgba(255, 255, 255, 0.08)', 'important');
+                  btn.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.14)', 'important');
+                  btn.style.setProperty('color', 'rgba(255, 255, 255, 0.85)', 'important');
+                  btn.style.setProperty('padding', '10px 20px 10px 14px', 'important');
+                  btn.style.setProperty('display', 'flex', 'important');
+                  btn.style.setProperty('flex-direction', 'row', 'important');
+                  btn.style.setProperty('align-items', 'center', 'important');
+                  btn.style.setProperty('height', 'auto', 'important');
+                  btn.style.setProperty('min-height', '56px', 'important');
+                  btn.style.setProperty('width', '100%', 'important');
+                  btn.style.setProperty('box-shadow', 'none', 'important');
+                  btn.style.setProperty('transition', 'all 0.2s ease', 'important');
+
+                  // Setup hover listeners
+                  if (!btn.dataset.jocketHoverBound) {
+                    btn.dataset.jocketHoverBound = "true";
+                    btn.addEventListener('mouseenter', () => {
+                      btn.style.setProperty('background', 'rgba(255, 255, 255, 0.18)', 'important');
+                      btn.style.setProperty('border-color', 'rgba(255, 255, 255, 0.24)', 'important');
+                    });
+                    btn.addEventListener('mouseleave', () => {
+                      btn.style.setProperty('background', 'rgba(255, 255, 255, 0.08)', 'important');
+                      btn.style.setProperty('border-color', 'rgba(255, 255, 255, 0.14)', 'important');
                     });
                   }
                 });
-                // Force delete buttons to be tiny 20px solid pink circles
+
+                // Force delete buttons compact and centered
                 doc.querySelectorAll('[class*="st-key-ta_del_"] button').forEach(btn => {
                   btn.style.setProperty('width', '20px', 'important');
                   btn.style.setProperty('min-width', '20px', 'important');
@@ -567,32 +2200,136 @@ def load_css(path: str = "assets/styles.css") -> None:
                   btn.style.setProperty('justify-content', 'center', 'important');
                   btn.style.setProperty('overflow', 'hidden', 'important');
                   btn.style.setProperty('flex-shrink', '0', 'important');
-                  btn.style.setProperty('box-shadow', '0 4px 10px rgba(255, 92, 122, 0.3)', 'important');
+                  btn.style.setProperty('font-size', '10px', 'important');
+                  btn.style.setProperty('line-height', '1', 'important');
+
+                  // Centering inner cross characters perfectly
+                  btn.querySelectorAll('*').forEach(child => {
+                    child.style.setProperty('margin', '0', 'important');
+                    child.style.setProperty('padding', '0', 'important');
+                    child.style.setProperty('line-height', '1', 'important');
+                    child.style.setProperty('display', 'inline-flex', 'important');
+                    child.style.setProperty('align-items', 'center', 'important');
+                    child.style.setProperty('justify-content', 'center', 'important');
+                    child.style.setProperty('width', '100%', 'important');
+                    child.style.setProperty('height', '100%', 'important');
+                  });
                 });
-                // Fix container coupling
-                doc.querySelectorAll('[data-testid="element-container"]').forEach(el => {
-                  const histChild = el.querySelector(':scope > [class*="st-key-ta_hist_"]');
-                  const delChild = el.querySelector(':scope > [class*="st-key-ta_del_"]');
-                  if (histChild) {
-                    el.style.setProperty('margin-right', '-4px', 'important');
-                    el.style.setProperty('z-index', '2', 'important');
+              };
+
+              // Fix analyst selection popover style to pill nav style
+              const fixAnalystLayout = () => {
+                const popoverBody = doc.querySelector('[data-testid="stPopoverBody"]');
+                if (!popoverBody) return;
+
+                // CRITICAL: Also strip background from the outer BaseWeb portal wrapper
+                // (the div[data-baseweb="popover"] that wraps stPopoverBody carries BaseWeb's dark theme bg)
+                const outerWrapper = popoverBody.closest('[data-baseweb="popover"]') || popoverBody.parentElement;
+                if (outerWrapper && outerWrapper !== popoverBody) {
+                  outerWrapper.style.setProperty('background', 'transparent', 'important');
+                  outerWrapper.style.setProperty('background-color', 'transparent', 'important');
+                  outerWrapper.style.setProperty('border', 'none', 'important');
+                  outerWrapper.style.setProperty('box-shadow', 'none', 'important');
+                  outerWrapper.style.setProperty('padding', '0', 'important');
+                }
+
+                // Make popover body container clean frosted glass directly on the page background (matching top nav)
+                popoverBody.style.setProperty('background', 'rgba(20, 23, 28, 0.76)', 'important');
+                popoverBody.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.18)', 'important');
+                popoverBody.style.setProperty('backdrop-filter', 'blur(30px) saturate(155%)', 'important');
+                popoverBody.style.setProperty('-webkit-backdrop-filter', 'blur(30px) saturate(155%)', 'important');
+                popoverBody.style.setProperty('border-radius', '24px', 'important');
+                popoverBody.style.setProperty('box-shadow', '0 24px 70px rgba(0, 0, 0, 0.6)', 'important');
+
+                // Strip backgrounds from all intermediate Streamlit wrapper divs inside the popover
+                popoverBody.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"], [data-testid="stVerticalBlock"], [data-testid="stColumn"], [data-testid="stHorizontalBlock"], [data-testid="stElementContainer"]').forEach(el => {
+                  el.style.setProperty('background', 'transparent', 'important');
+                  el.style.setProperty('background-color', 'transparent', 'important');
+                  el.style.setProperty('border', 'none', 'important');
+                  el.style.setProperty('box-shadow', 'none', 'important');
+                });
+
+                // Increase vertical spacing between rows of chips for a less crowded layout
+                popoverBody.querySelectorAll('[data-testid="stVerticalBlock"]').forEach(vb => {
+                  vb.style.setProperty('gap', '10px', 'important');
+                });
+
+                // Target analyst buttons inside popover body
+                popoverBody.querySelectorAll('[class*="st-key-ai_skill_"] button').forEach(btn => {
+                  const isPrimary = btn.getAttribute('kind') === 'primary' || btn.dataset.testid === 'stBaseButton-primary';
+
+                  btn.style.setProperty('border-radius', '9999px', 'important');
+                  btn.style.setProperty('height', '44px', 'important'); // Increased height
+                  btn.style.setProperty('min-height', '44px', 'important');
+                  btn.style.setProperty('max-height', '44px', 'important');
+                  btn.style.setProperty('width', '100%', 'important');
+                  btn.style.setProperty('min-width', '0', 'important');
+                  btn.style.setProperty('max-width', 'none', 'important');
+                  btn.style.setProperty('transition', 'all 0.2s ease', 'important');
+                  btn.style.setProperty('font-size', '13px', 'important');
+                  btn.style.setProperty('display', 'inline-flex', 'important');
+                  btn.style.setProperty('align-items', 'center', 'important');
+                  btn.style.setProperty('justify-content', 'center', 'important');
+                  btn.style.setProperty('padding', '8px 16px', 'important');
+                  btn.style.setProperty('box-shadow', 'none', 'important');
+
+                  if (isPrimary) {
+                    // Selected state: White bg, Black text
+                    btn.style.setProperty('background', '#ffffff', 'important');
+                    btn.style.setProperty('border', '1px solid #ffffff', 'important');
+                    btn.style.setProperty('color', '#09090b', 'important');
+                  } else {
+                    // Unselected state: Frosted glass bg, White text, semi-transparent border
+                    btn.style.setProperty('background', 'rgba(255, 255, 255, 0.08)', 'important');
+                    btn.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.14)', 'important');
+                    btn.style.setProperty('color', 'rgba(255, 255, 255, 0.85)', 'important');
+
+                    // Setup hover listeners
+                    if (!btn.dataset.jocketHoverBound) {
+                      btn.dataset.jocketHoverBound = "true";
+                      btn.addEventListener('mouseenter', () => {
+                        btn.style.setProperty('background', 'rgba(255, 255, 255, 0.18)', 'important');
+                        btn.style.setProperty('border-color', 'rgba(255, 255, 255, 0.24)', 'important');
+                        btn.querySelectorAll('*').forEach(child => {
+                          child.style.setProperty('color', '#ffffff', 'important');
+                          child.style.setProperty('-webkit-text-fill-color', '#ffffff', 'important');
+                        });
+                      });
+                      btn.addEventListener('mouseleave', () => {
+                        btn.style.setProperty('background', 'rgba(255, 255, 255, 0.08)', 'important');
+                        btn.style.setProperty('border-color', 'rgba(255, 255, 255, 0.14)', 'important');
+                        btn.querySelectorAll('*').forEach(child => {
+                          child.style.setProperty('color', 'rgba(255, 255, 255, 0.85)', 'important');
+                          child.style.setProperty('-webkit-text-fill-color', 'rgba(255, 255, 255, 0.85)', 'important');
+                        });
+                      });
+                    }
                   }
-                  if (delChild) {
-                    el.style.setProperty('z-index', '1', 'important');
-                    el.style.setProperty('display', 'flex', 'important');
-                    el.style.setProperty('align-items', 'center', 'important');
-                    el.style.setProperty('justify-content', 'center', 'important');
-                  }
+
+                  // Force children text styles
+                  btn.querySelectorAll('*').forEach(child => {
+                    child.style.setProperty('color', isPrimary ? '#09090b' : 'rgba(255, 255, 255, 0.85)', 'important');
+                    child.style.setProperty('-webkit-text-fill-color', isPrimary ? '#09090b' : 'rgba(255, 255, 255, 0.85)', 'important');
+                    child.style.setProperty('font-weight', isPrimary ? '650' : '500', 'important');
+                    child.style.setProperty('margin', '0', 'important');
+                    child.style.setProperty('padding', '0', 'important');
+                  });
                 });
               };
 
               const enhanceAiInputLoading = () => {
                 const marker = doc.getElementById("jocket-current-page");
                 const currentPage = marker ? marker.getAttribute("data-page") : "";
+                const composerMarker = doc.querySelector(".ai-composer-shell");
+                if (composerMarker) {
+                  const composerBlock = composerMarker.closest('[data-testid="stVerticalBlock"]');
+                  const composerForm = composerBlock ? composerBlock.querySelector('[data-testid="stForm"]') : null;
+                  if (composerForm) composerForm.classList.add("jocket-ai-composer-form");
+                }
                 const inputWrap = doc.querySelector('[class*="st-key-ai_market_prompt"] [data-baseweb="input"]');
                 const inputElem = doc.querySelector('[class*="st-key-ai_market_prompt"] input');
                 const sendBtn = doc.querySelector('[class*="st-key-ai_market_submit"] button')
-                  || doc.querySelector('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] button');
+                  || doc.querySelector('.jocket-dock-host [data-testid="stFormSubmitButton"] button');
                 const aiProcessing = doc.getElementById("jocket-ai-processing");
                 
                 if (currentPage !== "AI洞察" || !inputWrap) return;
@@ -629,9 +2366,86 @@ def load_css(path: str = "assets/styles.css") -> None:
                 }
               };
 
+              const enhanceAiPromptRail = () => {
+                const inputElem = doc.querySelector('[class*="st-key-ai_market_prompt"] input')
+                               || doc.querySelector('[class*="st-key-stock_query"] input')
+                               || doc.querySelector('[class*="st-key-ta_input_ticker"] input')
+                               || doc.querySelector('[class*="st-key-hedge_tickers"] input')
+                               || doc.querySelector('[class*="st-key-sentiment_date"] input')
+                               || doc.querySelector('[class*="st-key-ta_input_date"] input')
+                               || doc.querySelector('[class*="st-key-hedge_start_date"] input')
+                               || doc.querySelector('[class*="st-key-hedge_end_date"] input');
+                if (!inputElem) return;
+                const inputWrap = inputElem.closest('[data-baseweb="input"]');
+                doc.querySelectorAll(".ai-prompt-rail [data-ai-prompt]").forEach((chip) => {
+                  if (chip.dataset.jocketPromptBound) return;
+                  chip.dataset.jocketPromptBound = "true";
+                  const applyPrompt = () => {
+                    const prompt = chip.getAttribute("data-ai-prompt") || (chip.innerText || chip.textContent || "").trim();
+                    inputElem.focus();
+                    const valueSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, "value")?.set;
+                    if (valueSetter) {
+                      valueSetter.call(inputElem, prompt);
+                    } else {
+                      inputElem.value = prompt;
+                    }
+                    inputElem.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
+                    inputElem.dispatchEvent(new Event("change", { bubbles: true }));
+                    if (inputWrap) inputWrap.setAttribute("data-ai-suggested", "true");
+                    chip.dataset.jocketPromptApplied = "true";
+                    setTimeout(() => {
+                      chip.dataset.jocketPromptApplied = "false";
+                      if (inputWrap) inputWrap.removeAttribute("data-ai-suggested");
+                    }, 900);
+                  };
+                  chip.addEventListener("click", applyPrompt);
+                  chip.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      applyPrompt();
+                    }
+                  });
+                });
+              };
+
+              const enhanceAiPromptHotkeys = () => {
+                if (window.parent._jocketAiPromptHotkeysBound) return;
+                window.parent._jocketAiPromptHotkeysBound = true;
+                doc.addEventListener("keydown", (event) => {
+                  const marker = doc.getElementById("jocket-current-page");
+                  const currentPage = marker ? marker.getAttribute("data-page") : "";
+                  if (currentPage !== "AI洞察") return;
+                  const target = event.target;
+                  const tagName = (target && target.tagName || "").toLowerCase();
+                  const isTyping = tagName === "input" || tagName === "textarea" || (target && target.isContentEditable);
+                  const wantsFocus = event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !isTyping;
+                  const wantsCommand = event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey);
+                  if (!wantsFocus && !wantsCommand) return;
+                  const inputElem = doc.querySelector('[class*="st-key-ai_market_prompt"] input');
+                  const inputWrap = doc.querySelector('[class*="st-key-ai_market_prompt"] [data-baseweb="input"]');
+                  if (!inputElem) return;
+                  event.preventDefault();
+                  inputElem.focus();
+                  inputElem.select();
+                  setTimeout(() => {
+                    inputElem.focus();
+                    inputElem.select();
+                    if (inputElem.value) inputElem.setSelectionRange(0, inputElem.value.length);
+                  }, 30);
+                  if (inputWrap) {
+                    inputWrap.setAttribute("data-ai-hotkey-focus", "true");
+                    setTimeout(() => inputWrap.removeAttribute("data-ai-hotkey-focus"), 900);
+                  }
+                });
+              };
+
               const animateCommandBarHeight = () => {
-                const container = doc.querySelector('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title)');
+                const container = doc.querySelector('.jocket-dock-host');
                 if (!container) return;
+                container.style.removeProperty("height");
+                container.style.removeProperty("top");
+                container.style.removeProperty("overflow");
+                return;
 
                 const block = container.querySelector('[data-testid="stVerticalBlock"]');
                 if (!block) return;
@@ -721,18 +2535,38 @@ def load_css(path: str = "assets/styles.css") -> None:
               };
 
               const enhanceLaicaiButtons = () => {
-                const buttons = [
+                const explicitButtons = [
                   ...doc.querySelectorAll('.st-key-run_stock_quote button'),
                   ...doc.querySelectorAll('.st-key-run_market_sentiment button'),
                   ...doc.querySelectorAll('.st-key-run_stock_analysis button'),
                   ...doc.querySelectorAll('.st-key-run_ta_analysis button'),
+                  ...doc.querySelectorAll('.st-key-run_hedge_analysis button'),
                   ...doc.querySelectorAll('.st-key-ai_market_submit button'),
-                  ...doc.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]:has(.command-bar-title) [data-testid="stFormSubmitButton"] button')
+                  ...doc.querySelectorAll('.jocket-dock-host [data-testid="stFormSubmitButton"] button')
                 ];
+                const primaryButtons = [...doc.querySelectorAll(
+                  '.stButton > button[kind="primary"], ' +
+                  '.stDownloadButton > button[kind="primary"], ' +
+                  '[data-testid="stFormSubmitButton"] > button[kind="primary"]'
+                )];
+                const textLaicaiButtons = [...doc.querySelectorAll('button')].filter(btn => {
+                  const text = (btn.innerText || btn.textContent || "").trim();
+                  return text.includes("来财来财");
+                });
+                const buttons = [...new Set([...explicitButtons, ...primaryButtons, ...textLaicaiButtons])];
                 const aiProcessing = doc.getElementById("jocket-ai-processing");
                 const hasSpinner = !!doc.querySelector('div[data-testid="stSpinner"]');
                 const isAiRunning = aiProcessing && aiProcessing.getAttribute("data-running") === "true";
                 buttons.forEach(btn => {
+                  btn.setAttribute("data-jocket-button-style", "Style L");
+                  if (btn.closest(".jocket-dock-host")) {
+                    btn.style.setProperty("height", "42px", "important");
+                    btn.style.setProperty("min-height", "42px", "important");
+                    btn.style.setProperty("max-height", "42px", "important");
+                    btn.style.setProperty("padding-top", "0", "important");
+                    btn.style.setProperty("padding-bottom", "0", "important");
+                    btn.style.setProperty("transform", "none", "important");
+                  }
                   const isBtnDisabled = btn.disabled || btn.getAttribute("disabled") !== null;
                   if (hasSpinner || isAiRunning || isBtnDisabled) {
                     btn.setAttribute("data-laicai-running", "true");
@@ -785,17 +2619,432 @@ def load_css(path: str = "assets/styles.css") -> None:
                 });
               };
 
+              const enhanceSplitText = () => {
+                const headings = doc.querySelectorAll(".page-empty-state h1");
+                headings.forEach((h1) => {
+                  const text = (h1.getAttribute("data-jocket-title") || h1.textContent || "").trim();
+                  if (!text) return;
+                  
+                  const isSplit = h1.querySelector(".split-char") !== null;
+                  const lastText = h1.getAttribute("data-original-text");
+                  
+                  if (!isSplit || lastText !== text) {
+                    h1.setAttribute("data-original-text", text);
+                    h1.setAttribute("data-split-text-animated", "true");
+                    h1.innerHTML = "";
+                    
+                    const chars = [...text];
+                    chars.forEach((char, index) => {
+                      const span = doc.createElement("span");
+                      if (char === " ") {
+                        span.innerHTML = "&nbsp;";
+                      } else {
+                        span.textContent = char;
+                      }
+                      span.className = "split-char";
+                      span.style.animationDelay = `${index * 35}ms`;
+                      h1.appendChild(span);
+                    });
+                  }
+                });
+              };
+
+              const enhanceMagicBentoCards = () => {
+                const landingVisible = [...doc.querySelectorAll(".page-empty-state")].some((node) => {
+                  const rect = node.getBoundingClientRect();
+                  const style = window.parent.getComputedStyle(node);
+                  return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+                });
+                const resultSignal = doc.querySelector([
+                  "#jocket-ai-chat-active[data-active='true']",
+                  ".stock-terminal-hero",
+                  ".market-spectrum-terminal",
+                  ".ai-thread .ai-message-row",
+                  ".ta-stat-card",
+                  ".hedge-update-card",
+                  ".metric-card",
+                  ".profile-card"
+                ].join(","));
+                const isResultPage = !landingVisible && Boolean(resultSignal);
+                doc.body.classList.toggle("jocket-results-page", isResultPage);
+
+                let spotlight = doc.getElementById("global-cursor-glow");
+                if (!isResultPage) {
+                  if (spotlight) spotlight.style.opacity = "0";
+                  return;
+                }
+
+                const glowColor = "218, 220, 224";
+                const spotlightRadius = 300;
+                const cardSelector = [
+                  ".stock-terminal-hero",
+                  ".stock-live-price",
+                  ".stock-ai-thesis",
+                  ".stock-ai-score",
+                  ".stock-rating-card",
+                  ".stock-score-ring",
+                  ".metric-card",
+                  ".insight-card",
+                  ".rank-card",
+                  ".chart-card",
+                  "[class*='st-key-result_chart_']",
+                  ".result-chart-surface",
+                  ".section-card",
+                  ".profile-card",
+                  ".market-cycle-card",
+                  ".market-narrative-card",
+                  ".market-ladder-card",
+                  ".market-distribution-card",
+                  ".market-pulse-panel",
+                  ".market-pulse-card",
+                  ".market-pos-card",
+                  ".market-timeline-card",
+                  ".sentiment-card",
+                  ".sentiment-hero",
+                  ".sentiment-flow-card",
+                  ".sentiment-command-strip",
+                  ".sentiment-cycle-metrics .mini-metric",
+                  ".sentiment-metric-card",
+                  ".sentiment-index-card",
+                  ".sentiment-board-card",
+                  ".sentiment-method-card",
+                  ".sentiment-alert",
+                  ".glass-table-wrap",
+                  ".ta-stat-card",
+                  ".hedge-update-card"
+                ].join(",");
+
+                const sizeClasses = [
+                  "bento-size-1x1",
+                  "bento-size-2x1",
+                  "bento-size-2x2",
+                  "bento-size-2x3",
+                  "bento-size-4x1",
+                  "bento-size-4x2",
+                  "bento-size-4x4",
+                  "bento-size-8x2",
+                  "bento-size-8x4"
+                ];
+
+                const assignBentoSize = (card) => {
+                  card.classList.remove(...sizeClasses);
+                  const explicitSize = card.dataset.bentoSize;
+                  let size = explicitSize || "2x1";
+
+                  if (!explicitSize && card.matches(".metric-card, .ta-stat-card, .sentiment-index-card, .sentiment-cycle-metrics .mini-metric")) {
+                    size = "1x1";
+                  } else if (!explicitSize && card.matches(".stock-score-ring, .sentiment-metric-card, .sentiment-board-card, .sentiment-method-card")) {
+                    size = "2x2";
+                  } else if (!explicitSize && card.matches(".stock-live-price, .stock-ai-thesis, .insight-card, .rank-card, .market-pos-card, .market-timeline-card, .chart-card, [class*='st-key-result_chart_'], .result-chart-surface")) {
+                    size = "2x2";
+                  } else if (!explicitSize && card.matches(".glass-table-wrap")) {
+                    size = "8x4";
+                  } else if (!explicitSize && card.matches(".stock-terminal-hero, .profile-card, .market-cycle-card, .market-narrative-card, .market-ladder-card, .market-distribution-card, .market-pulse-panel, .sentiment-hero, .sentiment-flow-card, .sentiment-command-strip")) {
+                    size = "4x2";
+                  }
+
+                  card.classList.add(`bento-size-${size}`);
+                  card.dataset.bentoSize = size;
+                };
+
+                doc.querySelectorAll(".result-text-card, .result-action-card, .result-bento-card, .section-heading-card").forEach((node) => {
+                  node.classList.remove(
+                    "result-text-card",
+                    "result-action-card",
+                    "result-bento-card",
+                    "section-heading-card",
+                    "magic-bento-card",
+                    "magic-bento-card--border-glow",
+                    ...sizeClasses
+                  );
+                  delete node.dataset.bentoSize;
+                });
+
+                doc.querySelectorAll("[data-testid='stVerticalBlockBorderWrapper']").forEach((frame) => {
+                  if (frame.classList.contains("jocket-dock-host")) return;
+                  frame.classList.add("result-frame-only");
+                  frame.classList.remove(
+                    "result-bento-card",
+                    "result-text-card",
+                    "chart-card",
+                    "magic-bento-card",
+                    "magic-bento-card--border-glow",
+                    ...sizeClasses
+                  );
+                });
+
+                doc.querySelectorAll(".result-chart-surface").forEach((element) => {
+                  element.classList.remove("result-chart-surface");
+                });
+                doc.querySelectorAll("[data-testid='stPlotlyChart']").forEach((chart) => {
+                  if (chart.closest("[class*='st-key-result_chart_']")) return;
+                  chart.closest("[data-testid='stElementContainer']")?.classList.add("result-chart-surface");
+                });
+
+                doc.querySelectorAll(".magic-bento-card").forEach((card) => {
+                  if (!card.matches(cardSelector)) {
+                    card.classList.remove("magic-bento-card", "magic-bento-card--border-glow", ...sizeClasses);
+                    delete card.dataset.bentoSize;
+                  }
+                });
+
+                const candidates = [...doc.querySelectorAll(cardSelector)];
+                candidates.forEach((card) => {
+                  const parentCard = card.parentElement?.closest(".magic-bento-card");
+                  if (parentCard) {
+                    card.classList.remove("magic-bento-card", "magic-bento-card--border-glow", "particle-container", ...sizeClasses);
+                    delete card.dataset.bentoSize;
+                    return;
+                  }
+                  card.classList.add("magic-bento-card", "magic-bento-card--border-glow");
+                  card.classList.remove("particle-container");
+                  assignBentoSize(card);
+                  card.style.setProperty("--glow-color", glowColor);
+                  card.style.setProperty("--glow-radius", `${spotlightRadius}px`);
+                  if (card.dataset.reactBitsMagicBound === "stable-v2") return;
+                  card.dataset.reactBitsMagicBound = "stable-v2";
+                  card.style.setProperty("--glow-intensity", "0");
+
+                  const handleClick = (event) => {
+                    if (window.parent.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+                    const rect = card.getBoundingClientRect();
+                    const x = event.clientX - rect.left;
+                    const y = event.clientY - rect.top;
+                    const maxDistance = Math.max(
+                      Math.hypot(x, y),
+                      Math.hypot(x - rect.width, y),
+                      Math.hypot(x, y - rect.height),
+                      Math.hypot(x - rect.width, y - rect.height)
+                    );
+                    const ripple = doc.createElement("span");
+                    ripple.className = "magic-bento-ripple";
+                    ripple.style.setProperty("--ripple-x", `${x - maxDistance}px`);
+                    ripple.style.setProperty("--ripple-y", `${y - maxDistance}px`);
+                    ripple.style.setProperty("--ripple-size", `${maxDistance * 2}px`);
+                    card.appendChild(ripple);
+                    window.parent.setTimeout(() => ripple.remove(), 840);
+                  };
+
+                  card.addEventListener("click", handleClick, { passive: true });
+                });
+
+                doc.querySelectorAll(".particle").forEach((node) => node.remove());
+
+                if (!spotlight) {
+                  spotlight = doc.createElement("div");
+                  spotlight.id = "global-cursor-glow";
+                  doc.body.appendChild(spotlight);
+                }
+                spotlight.style.setProperty("--glow-color", glowColor);
+
+                if (!window.parent._jocketResultMagicBentoStableBound) {
+                  window.parent._jocketResultMagicBentoStableBound = true;
+                  doc.addEventListener("mousemove", (event) => {
+                    const disableMotion = window.parent.matchMedia("(max-width: 768px), (prefers-reduced-motion: reduce)").matches;
+                    if (!doc.body.classList.contains("jocket-results-page") || disableMotion) return;
+                    window.parent._jocketResultPointer = { x: event.clientX, y: event.clientY };
+                    if (window.parent._jocketResultPointerFrame) return;
+                    window.parent._jocketResultPointerFrame = window.parent.requestAnimationFrame(() => {
+                      window.parent._jocketResultPointerFrame = null;
+                      const pointer = window.parent._jocketResultPointer;
+                      const activeSpotlight = doc.getElementById("global-cursor-glow");
+                      if (!pointer || !activeSpotlight || !doc.body.classList.contains("jocket-results-page")) return;
+                      activeSpotlight.style.left = `${pointer.x}px`;
+                      activeSpotlight.style.top = `${pointer.y}px`;
+
+                      const cards = [...doc.querySelectorAll(".magic-bento-card")];
+                      const proximity = spotlightRadius * 0.5;
+                      const fadeDistance = spotlightRadius * 0.75;
+                      let minDistance = Infinity;
+                      cards.forEach((card) => {
+                        const rect = card.getBoundingClientRect();
+                        if (!rect.width || !rect.height) return;
+                        const centerX = rect.left + rect.width / 2;
+                        const centerY = rect.top + rect.height / 2;
+                        const effectiveDistance = Math.max(
+                          0,
+                          Math.hypot(pointer.x - centerX, pointer.y - centerY) - Math.max(rect.width, rect.height) / 2
+                        );
+                        minDistance = Math.min(minDistance, effectiveDistance);
+                        const intensity = effectiveDistance <= proximity
+                          ? 1
+                          : effectiveDistance <= fadeDistance
+                            ? (fadeDistance - effectiveDistance) / (fadeDistance - proximity)
+                            : 0;
+                        card.style.setProperty("--glow-x", `${((pointer.x - rect.left) / rect.width) * 100}%`);
+                        card.style.setProperty("--glow-y", `${((pointer.y - rect.top) / rect.height) * 100}%`);
+                        card.style.setProperty("--glow-intensity", `${intensity}`);
+                      });
+                      const localOpacity = minDistance <= proximity
+                        ? 0.8
+                        : minDistance <= fadeDistance
+                          ? ((fadeDistance - minDistance) / (fadeDistance - proximity)) * 0.8
+                          : 0;
+                      activeSpotlight.style.opacity = `${Math.max(0.28, localOpacity)}`;
+                    });
+                  }, { passive: true });
+
+                  doc.addEventListener("mouseleave", () => {
+                    const activeSpotlight = doc.getElementById("global-cursor-glow");
+                    if (activeSpotlight) activeSpotlight.style.opacity = "0";
+                    doc.querySelectorAll(".magic-bento-card").forEach((card) => {
+                      card.style.setProperty("--glow-intensity", "0");
+                    });
+                  }, { passive: true });
+                }
+              };
+
+              // Native port of React Bits Text Type for Streamlit-rendered
+              // loading copy. The animation state lives on the parent window
+              // so the 2-second progress fragment refresh cannot restart it.
+              const enhanceLoadingTextType = () => {
+                const visibleNodes = [...doc.querySelectorAll("[data-jocket-text-type]")]
+                  .filter((candidate) => candidate.isConnected && candidate.getClientRects().length > 0);
+                const node = visibleNodes[visibleNodes.length - 1];
+                if (!node) {
+                  const staleController = window.parent._jocketLoadingTextTypeController;
+                  if (staleController?.timer) window.parent.clearTimeout(staleController.timer);
+                  window.parent._jocketLoadingTextTypeController = null;
+                  return;
+                }
+
+                  const signature = node.getAttribute("data-messages") || "";
+                  if (!signature) return;
+
+                  let messages = [];
+                  try {
+                    messages = JSON.parse(signature);
+                  } catch (error) {
+                    return;
+                  }
+                  messages = messages.map((message) => String(message || "")).filter(Boolean);
+                  if (!messages.length) return;
+
+                  const output = node.querySelector(".jocket-text-type-output");
+                  const cursor = node.querySelector(".jocket-text-type-cursor");
+                  if (!output || !cursor) return;
+
+                  if (window.parent.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+                    output.textContent = messages[0];
+                    cursor.hidden = true;
+                    return;
+                  }
+
+                  const typingSpeed = 90;
+                  const deletingSpeed = 50;
+                  const pauseDuration = 4000;
+                  const betweenMessages = 350;
+                  let controller = window.parent._jocketLoadingTextTypeController;
+
+                  const renderControllerText = (activeController) => {
+                    doc.querySelectorAll("[data-jocket-text-type]").forEach((activeNode) => {
+                      if (!activeNode.isConnected || activeNode.getClientRects().length === 0) return;
+                      if (activeNode.getAttribute("data-messages") !== activeController.signature) return;
+                      const activeOutput = activeNode.querySelector(".jocket-text-type-output");
+                      const activeCursor = activeNode.querySelector(".jocket-text-type-cursor");
+                      if (activeOutput) activeOutput.textContent = activeController.renderedText;
+                      if (activeCursor) activeCursor.hidden = false;
+                    });
+                  };
+
+                  if (controller && controller.signature === signature) {
+                    renderControllerText(controller);
+                    return;
+                  }
+
+                  if (controller?.timer) {
+                    window.parent.clearTimeout(controller.timer);
+                  }
+                  controller = {
+                    signature,
+                    messages,
+                    messageIndex: 0,
+                    characterIndex: 0,
+                    deleting: false,
+                    renderedText: "",
+                    timer: null
+                  };
+                  window.parent._jocketLoadingTextTypeController = controller;
+
+                  const tick = () => {
+                    if (window.parent._jocketLoadingTextTypeController !== controller) return;
+                    const characters = Array.from(controller.messages[controller.messageIndex]);
+
+                    if (!controller.deleting) {
+                      controller.characterIndex = Math.min(controller.characterIndex + 1, characters.length);
+                      controller.renderedText = characters.slice(0, controller.characterIndex).join("");
+                      renderControllerText(controller);
+                      if (controller.characterIndex >= characters.length) {
+                        controller.deleting = true;
+                        controller.timer = window.parent.setTimeout(tick, pauseDuration);
+                        return;
+                      }
+                      controller.timer = window.parent.setTimeout(tick, typingSpeed);
+                      return;
+                    }
+
+                    controller.characterIndex = Math.max(controller.characterIndex - 1, 0);
+                    controller.renderedText = characters.slice(0, controller.characterIndex).join("");
+                    renderControllerText(controller);
+                    if (controller.characterIndex === 0) {
+                      controller.deleting = false;
+                      controller.messageIndex = (controller.messageIndex + 1) % controller.messages.length;
+                      controller.timer = window.parent.setTimeout(tick, betweenMessages);
+                      return;
+                    }
+                    controller.timer = window.parent.setTimeout(tick, deletingSpeed);
+                  };
+
+                  tick();
+              };
+
               enhanceAiInputLoading();
+              enhanceDockHosts();
               animateCommandBarHeight();
               enhanceNav();
               enhanceProvider();
               enhanceHedgeMode();
               fixSkillsLayout();
               fixHistoryLayout();
+              fixAnalystLayout();
               enhanceLaicaiButtons();
               enhanceDetailsTransition();
-              setInterval(() => { enhanceNav(); enhanceProvider(); enhanceHedgeMode(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }, 120);
-              new MutationObserver(() => { enhanceNav(); enhanceProvider(); enhanceHedgeMode(); fixSkillsLayout(); fixHistoryLayout(); enhanceAiInputLoading(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); }).observe(doc.body, { childList: true, subtree: true });
+              enhanceAiPromptRail();
+              enhanceAiPromptHotkeys();
+              enhanceMagicBentoCards();
+              enhanceSplitText();
+              enhanceLoadingTextType();
+              if (!window.parent._jocketMagicBentoEnhancerBound) {
+                window.parent._jocketMagicBentoEnhancerBound = true;
+                const MagicObserver = window.parent.MutationObserver || window.MutationObserver;
+                let magicRefreshTimer = null;
+                const magicObserver = new MagicObserver(() => {
+                  try { enhanceNav(); } catch (error) {}
+                  try { enhanceProvider(); } catch (error) {}
+                  try { enhanceHedgeMode(); } catch (error) {}
+                  try { enhanceDockHosts(); } catch (error) {}
+                  
+                  if (magicRefreshTimer !== null) return;
+                  magicRefreshTimer = window.parent.setTimeout(() => {
+                    magicRefreshTimer = null;
+                    try { enhanceMagicBentoCards(); } catch (error) {}
+                    try { enhanceSplitText(); } catch (error) {}
+                    try { enhanceLoadingTextType(); } catch (error) {}
+                  }, 120);
+                });
+                if (doc.body && typeof doc.body.nodeType === "number") {
+                  try {
+                    magicObserver.observe(doc.body, { childList: true, subtree: true });
+                    window.parent._jocketMagicBentoObserver = magicObserver;
+                  } catch (error) {}
+                }
+              }
+              manageSplashCursor();
+              manageDotField();
+              if (win.__jocketUiRefreshInterval) {
+                win.clearInterval(win.__jocketUiRefreshInterval);
+              }
+              win.__jocketUiRefreshInterval = win.setInterval(() => { enhanceNav(); enhanceProvider(); enhanceDockHosts(); enhanceHedgeMode(); fixSkillsLayout(); fixHistoryLayout(); fixAnalystLayout(); enhanceAiInputLoading(); enhanceAiPromptRail(); enhanceAiPromptHotkeys(); enhanceSplitText(); enhanceLoadingTextType(); animateCommandBarHeight(); enhanceLaicaiButtons(); enhanceDetailsTransition(); manageSplashCursor(); manageDotField(); }, 240);
               
               // Cancel button speed-up listener: closes the modal instantly on client-side!
               doc.addEventListener("click", (event) => {
@@ -811,26 +3060,135 @@ def load_css(path: str = "assets/styles.css") -> None:
                 }
               }, { passive: true });
 
-              doc.addEventListener("pointermove", (event) => {
-                orb.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
-                const card = doc.elementFromPoint(event.clientX, event.clientY)?.closest(selector);
-                if (active && active !== card) active.removeAttribute("data-cursor-glow");
-                active = card;
-                if (!card) return;
-                const rect = card.getBoundingClientRect();
-                card.style.setProperty("--cursor-x", `${event.clientX - rect.left}px`);
-                card.style.setProperty("--cursor-y", `${event.clientY - rect.top}px`);
-                card.setAttribute("data-cursor-glow", "true");
-              }, { passive: true });
-              doc.addEventListener("pointerleave", () => {
-                if (active) active.removeAttribute("data-cursor-glow");
-                active = null;
-              }, { passive: true });
+              // ──────────────── Popover Fade-In/Out Animation ────────────────
+              if (!win.__jocketPopoverAnimObserver) {
+                const popAnim = new MutationObserver((mutations) => {
+                  mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                      if (node.nodeType !== 1) return;
+                      const body = (node.getAttribute && node.getAttribute('data-testid') === 'stPopoverBody')
+                        ? node
+                        : (node.querySelector && node.querySelector('[data-testid="stPopoverBody"]'));
+                      if (body) {
+                        body.style.setProperty('animation', 'none', 'important');
+                        void body.offsetWidth;
+                        body.style.setProperty('animation', 'jocket-popover-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both', 'important');
+                      }
+                    });
+                  });
+                });
+                try {
+                  popAnim.observe(doc.body, { childList: true, subtree: true });
+                  win.__jocketPopoverAnimObserver = popAnim;
+                } catch(e) {}
+              }
+
+              // ──────────────── Variable Proximity Title Animation ────────────────
+              if (!window.parent._jocketProximityBound) {
+                window.parent._jocketProximityBound = true;
+                window.parent._jocketMouseX = null;
+                window.parent._jocketMouseY = null;
+                
+                doc.addEventListener("mousemove", (event) => {
+                  window.parent._jocketMouseX = event.clientX;
+                  window.parent._jocketMouseY = event.clientY;
+                }, { passive: true });
+                
+                doc.addEventListener("mouseleave", () => {
+                  window.parent._jocketMouseX = null;
+                  window.parent._jocketMouseY = null;
+                }, { passive: true });
+                
+                doc.addEventListener("touchmove", (event) => {
+                  if (event.touches && event.touches[0]) {
+                    window.parent._jocketMouseX = event.touches[0].clientX;
+                    window.parent._jocketMouseY = event.touches[0].clientY;
+                  }
+                }, { passive: true });
+
+                const runProximityAnimation = () => {
+                  const chars = doc.querySelectorAll(".page-empty-state h1 .split-char");
+                  if (chars.length > 0) {
+                    const radius = 175; // px (Proximity detection radius)
+                    const fromWght = 300;
+                    const toWght = 900;
+                    const mouseX = window.parent._jocketMouseX;
+                    const mouseY = window.parent._jocketMouseY;
+                    
+                    chars.forEach((char) => {
+                      if (mouseX === null || mouseY === null) {
+                        char.style.setProperty("font-variation-settings", `'wght' ${fromWght}`, "important");
+                        return;
+                      }
+                      const rect = char.getBoundingClientRect();
+                      const charX = rect.left + rect.width / 2;
+                      const charY = rect.top + rect.height / 2;
+                      
+                      const distance = Math.hypot(mouseX - charX, mouseY - charY);
+                      if (distance >= radius) {
+                        char.style.setProperty("font-variation-settings", `'wght' ${fromWght}`, "important");
+                      } else {
+                        const norm = 1 - distance / radius;
+                        const currentWght = fromWght + (toWght - fromWght) * norm;
+                        char.style.setProperty("font-variation-settings", `'wght' ${currentWght}`, "important");
+                      }
+                    });
+                  }
+                  window.parent.requestAnimationFrame(runProximityAnimation);
+                };
+                
+                window.parent.requestAnimationFrame(runProximityAnimation);
+              }
+
             })();
             </script>
             """,
             height=0,
         )
+
+        # Keep the sector bubbles physically responsive to the pointer. This is
+        # deliberately separate from the ambient drift animation so mouse input
+        # never restarts or snaps the motion timeline.
+        components.html(
+            """
+            <script>
+            (() => {
+              const doc = window.parent.document;
+              const bindBubbleStages = () => {
+                doc.querySelectorAll(".market-bubble-stage").forEach((stage) => {
+                  if (stage.dataset.jocketBubblePointer === "v3") return;
+                  stage.dataset.jocketBubblePointer = "v3";
+                  const reset = () => stage.querySelectorAll(".market-bubble").forEach((bubble) => {
+                    bubble.style.setProperty("--pointer-x", "0px");
+                    bubble.style.setProperty("--pointer-y", "0px");
+                  });
+                  stage.addEventListener("pointermove", (event) => {
+                    if (window.parent.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+                    const rect = stage.getBoundingClientRect();
+                    if (!rect.width || !rect.height) return;
+                    const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
+                    const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
+                    stage.querySelectorAll(".market-bubble").forEach((bubble, index) => {
+                      const depth = 5 + index * 1.8;
+                      bubble.style.setProperty("--pointer-x", `${(x * depth).toFixed(2)}px`);
+                      bubble.style.setProperty("--pointer-y", `${(y * depth).toFixed(2)}px`);
+                    });
+                  }, { passive: true });
+                  stage.addEventListener("pointerleave", reset, { passive: true });
+                });
+              };
+              bindBubbleStages();
+              if (!window.parent._jocketBubbleObserverV3) {
+                const observer = new window.parent.MutationObserver(bindBubbleStages);
+                observer.observe(doc.body, { childList: true, subtree: true });
+                window.parent._jocketBubbleObserverV3 = observer;
+              }
+            })();
+            </script>
+            """,
+            height=0,
+        )
+
 
 
 def _safe(value, default="-"):
@@ -903,17 +3261,11 @@ def render_hero(
     title: str | None = None,
     subtitle: str | None = None,
     ai_summary: str | None = None,
+    custom_html: str | None = None,
 ) -> None:
-    import hashlib
     updated_at = updated_at or datetime.now().strftime("%Y-%m-%d %H:%M")
     title = title or "A股智能雷达"
     subtitle = subtitle or "基于最新行情、技术指标和基本面信息生成中文研究视图。"
-    
-    # Generate a unique hash of the content to force a new animation keyframe definition
-    # This guarantees that the transition always triggers when switching pages or stocks.
-    content_str = f"{title}_{code}_{latest_date}_{updated_at}"
-    anim_hash = hashlib.md5(content_str.encode("utf-8")).hexdigest()[:8]
-    anim_class = f"hero-anim-{anim_hash}"
     
     ai_block = ""
     if ai_summary:
@@ -924,14 +3276,12 @@ def render_hero(
             f'</div>'
         )
 
-    # Use concatenated single-line strings and replace any newlines with space.
-    # This is 100% bulletproof against Markdown code-block parsing in Streamlit st.markdown.
+    custom_block = ""
+    if custom_html:
+        custom_block = custom_html
+
     html = (
-        f'<style>'
-        f'.{anim_class} {{ animation: fadeUp-{anim_hash} 650ms cubic-bezier(0.16, 1, 0.3, 1) both !important; }}'
-        f'@keyframes fadeUp-{anim_hash} {{ 0% {{ opacity: 0; transform: translateY(16px); filter: blur(4px); }} 100% {{ opacity: 1; transform: translateY(0); filter: blur(0); }} }}'
-        f'</style>'
-        f'<section class="hero-shell {anim_class}">'
+        f'<section class="hero-shell jocket-enter">'
         f'<div class="hero-content">'
         f'<div>'
         f'<div class="eyebrow">A股智能分析仪表盘</div>'
@@ -959,19 +3309,310 @@ def render_hero(
         f'</div>'
         f'</div>'
         f'</section>'
-    ).replace('\n', ' ')
+        f'{custom_block}'
+    )
     st.markdown(html, unsafe_allow_html=True)
 
 
-def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", indicator: str = "neutral") -> str:
-    tone_color = {
-        "green": "rgba(51, 214, 159, 0.24)",
-        "red": "rgba(255, 92, 122, 0.24)",
-        "cyan": "rgba(55, 232, 255, 0.22)",
-        "purple": "rgba(155, 92, 255, 0.22)",
-        "orange": "rgba(255, 184, 107, 0.20)",
-        "blue": "rgba(91, 140, 255, 0.22)",
-    }.get(tone, "rgba(91, 140, 255, 0.22)")
+@st.fragment(run_every="2s")
+def render_inline_progress_fragment(job_state_key: str) -> None:
+    import streamlit as st
+    from html import escape
+    import sys
+    import os
+
+    job = st.session_state.get(job_state_key)
+    if not job:
+        st.write("")
+        return
+
+    pct_val = "0%"
+    text_val = "正在初始化..."
+
+    # Case 1: Standard background job state represented by a dict
+    if isinstance(job, dict):
+        future = job.get("future")
+        if future is not None and future.done():
+            st.rerun()
+
+        progress = job.get("progress") or {}
+        stage = str(progress.get("stage") or "fetch")
+        
+        pct_map = {
+            "fetch": "33%",
+            "compute": "66%",
+            "view": "90%",
+            "done": "100%"
+        }
+        pct_val = pct_map.get(stage, "33%")
+        
+        text_map = {
+            "fetch": "正在检索多维行情数据...",
+            "compute": "正在计算量化指标与财务评分...",
+            "view": "正在生成智能视图与AI诊断...",
+            "done": "任务已完成"
+        }
+        text_val = text_map.get(stage, "正在拉取行情...")
+
+    # Case 2: ProgressTracker object (from tradingagents_ui.py)
+    elif hasattr(job, "completed_stages") and hasattr(job, "ticker"):
+        _TA_SRC = os.path.join(os.path.dirname(__file__), "tradingagents_src")
+        if _TA_SRC not in sys.path:
+            sys.path.insert(0, _TA_SRC)
+        from web.progress import PIPELINE_STAGES
+        
+        completed = len(job.completed_stages)
+        total = len(PIPELINE_STAGES)
+        pct = completed / total if total else 0
+        pct_val = f"{int(pct * 100)}%"
+
+        # Current active stage name
+        active_stage = "初始化分析环境..."
+        for s in PIPELINE_STAGES:
+            s_id = s["id"]
+            if s_id not in job.completed_stages:
+                active_stage = f"正在执行：{s['name']}..."
+                break
+        if completed == total:
+            active_stage = "分析已完成"
+        
+        text_val = f"投研智能体群组分析中 ({job.ticker}) - {active_stage}"
+
+    # Case 3: HedgeProgressTracker object (from hedge_ui.py)
+    elif hasattr(job, "tickers") and hasattr(job, "current_status"):
+        text_val = f"量化对冲运行中 - {job.current_status or '初始化数据层'}"
+        if job.current_ticker:
+            text_val += f" ({job.current_ticker})"
+
+        if job.is_complete:
+            pct_val = "100%"
+        else:
+            done_count = len([u for u in job.agent_updates if u.get("status", "").lower() == "done"])
+            total_expected = len(job.tickers) * max(1, len(st.session_state.get("selected_hedge_agents", [])))
+            if total_expected > 0:
+                pct = min(0.95, done_count / total_expected)
+                pct_val = f"{int(pct * 100)}%"
+            else:
+                pct_val = "33%"
+
+    st.markdown(
+        f"""
+        <div class="jocket-global-progress-bar" aria-live="polite">
+          <div class="jocket-progress-text-row">
+            <span class="jocket-progress-status-text">{escape(text_val)}</span>
+            <span class="jocket-progress-percentage-text">{pct_val}</span>
+          </div>
+          <div class="jocket-progress-track-outer">
+            <div class="jocket-progress-track-inner">
+              <div class="jocket-progress-fill" style="width: {pct_val};"></div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.fragment(run_every="2s")
+def render_unified_loading_state_fragment(title: str, capsules: list, show_progress_key: str) -> None:
+    import json
+    import streamlit as st
+    from html import escape
+    import sys
+    import os
+
+    job = st.session_state.get(show_progress_key)
+    if not job:
+        st.write("")
+        return
+
+    pct_val = "0%"
+    text_val = "正在初始化..."
+
+    # Case 1: Standard background job state represented by a dict
+    if isinstance(job, dict):
+        future = job.get("future")
+        if future is not None and future.done():
+            st.rerun()
+
+        progress = job.get("progress") or {}
+        stage = str(progress.get("stage") or "fetch")
+        
+        pct_map = {
+            "fetch": "33%",
+            "compute": "66%",
+            "view": "90%",
+            "done": "100%"
+        }
+        pct_val = pct_map.get(stage, "33%")
+        
+        text_map = {
+            "fetch": "正在检索多维行情数据...",
+            "compute": "正在计算量化指标与财务评分...",
+            "view": "正在生成智能视图与AI诊断...",
+            "done": "任务已完成"
+        }
+        text_val = text_map.get(stage, "正在拉取行情...")
+
+    # Case 2: ProgressTracker object (from tradingagents_ui.py)
+    elif hasattr(job, "completed_stages") and hasattr(job, "ticker"):
+        _TA_SRC = os.path.join(os.path.dirname(__file__), "tradingagents_src")
+        if _TA_SRC not in sys.path:
+            sys.path.insert(0, _TA_SRC)
+        from web.progress import PIPELINE_STAGES
+        
+        completed = len(job.completed_stages)
+        total = len(PIPELINE_STAGES)
+        pct = completed / total if total else 0
+        pct_val = f"{int(pct * 100)}%"
+
+        # Current active stage name
+        active_stage = "初始化分析环境..."
+        for s in PIPELINE_STAGES:
+            s_id = s["id"]
+            if s_id not in job.completed_stages:
+                active_stage = f"正在执行：{s['name']}..."
+                break
+        if completed == total:
+            active_stage = "分析已完成"
+        
+        text_val = f"投研智能体群组分析中 ({job.ticker}) - {active_stage}"
+
+    # Case 3: HedgeProgressTracker object (from hedge_ui.py)
+    elif hasattr(job, "tickers") and hasattr(job, "current_status"):
+        text_val = f"量化对冲运行中 - {job.current_status or '初始化数据层'}"
+        if job.current_ticker:
+            text_val += f" ({job.current_ticker})"
+
+        if job.is_complete:
+            pct_val = "100%"
+        else:
+            done_count = len([u for u in job.agent_updates if u.get("status", "").lower() == "done"])
+            total_expected = len(job.tickers) * max(1, len(st.session_state.get("selected_hedge_agents", [])))
+            if total_expected > 0:
+                pct = min(0.95, done_count / total_expected)
+                pct_val = f"{int(pct * 100)}%"
+            else:
+                pct_val = "33%"
+
+    capsules_html = ""
+    for capsule in capsules:
+        if isinstance(capsule, dict):
+            lbl = capsule.get("label", "")
+            prt = capsule.get("prompt", "")
+            button_style = capsule.get("style", "")
+        else:
+            lbl = str(capsule)
+            prt = str(capsule)
+            button_style = ""
+        style_attr = f' data-jocket-button-style="{escape(button_style)}"' if button_style else ""
+        capsules_html += f'<span data-ai-prompt="{escape(prt)}"{style_attr}>{escape(lbl)}</span>'
+
+    rail_html = ""
+    if capsules_html:
+        rail_html = f'<div class="ai-prompt-rail">{capsules_html}</div>'
+    else:
+        rail_html = '<div class="ai-prompt-rail" style="opacity: 0 !important; pointer-events: none !important; height: 47px !important; min-height: 47px !important; margin-top: 24px !important; margin-bottom: 0 !important; padding: 0 !important; width: 385px !important; max-width: 100% !important;"></div>'
+
+    loading_messages = [
+        text_val,
+        f"当前加载进度 {pct_val}，请耐心等待",
+        "分析仍在后台继续，您可以稍后回来查看",
+        "请稍候，Jocket 正在整理最终结果",
+    ]
+    loading_messages_json = escape(json.dumps(loading_messages, ensure_ascii=False), quote=True)
+
+    # Keep the subtitle and its original vertical footprint, while replacing
+    # the progress bar itself with the looping Text Type copy.
+    subtitle_progress_html = (
+        f'<p class="hero-subtitle jocket-loading-subtitle">'
+        f'<span class="jocket-loading-subtitle-text jocket-loading-text-type" '
+        f'data-jocket-text-type="true" data-messages="{loading_messages_json}" '
+        f'aria-label="{escape(text_val)}, 当前加载进度 {pct_val}">'
+        f'<span class="jocket-text-type-output" aria-hidden="true">{escape(text_val)}</span>'
+        f'<span class="jocket-text-type-cursor" aria-hidden="true">_</span>'
+        f'</span>'
+        f'</p>'
+        f'<div class="jocket-loading-progress-spacer" aria-hidden="true"></div>'
+    )
+
+    st.markdown(
+        f'<div class="jocket-loading-marker" data-jocket-loading-active="true" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<section class="ai-empty-state ai-chat-shell page-empty-state page-g-standard">'
+        f'<div class="ai-chat-shell-text">'
+        f'<div class="jocket-empty-state-orb-anchor"></div>'
+        f'<h1 data-jocket-title="{escape(title)}">{escape(title)}</h1>'
+        f'{subtitle_progress_html}'
+        f'<div class="jocket-landing-action-container">{rail_html}</div>'
+        f'</div>'
+        f'</section>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_jocket_unified_empty_state(
+    title: str,
+    subtitle: str,
+    capsules: list,
+    show_model_selector: bool = False,
+    show_progress_key: str | None = None
+) -> None:
+    import streamlit as st
+    from html import escape
+    from datetime import datetime
+
+    if show_progress_key:
+        render_unified_loading_state_fragment(title, capsules, show_progress_key)
+        return
+
+    # Pre-render capsules HTML
+    capsules_html = ""
+    for capsule in capsules:
+        if isinstance(capsule, dict):
+            lbl = capsule.get("label", "")
+            prt = capsule.get("prompt", "")
+            button_style = capsule.get("style", "")
+        else:
+            lbl = str(capsule)
+            prt = str(capsule)
+            button_style = ""
+        style_attr = f' data-jocket-button-style="{escape(button_style)}"' if button_style else ""
+        capsules_html += f'<span data-ai-prompt="{escape(prt)}"{style_attr}>{escape(lbl)}</span>'
+
+    rail_html = ""
+    if capsules_html:
+        rail_html = f'<div class="ai-prompt-rail">{capsules_html}</div>'
+
+    st.markdown(
+        f'<section class="ai-empty-state ai-chat-shell page-empty-state page-g-standard">'
+        f'<div class="ai-chat-shell-text">'
+        f'<div class="jocket-empty-state-orb-anchor"></div>'
+        f'<h1 data-jocket-title="{escape(title)}">{escape(title)}</h1>'
+        f'<p>{escape(subtitle)}</p>'
+        f'<div class="jocket-landing-action-container">{rail_html}</div>'
+        f'</div>'
+        f'</section>',
+        unsafe_allow_html=True,
+    )
+
+    # 2. Render model selector segmented control second (so it sits centered below the text greeting!)
+    if show_model_selector:
+        provider_options = ["Gemini", "DeepSeek"]
+        selected_label = st.segmented_control(
+            "AI模型",
+            provider_options,
+            default=st.session_state.get("ai_market_provider_label", "DeepSeek"),
+            key="ai_market_provider_label",
+            label_visibility="collapsed",
+        )
+            
+        st.markdown(f'<div id="jocket-ai-provider" data-provider="{escape(str(selected_label))}"></div>', unsafe_allow_html=True)
+
+
+def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", indicator: str = "neutral", size: str = "2x1") -> str:
     pill_class = {
         "green": "pill-green",
         "red": "pill-red",
@@ -980,6 +3621,14 @@ def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", 
         "orange": "pill-orange",
         "blue": "pill-cyan",
     }.get(tone, "pill-cyan")
+    tone_color = {
+        "green": "#33D69F",
+        "red": "#FF5C7A",
+        "cyan": "#37E8FF",
+        "purple": "#9B5CFF",
+        "orange": "#FFB86B",
+        "blue": "#5B8CFF",
+    }.get(tone, "#37E8FF")
     icon_map = {
         "up": "上行",
         "down": "下行",
@@ -999,7 +3648,7 @@ def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", 
     }
     icon = icon_map.get(indicator, indicator)
     return (
-        f'<div class="metric-card" style="--card-glow:{tone_color}">'
+        f'<div class="metric-card bento-size-{escape(size)}" data-bento-size="{escape(size)}" style="--card-glow:{tone_color}">'
         f'<div class="metric-inner">'
         f'<div class="metric-label">{escape(label)}</div>'
         f'<div class="metric-value">{escape(value)}</div>'
@@ -1079,7 +3728,7 @@ def render_insight_cards(insights: list[dict]) -> None:
             f'<div class="insight-foot"><span class="pill {pill_class}">{escape(item.get("badge", "信号"))}</span></div>'
             f'</div>'
         )
-    st.markdown('<div class="insight-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.markdown('<div class="insight-grid bento-section">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
 
 def _base_fig(fig: go.Figure, height: int = 420) -> go.Figure:

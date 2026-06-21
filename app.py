@@ -5,8 +5,10 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape
+from pathlib import Path
 
 import markdown
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -26,6 +28,7 @@ from src.ui_components import (
     format_number_cn,
     format_percent,
     format_price,
+    format_ratio,
     load_css,
     metric_card,
     plot_cashflow_vs_profit,
@@ -70,6 +73,7 @@ from src.tradingagents_ui import render_tradingagents_dashboard
 
 st.set_page_config(page_title="Jocket", page_icon=None, layout="wide", initial_sidebar_state="collapsed")
 load_css()
+load_css("assets/styles/results_bento.css")
 
 config = load_config()
 config.setdefault("data", {})["provider"] = "auto"
@@ -100,13 +104,23 @@ def _has_cjk(value: str | None) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
 
 
+KNOWN_A_SHARE_NAMES = {
+    "600183": "生益科技",
+}
+
+
 def _chinese_name_for_code(stock_code: str | None, fallback: str | None = None) -> str:
     fallback_text = str(fallback or "").strip()
     code_text = str(stock_code or "").strip()
     if code_text:
         try:
             directory = _stock_directory()
-            match = directory[directory["code"].astype(str) == code_text]
+            code_digits = re.sub(r"\D", "", code_text)
+            dir_codes = directory["code"].astype(str)
+            match = directory[
+                (dir_codes == code_text)
+                | (dir_codes.str.replace(r"\D", "", regex=True) == code_digits)
+            ]
             if not match.empty:
                 candidate = str(match.iloc[0].get("name") or "").strip()
                 if _has_cjk(candidate):
@@ -115,7 +129,27 @@ def _chinese_name_for_code(stock_code: str | None, fallback: str | None = None) 
             pass
     if _has_cjk(fallback_text):
         return fallback_text
+    code_digits = re.sub(r"\D", "", code_text or fallback_text)
+    if code_digits in KNOWN_A_SHARE_NAMES:
+        return KNOWN_A_SHARE_NAMES[code_digits]
     return fallback_text or code_text
+
+
+def _resolve_stock_query_once(query: str) -> tuple[str, str, bool]:
+    query_text = str(query or "").strip()
+    if not query_text:
+        return "", "", False
+    matches = resolve_stock_query(query_text, _stock_directory())
+    if matches:
+        selected = matches[0]
+        matched_code = str(selected.get("code") or "").strip()
+        matched_name = str(selected.get("name") or "").strip()
+        if not _has_cjk(matched_name):
+            matched_name = _chinese_name_for_code(matched_code, matched_name or query_text)
+        return matched_code, matched_name, True
+    if re.fullmatch(r"\d{6}", query_text):
+        return query_text, _chinese_name_for_code(query_text, query_text), True
+    return "", "", False
 
 
 def _compact_business_summary(business: str, max_chars: int = 86) -> str:
@@ -240,7 +274,8 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
 
 
 def _render_chart_card(title: str, badge: str, fig, container_height: int | None = None, pill_class: str = "pill-cyan") -> None:
-    container = st.container(border=True, height=container_height) if container_height else st.container(border=True)
+    key = "result_chart_" + re.sub(r"[^0-9A-Za-z_\u4e00-\u9fff]+", "_", title).strip("_")
+    container = st.container(border=False, height=container_height, key=key) if container_height else st.container(border=False, key=key)
     with container:
         st.markdown(
             f'<div class="chart-title"><span>{title}</span><span class="pill {pill_class}">{badge}</span></div>',
@@ -450,6 +485,58 @@ def _fetch_stock_analysis_core(code: str, name: str | None) -> tuple[dict, pd.Da
     return StockAnalyzer(config).analyze(code, name=name, include_news=False)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_dynamic_hot_stocks() -> list:
+    fallback = [
+        {"label": "贵州茅台", "prompt": "600519", "style": "Style 4"},
+        {"label": "宁德时代", "prompt": "300750", "style": "Style 4"},
+        {"label": "比亚迪", "prompt": "002594", "style": "Style 4"},
+        {"label": "阳光电源", "prompt": "300274", "style": "Style 4"}
+    ]
+    cache_path = Path("data/cache/profile/hot_stocks.csv")
+    if cache_path.exists():
+        try:
+            age = datetime.now().timestamp() - cache_path.stat().st_mtime
+            if age <= 6 * 3600:
+                cached = pd.read_csv(cache_path, dtype={"prompt": str})
+                rows = []
+                for _, row in cached.head(4).iterrows():
+                    label = str(row.get("label") or "").strip()
+                    prompt = str(row.get("prompt") or "").strip()
+                    if label and prompt:
+                        rows.append({"label": label, "prompt": prompt, "style": "Style 4"})
+                if len(rows) >= 4:
+                    return rows
+        except Exception:
+            pass
+    return fallback
+
+
+def refresh_dynamic_hot_stocks_cache() -> list:
+    try:
+        import akshare as ak
+        df = ak.stock_zh_a_spot_em()
+        if df is not None and not df.empty:
+            df = df.sort_values(by="成交额", ascending=False)
+            hot_stocks = []
+            for _, row in df.head(15).iterrows():
+                code = str(row["代码"])
+                name = str(row["名称"])
+                if len(code) == 6 and (code.startswith("6") or code.startswith("0") or code.startswith("3")):
+                    hot_stocks.append({"label": name, "prompt": code, "style": "Style 4"})
+                if len(hot_stocks) >= 4:
+                    break
+            if len(hot_stocks) >= 4:
+                cache_path = Path("data/cache/profile/hot_stocks.csv")
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                pd.DataFrame(hot_stocks).to_csv(cache_path, index=False, encoding="utf-8-sig")
+                return hot_stocks
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to fetch dynamic hot stocks: {e}")
+    return get_dynamic_hot_stocks()
+
+
 def _stock_ai_summary_key(code: str, latest_date: str, score: dict) -> str:
     return (
         f"ai_summary_{code}_{latest_date}_"
@@ -485,7 +572,7 @@ def _generate_stock_ai_summary_core(code: str, name: str, score: dict, hist: pd.
 
 def _render_dcf_card(metrics: dict, assumptions: dict) -> None:
     dcf = metrics.get("dcf", {}) or {}
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>简化 DCF 估值</span><span class="pill pill-orange">简化模型</span></div>', unsafe_allow_html=True)
         if not dcf.get("available"):
             st.warning("当前现金流口径不足，暂无法计算 DCF。")
@@ -517,7 +604,7 @@ def _render_dcf_card(metrics: dict, assumptions: dict) -> None:
 def _render_sector_heat_card(sector_payload: dict) -> None:
     boards = sector_payload.get("boards", pd.DataFrame()) if sector_payload else pd.DataFrame()
     summary = sector_payload.get("summary", {}) if sector_payload else {}
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>所属板块 / 概念热度</span><span class="pill pill-cyan">自动</span></div>', unsafe_allow_html=True)
         if boards is None or boards.empty:
             st.info("当前所属板块/概念数据不足，行业/题材评分暂以价格动量辅助判断。")
@@ -560,7 +647,7 @@ def _render_sector_heat_card(sector_payload: dict) -> None:
 
 def _render_news_panel(news_payload: dict | None, title: str = "公开新闻与消息面") -> None:
     render_section_title(title, "整合公开新闻/快讯，并按个股或板块关键词评估关联度。")
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>消息面聚合</span><span class="pill pill-cyan">多源汇总</span></div>', unsafe_allow_html=True)
         if not news_payload or not news_payload.get("available"):
             st.info("当前未获取到可用公开新闻/快讯；不会因为消息面缺失而补写结论。")
@@ -615,7 +702,7 @@ def _render_news_panel(news_payload: dict | None, title: str = "公开新闻与�
 def _render_research_signal_cards(cards: list[dict], title: str, subtitle: str, *, empty: str = "当前暂无可升级为独立卡片的高价值信号。") -> None:
     render_section_title(title, subtitle)
     if not cards:
-        with st.container(border=True):
+        with st.container(border=False):
             st.info(empty)
         return
     ui_cards = []
@@ -753,7 +840,7 @@ def _build_fundamental_context_common(
 def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf_assumptions: dict, fundamental_context: dict | None) -> dict | None:
     render_section_title("公司基本面与估值快照", "Fundamental & Valuation Snapshot")
     if not fundamental_context:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown('<div class="chart-title"><span>基本面数据获取失败</span><span class="pill pill-orange">重试</span></div>', unsafe_allow_html=True)
             st.warning("基本面模块没有成功生成，但行情和技术评分仍可继续使用。")
         return None
@@ -797,7 +884,7 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
     with rating_col:
         _render_chart_card("基本面评级快照", "1-5 分", plot_ratings_snapshot(ratings, height=560))
     with list_col:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown('<div class="chart-title"><span>核心财务与估值维度评分</span><span class="pill pill-cyan">综合</span></div>', unsafe_allow_html=True)
             render_ratings_list(ratings, metrics)
             st.caption("不可得指标显示 N/A，且不纳入综合评分。")
@@ -822,7 +909,7 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
     render_section_title("财务质量摘要", "自动解释收入、利润质量、盈利能力、杠杆和分红能力。")
     render_insight_cards(analysis.get("quality_cards", []))
 
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>基本面评级解释</span><span class="pill pill-purple">研究视图</span></div>', unsafe_allow_html=True)
         st.write(analysis.get("fundamental_explanation"))
         st.info(analysis.get("research_view"))
@@ -876,6 +963,87 @@ def _top_driver(items: list[dict], reverse: bool = True) -> str:
     factors = picked.get("positive_factors" if reverse else "negative_factors", []) or []
     factor = str(factors[0]) if factors else picked.get("decision_impact", "")
     return f"{picked.get('dimension')} {format_price(picked.get('score'), 1)}/{format_price(picked.get('max_score'), 0)}，{factor}"
+
+
+def _sparkline_svg(hist: pd.DataFrame, *, points: int = 32) -> str:
+    if hist is None or hist.empty or "close" not in hist.columns:
+        return '<div class="stock-sparkline-empty">暂无走势数据</div>'
+    frame = hist.tail(points).copy()
+    close = pd.to_numeric(frame["close"], errors="coerce")
+    volume = pd.to_numeric(frame.get("volume", pd.Series(index=frame.index)), errors="coerce").fillna(0)
+    if close.dropna().shape[0] < 2:
+        return '<div class="stock-sparkline-empty">暂无走势数据</div>'
+
+    values = close.ffill().bfill().to_numpy(dtype=float)
+    volumes = volume.to_numpy(dtype=float)
+    width, height = 320, 112
+    top_pad, bottom_pad = 14, 30
+    vmin, vmax = float(np.nanmin(values)), float(np.nanmax(values))
+    if vmax == vmin:
+        vmax += 1
+        vmin -= 1
+    x_step = width / max(1, len(values) - 1)
+    dates = pd.to_datetime(frame.get("date", pd.Series(index=frame.index)), errors="coerce")
+    coords = []
+    hover_points = []
+    for idx, value in enumerate(values):
+        x = idx * x_step
+        y = top_pad + (vmax - value) / (vmax - vmin) * (height - top_pad - bottom_pad)
+        coords.append(f"{x:.1f},{y:.1f}")
+        date_text = dates.iloc[idx].strftime("%Y-%m-%d") if idx < len(dates) and not pd.isna(dates.iloc[idx]) else f"第 {idx + 1} 点"
+        vol_text = format_number_cn(volumes[idx], 2) if idx < len(volumes) else "-"
+        hover_points.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" class="stock-spark-hit">'
+            f'<title>{escape(date_text)}｜收盘价 {format_price(value)}｜成交量 {escape(vol_text)}</title>'
+            f'</circle>'
+        )
+
+    max_volume = float(np.nanmax(volumes)) if len(volumes) else 0
+    bar_width = max(3, min(8, x_step * 0.55))
+    bars = []
+    if max_volume > 0:
+        for idx, value in enumerate(volumes):
+            bar_h = max(3, (float(value) / max_volume) * 22)
+            x = idx * x_step - bar_width / 2
+            y = height - bar_h - 2
+            bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_h:.1f}" rx="2.2" />')
+
+    tone = "#FF5C7A" if values[-1] >= values[0] else "#33D69F"
+    return (
+        '<svg class="stock-sparkline" viewBox="0 0 320 112" role="img" aria-label="近32个交易日价格与成交量走势">'
+        '<defs>'
+        f'<linearGradient id="stockLineFill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="{tone}" stop-opacity=".30"/><stop offset="1" stop-color="{tone}" stop-opacity="0"/></linearGradient>'
+        '</defs>'
+        f'<g class="stock-spark-bars">{"".join(bars)}</g>'
+        f'<polyline class="stock-spark-glow" points="{" ".join(coords)}" />'
+        f'<polyline class="stock-spark-line" style="--spark-color:{tone}" points="{" ".join(coords)}" />'
+        f'<g class="stock-spark-hits">{"".join(hover_points)}</g>'
+        '</svg>'
+    )
+
+
+def _diagnosis_points(score: dict, hist: pd.DataFrame, support: float, resistance: float) -> list[str]:
+    latest = score.get("latest", {}) or {}
+    close = _num(latest.get("close"))
+    ret_1d = _num(latest.get("ret_1d"))
+    vol_ratio = _num(latest.get("vol_ratio_20"))
+    ma20 = _num(latest.get("ma20"))
+    ma60 = _num(latest.get("ma60"))
+    short_score = _num(score.get("short_score")) or 0
+    long_score = _num(score.get("long_score")) or 0
+    trend_text = "趋势强于中期均线" if close is not None and ma20 and ma60 and close > ma20 > ma60 else "趋势仍需均线确认"
+    volume_text = (
+        "放量确认度较高" if vol_ratio is not None and vol_ratio >= 1.2 and (ret_1d or 0) >= 0
+        else "量价存在分歧" if vol_ratio is not None and vol_ratio >= 1.2
+        else "量能尚未明显放大"
+    )
+    return [
+        f"评分：短线 {format_price(short_score, 1)}、中长线 {format_price(long_score, 1)}，当前属于“{_score_band(short_score)}”。",
+        f"结构：{trend_text}；MA20 {format_price(ma20)}、MA60 {format_price(ma60)}，近一日涨跌 {format_percent(ret_1d)}。",
+        f"量价：{volume_text}；20日量比 {format_ratio(vol_ratio)}，用于判断上涨是否有承接。",
+        f"边界：支撑 {format_price(support)}、压力 {format_price(resistance)}；有效突破压力后才提高追踪优先级，跌回支撑下方则降低仓位假设。",
+        f"驱动：正向项为 {_top_driver(score.get('short_breakdown', []), True)}；主要约束为 {_top_driver(score.get('short_breakdown', []), False)}。",
+    ]
 
 
 def _dashboard_card_indicator(label: str, score: dict, hist: pd.DataFrame, amount) -> str:
@@ -1448,7 +1616,17 @@ def _run_stock_analysis_job(code: str, name: str, dcf_assumptions: dict, progres
     base_result = StockAnalyzer(config).analyze(code, name=name, include_news=False)
     score_tmp, hist_tmp, report_path = base_result
     _set_job_stage(progress, "compute")
-    fundamental_context = _build_fundamental_context_core(code, hist_tmp, score_tmp, copy.deepcopy(dcf_assumptions))
+    try:
+        fundamental_context = _build_fundamental_context_core(
+            code,
+            hist_tmp,
+            score_tmp,
+            copy.deepcopy(dcf_assumptions),
+        )
+    except Exception:
+        # The price/technical result is still valid when an optional
+        # fundamentals provider is temporarily unavailable.
+        fundamental_context = None
     score_for_summary = _enrich_score_with_fundamentals(score_tmp, fundamental_context) if fundamental_context else score_tmp
     stock_name_for_summary = name or code
     _set_job_stage(progress, "view")
@@ -1505,6 +1683,15 @@ def _render_background_job_panel(title: str, description: str, stage: str = "fet
     fetch_class = _job_step_class(stage, "fetch")
     compute_class = _job_step_class(stage, "compute")
     view_class = _job_step_class(stage, "view")
+    
+    width_map = {
+        "fetch": "33%",
+        "compute": "66%",
+        "view": "90%",
+        "done": "100%"
+    }
+    pct = width_map.get(stage, "33%")
+    
     st.markdown(
         f"""
         <section class="jocket-job-panel" aria-live="polite">
@@ -1517,7 +1704,7 @@ def _render_background_job_panel(title: str, description: str, stage: str = "fet
           </div>
           <p>{escape(description)}</p>
           <div class="jocket-job-track" aria-hidden="true">
-            <i></i>
+            <i style="width: {pct};"></i>
           </div>
           <div class="jocket-job-steps" aria-hidden="true">
             <b class="{fetch_class}">取数</b>
@@ -1640,7 +1827,7 @@ def _render_explainable_scoring(score: dict) -> None:
             metric_card("风险状态", risk_text, "风险控制分越高，技术风险越低", "green" if risk_control.get("score", 0) >= 10 else "orange", risk_indicator),
         ]
     )
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>评分含义说明</span><span class="pill pill-orange">仅供研究</span></div>', unsafe_allow_html=True)
         st.write(score.get("rating_explanation", "暂无评级解释。"))
         for line in score.get("score_explanations", []):
@@ -1682,9 +1869,149 @@ def _render_explainable_scoring(score: dict) -> None:
         render_dimension_cards(long_breakdown, "long")
 
     with tab_evidence:
-        with st.container(border=True):
+        with st.container(border=False):
             st.markdown('<div class="chart-title"><span>底层数据证据</span><span class="pill pill-cyan">指标</span></div>', unsafe_allow_html=True)
             render_evidence_table(evidence)
+
+
+def _breakdown_score(breakdown: list[dict], keywords: tuple[str, ...], fallback: float = 0) -> float:
+    for item in breakdown or []:
+        name = str(item.get("dimension") or "")
+        if any(keyword in name for keyword in keywords):
+            try:
+                return round(float(item.get("score_rate", 0) or 0) * 100, 1)
+            except Exception:
+                return fallback
+    return fallback
+
+
+def _render_stock_spectrum_summary(score: dict, hist: pd.DataFrame, profile: dict, updated_at: str) -> None:
+    latest = score.get("latest", {}) or {}
+    close = _num(latest.get("close")) or 0
+    ret_1d = _num(latest.get("ret_1d")) or 0
+    ma20 = _num(latest.get("ma20"))
+    ma60 = _num(latest.get("ma60"))
+    short_score = _num(score.get("short_score")) or 0
+    long_score = _num(score.get("long_score")) or 0
+    ai_score = round(max(short_score, (short_score * 0.62 + long_score * 0.38)), 0)
+    rating = str(score.get("rating") or "中性观察")
+    code_text = str(score.get("code") or latest.get("code") or "JOCKET").strip()
+    raw_name = str(profile.get("name") or score.get("name") or "").strip()
+    title_text = _chinese_name_for_code(code_text, raw_name or code_text)
+    if not _has_cjk(title_text):
+        title_text = _chinese_name_for_code(re.sub(r"\D", "", code_text), raw_name or code_text)
+    support = min([x for x in [ma20, ma60, close * 0.97 if close else None] if x is not None], default=0)
+    resistance = max([x for x in [ma20, ma60, close * 1.04 if close else None] if x is not None], default=0)
+    trend_label = "强势关注" if short_score >= 75 else "积极观察" if short_score >= 60 else "耐心等待"
+    tech = _breakdown_score(score.get("short_breakdown", []), ("趋势", "动量", "价格"), short_score)
+    base = _breakdown_score(score.get("long_breakdown", []), ("财务", "基本面", "成长"), long_score)
+    news = _num(((score.get("news") or {}).get("heat_score"))) or _breakdown_score(score.get("short_breakdown", []), ("新闻", "板块", "催化"), 0)
+    risk = _breakdown_score(score.get("short_breakdown", []), ("风险",), 56)
+    amount = latest.get("amount_est", latest.get("amount"))
+    if amount is None and latest.get("close") is not None and latest.get("volume") is not None:
+        amount = latest.get("close") * latest.get("volume")
+    ret_tone = "red" if ret_1d > 0 else "green" if ret_1d < 0 else "cyan"
+    ret_indicator = "up" if ret_1d > 0 else "down" if ret_1d < 0 else "neutral"
+    short_tone = "green" if short_score >= 75 else "cyan" if short_score >= 60 else "orange"
+    long_tone = "green" if long_score >= 65 else "cyan" if long_score >= 50 else "orange"
+    sparkline = _sparkline_svg(hist)
+    rings = [
+        ("技术面得分", tech, "cyan"),
+        ("基本面得分", base, "purple"),
+        ("消息面得分", news, "cyan"),
+        ("资金/风险得分", risk, "pink"),
+    ]
+    ring_parts = []
+    for label, value, tone in rings:
+        pct = max(0, min(100, float(value or 0)))
+        ring_parts.append(
+            f'<div class="stock-score-ring {tone} bento-size-1x1" data-bento-size="1x1" style="--score:{pct}">'
+            f'<svg class="stock-ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
+            f'<circle class="stock-ring-track" cx="60" cy="60" r="46"></circle>'
+            f'<circle class="stock-ring-progress" cx="60" cy="60" r="46" pathLength="100" style="stroke-dasharray:{pct} 100"></circle>'
+            f'</svg>'
+            f'<strong>{format_price(value, 0)}</strong><span>{escape(label)}</span></div>'
+        )
+    ring_html = "".join(ring_parts)
+    metric_cards = [
+        metric_card("最新价", format_price(latest.get("close")), _dashboard_card_note("最新价", score, hist, amount), "cyan", _metric_indicator_key("最新价", score, hist, amount), size="2x1"),
+        metric_card("当日涨跌幅", format_percent(ret_1d), _dashboard_card_note("当日涨跌幅", score, hist, amount), ret_tone, ret_indicator, size="2x1"),
+        metric_card("成交量", format_number_cn(latest.get("volume"), 2), _dashboard_card_note("成交量", score, hist, amount), "purple", _metric_indicator_key("成交量", score, hist, amount), size="2x1"),
+        metric_card("估算成交额", format_number_cn(amount, 2), _dashboard_card_note("估算成交额", score, hist, amount), "blue", _metric_indicator_key("估算成交额", score, hist, amount), size="2x1"),
+    ]
+    headline_metric_html = "".join(metric_cards[:2])
+    liquidity_metric_html = "".join(metric_cards[2:])
+    diagnosis_items = "".join(f"<li>{escape(item)}</li>" for item in _diagnosis_points(score, hist, support, resistance)[:3])
+    
+    exchange = profile.get("exchange")
+    industry = profile.get("industry_cn") or profile.get("industry")
+    business_summary = _compact_business_summary(str(profile.get("business") or ""))
+    
+    tags_html = (
+        f'<b>{escape(trend_label.upper())}</b>'
+        f'<span>{escape(rating)}</span>'
+        f'<span>{escape(_latest_date(hist))}</span>'
+    )
+    if exchange and str(exchange) not in {"暂未获取", "当前数据源暂不支持"}:
+        tags_html += f'<span>{escape(exchange)}</span>'
+    if industry and str(industry) not in {"暂未获取", "当前数据源暂不支持"}:
+        tags_html += f'<span>{escape(industry)}</span>'
+    if updated_at:
+        tags_html += f'<span>更新于 {escape(updated_at)}</span>'
+
+    summary_html = ""
+    if business_summary:
+        summary_html = f'<p class="stock-terminal-business">{escape(business_summary)}</p>'
+
+    st.markdown(
+        f"""
+        <section class="stock-spectrum-terminal result-grid-8">
+          <div class="stock-terminal-hero bento-size-2x2" data-bento-size="2x2">
+            <div>
+              <h2>{escape(title_text)}<span>（{escape(code_text)}）</span></h2>
+              <div class="stock-terminal-tags">
+                {tags_html}
+              </div>
+              {summary_html}
+            </div>
+          </div>
+            <div class="stock-live-price bento-size-2x2" data-bento-size="2x2">
+              <div class="stock-live-head">
+                <span>实时行情</span>
+                <small>近 32 个交易日走势</small>
+              </div>
+              <strong>{format_price(close)}</strong>
+              <em class="{ 'up' if ret_1d >= 0 else 'down' }">{format_percent(ret_1d)}</em>
+              <div class="stock-chart-legend"><i class="price"></i>收盘价折线<i class="volume"></i>成交量柱</div>
+              {sparkline}
+            </div>
+          <div class="stock-ai-score bento-size-2x2" data-bento-size="2x2" style="--score:{max(0, min(100, ai_score))}">
+            <span>AI 综合评分</span>
+            <small>击败 {min(99, max(1, int(ai_score + 6)))}% 同类样本</small>
+            <div class="stock-ai-score-meter"><i style="width:{max(0, min(100, ai_score))}%"></i></div>
+            <strong>{format_price(ai_score, 0)}</strong>
+          </div>
+          <div class="stock-rating-card bento-size-2x2" data-bento-size="2x2">
+            <span>模型结论</span>
+            <strong>{escape(rating)}</strong>
+            <small>{escape(trend_label)}</small>
+          </div>
+          {headline_metric_html}
+            <div class="stock-ai-thesis bento-size-2x3" data-bento-size="2x3">
+              <span>AI 诊断结论</span>
+              <p>“{escape(str(score.get("rating_explanation") or "当前结构处于模型观察区，需结合量能、位置和市场情绪确认。"))}”</p>
+              <ul>{diagnosis_items}</ul>
+              <div>
+                <small>支撑位</small><b>{format_price(support)}</b>
+                <small>压力位</small><b>{format_price(resistance)}</b>
+              </div>
+            </div>
+          {ring_html}
+          {liquidity_metric_html}
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str, dcf_assumptions: dict, fundamental_context: dict | None = None) -> None:
@@ -1699,17 +2026,9 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     short_tone = "green" if float(score.get("short_score", 0) or 0) >= 75 else "cyan" if float(score.get("short_score", 0) or 0) >= 60 else "orange"
     long_tone = "green" if float(score.get("long_score", 0) or 0) >= 65 else "cyan" if float(score.get("long_score", 0) or 0) >= 50 else "orange"
 
-    price_label = "最新价"
-    render_bento_grid(
-        [
-            metric_card(price_label, format_price(latest.get("close")), _dashboard_card_note(price_label, score, hist, amount), "cyan", _metric_indicator_key(price_label, score, hist, amount)),
-            metric_card("当日涨跌幅", format_percent(ret_1d), _dashboard_card_note("当日涨跌幅", score, hist, amount), ret_tone, ret_indicator),
-            metric_card("成交量", format_number_cn(latest.get("volume"), 2), _dashboard_card_note("成交量", score, hist, amount), "purple", _metric_indicator_key("成交量", score, hist, amount)),
-            metric_card("估算成交额", format_number_cn(amount, 2), _dashboard_card_note("估算成交额", score, hist, amount), "blue", _metric_indicator_key("估算成交额", score, hist, amount)),
-            metric_card("短线评分", format_price(score.get("short_score"), 1), _dashboard_card_note("短线评分", score, hist, amount), short_tone, _metric_indicator_key("短线评分", score, hist, amount)),
-            metric_card("中长线评分", format_price(score.get("long_score"), 1), _dashboard_card_note("中长线评分", score, hist, amount), long_tone, _metric_indicator_key("中长线评分", score, hist, amount)),
-        ]
-    )
+    profile = ((fundamental_context or {}).get("payload", {}) or {}).get("profile", {}) or {}
+    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _render_stock_spectrum_summary(score, hist, profile, updated_at)
 
     # Dynamic badges for charts based on quantitative calculations
     close_val = float(latest.get("close", 0) or 0)
@@ -1774,7 +2093,7 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     with lower_left:
         _render_chart_card("量价关系", pv_badge, plot_price_volume_scatter(hist), container_height=560)
     with lower_right:
-        with st.container(border=True, height=560):
+        with st.container(border=False, height=560, key="result_chart_technical_indicators"):
             st.markdown(f'<div class="chart-title"><span>技术指标</span><span class="pill pill-purple">{tech_badge}</span></div>', unsafe_allow_html=True)
             tab_rsi, tab_macd, tab_kdj = st.tabs(["RSI", "MACD", "KDJ"])
             with tab_rsi:
@@ -1798,10 +2117,10 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     _render_explainable_scoring(score)
 
     render_section_title("近期行情数据", "默认只展示最近 10 条，可读性优先；完整原始数据在折叠区。")
-    with st.container(border=True):
+    with st.container(border=False):
         render_recent_data_table(hist, rows=10)
 
-    with st.container(border=True):
+    with st.container(border=False):
         st.markdown('<div class="chart-title"><span>报告输出</span><span class="pill pill-cyan">已保存</span></div>', unsafe_allow_html=True)
         st.success(f"分析报告已保存：{report_path}")
         st.write(score.get("summary"))
@@ -1868,7 +2187,7 @@ def _sentiment_metric_card(label: str, value: str, raw_value: float | None, note
         delta_tone = "up" if delta >= 0 else "down"
         delta_html = f'<em class="sentiment-delta {delta_tone}">环比 {delta:+.1f}</em>'
     return (
-        f'<div class="sentiment-metric-card {tone}">'
+        f'<div class="sentiment-metric-card {tone} bento-size-2x2" data-bento-size="2x2">'
         f'<div class="sentiment-metric-top"><span>{escape(label)}</span><b>{escape(status)}</b></div>'
         f'<strong>{escape(value)}</strong>'
         f'<div class="semantic-meter"><i style="width:{pct:.1f}%"></i></div>'
@@ -1920,7 +2239,7 @@ def _render_market_signal_verification(payload: dict) -> None:
     cards = signal_payload.get("cards", []) or []
     render_section_title("主线与资金验证", "同花顺热点、北向资金、龙虎榜、行业轮动和指数 ETF 风险偏好。")
     if not cards:
-        with st.container(border=True):
+        with st.container(border=False):
             st.info("当前 a-stock-data 市场信号暂未生成，市场情绪仍使用涨跌停生态与板块梯队。")
         return
     html_cards = []
@@ -2045,6 +2364,128 @@ def _render_sentiment_conclusion(payload: dict) -> None:
     )
 
 
+def _render_market_spectrum_summary(payload: dict, pos_html: str = "", timeline_html: str = "") -> None:
+    metrics = payload.get("metrics", {}) or {}
+    tactics = payload.get("tactics", {}) or {}
+    boards = payload.get("boards", pd.DataFrame())
+    history = payload.get("history", pd.DataFrame())
+    emotion = _sent_num(metrics.get("emotion_score"), 0) or 0
+    short_emotion = _sent_num(metrics.get("short_emotion"), 0) or 0
+    big_market = _sent_num(metrics.get("big_market_factor"), 0) or 0
+    divergence = _sent_num(metrics.get("divergence"), 0) or 0
+    broken_rate = _sent_num(metrics.get("broken_rate"), 0) or 0
+    prev_emotion = None
+    if history is not None and len(history) >= 2:
+        prev_emotion = _sent_num(history.iloc[-2].get("emotion_score"))
+    delta = emotion - prev_emotion if prev_emotion is not None else None
+    
+    top_boards = []
+    if boards is not None and not boards.empty:
+        for _, row in boards.head(3).iterrows():
+            strength = _sent_num(row.get("strength"), 0) or 0
+            top_boards.append(
+                f'<div class="market-ladder-row">'
+                f'<span>{escape(str(row.get("board_name") or "-"))}</span>'
+                f'<strong>{format_price(strength, 1)}</strong>'
+                f'<i style="width:{max(8, min(100, strength))}%"></i>'
+                f'</div>'
+            )
+    if not top_boards:
+        top_boards = [
+            '<div class="market-ladder-row"><span>主线待确认</span><strong>-</strong><i style="width:18%"></i></div>'
+        ]
+        
+    pulse_items = [
+        ("实时神经网络分析", metrics.get("suggestion") or tactics.get("main_line") or "等待公共源回传"),
+        ("社交热度", f"炸板率 {format_percent(broken_rate)}，分歧度 {format_price(divergence, 1)}"),
+    ]
+    pulse_html = "".join(
+        f'<div class="market-pulse-card bento-size-2x1" data-bento-size="2x1"><span>{escape(label)}</span><p>{escape(str(text))}</p></div>'
+        for label, text in pulse_items
+    )
+    delta_html = f'<em class="{"up" if delta >= 0 else "down"}">{delta:+.1f}</em>' if delta is not None else "<em>-</em>"
+    
+    # Narrative bubbles: compile up to 5 bubbles dynamically
+    bubbles_data = []
+    bubbles_data.append(("生成式 AI", f"{format_price(short_emotion, 0)}%", "main"))
+    if boards is not None and not boards.empty:
+        for idx, (_, row) in enumerate(boards.head(3).iterrows()):
+            board_name = row.get("board_name") or "-"
+            strength = _sent_num(row.get("strength"), 0) or 0
+            color_cls = "purple" if idx % 2 == 0 else "pink"
+            bubbles_data.append((board_name, f"{format_price(strength, 0)}%", color_cls))
+    bubbles_data.append(("分歧度", f"{format_price(divergence, 0)}%", "pink"))
+
+    bubble_htmls = []
+    for i, (name, val, style_cls) in enumerate(bubbles_data):
+        b_class = f"market-bubble bubble-{i+1} {style_cls}"
+        delay = -i * 2.2
+        bubble_htmls.append(
+            f'<div class="{b_class}" style="animation-delay: {delay}s">'
+            f'<span>{escape(str(name))}</span>'
+            f'<strong>{escape(val)}</strong>'
+            f'</div>'
+        )
+    bubble_stage_html = "\n".join(bubble_htmls)
+
+    # Reused Buying pressure HTML
+    buying_pressure_html = (
+        f'<div class="market-dist-row" style="margin-top: 14px; display: flex; justify-content: space-between; font-size: 12px; color: var(--j-dim); margin-bottom: 6px;">'
+        f'<span>买入压力</span>'
+        f'<strong>{format_price(max(0, 100 - divergence), 0)}%</strong>'
+        f'</div>'
+        f'<div class="market-dist-meter" style="height: 6px; border-radius: 3px; background: rgba(255,255,255,0.05); overflow: hidden; position: relative;">'
+        f'<i style="display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--j-cyan), var(--j-purple)); width:{max(5, min(100, 100 - divergence))}%"></i>'
+        f'</div>'
+    )
+
+    st.markdown(
+        f"""
+        <section class="market-spectrum-terminal result-grid-8">
+          <div class="market-cycle-card bento-size-2x2" data-bento-size="2x2">
+            <div>
+              <span>情绪周期指数</span>
+              <div class="market-gauge" style="--score:{max(0, min(100, emotion))}">
+                <strong>{format_price(emotion, 0)}</strong>
+                <small>{escape(str(metrics.get("period") or "负荆区间"))}</small>
+              </div>
+              <div class="market-gauge-meta">
+                <div><span>昨日收盘</span><b>{format_price(prev_emotion, 0) if prev_emotion is not None else "-"}</b></div>
+                <div><span>变化</span>{delta_html}</div>
+              </div>
+            </div>
+            <div class="market-cycle-pressure">
+              {buying_pressure_html}
+            </div>
+          </div>
+          <div class="market-pos-card bento-size-2x2" data-bento-size="2x2">
+            {pos_html}
+          </div>
+          <div class="market-timeline-card bento-size-2x2" data-bento-size="2x2">
+            <div class="market-timeline-rail">
+              {timeline_html}
+            </div>
+          </div>
+          <div class="market-narrative-card bento-size-2x2" data-bento-size="2x2">
+            <div class="market-card-head">
+              <div><span class="market-node-icon">⌘</span><h2>叙事集群</h2></div>
+              <b>实时神经网络分析</b>
+            </div>
+            <div class="market-bubble-stage">
+              {bubble_stage_html}
+            </div>
+          </div>
+          <div class="market-ladder-card bento-size-2x2" data-bento-size="2x2">
+            <h3>板块梯队</h3>
+            {"".join(top_boards)}
+          </div>
+          {pulse_html}
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_index_monitor(payload: dict) -> None:
     indices = payload.get("indices", pd.DataFrame())
     breadth = payload.get("breadth", {}) or {}
@@ -2055,7 +2496,7 @@ def _render_index_monitor(payload: dict) -> None:
         pct = _num(row.get("pct"))
         cls = "sentiment-index-up" if pct and pct > 0 else "sentiment-index-down" if pct and pct < 0 else ""
         cards.append(
-            f'<div class="sentiment-index-card {cls}">'
+            f'<div class="sentiment-index-card {cls} bento-size-1x1" data-bento-size="1x1">'
             f'<span>{escape(str(row.get("name") or "-"))}</span>'
             f'<strong>{format_price(row.get("price"), 2)}</strong>'
             f'<em>{f"{pct:+.2f}%" if pct is not None else "待获取"}</em>'
@@ -2063,19 +2504,19 @@ def _render_index_monitor(payload: dict) -> None:
         )
     up = breadth.get("up")
     down = breadth.get("down")
+    total = (_num(up) or 0) + (_num(down) or 0)
+    breadth_pct = ((_num(up) or 0) / total * 100) if total else None
+    cards.append(
+        f'<div class="sentiment-index-card sentiment-breadth-card bento-size-1x1" data-bento-size="1x1">'
+        f'<span>市场宽度</span>'
+        f'<strong>{format_price(breadth_pct, 0) if breadth_pct is not None else "-"}%</strong>'
+        f'<em>涨 {escape(str(up or "-"))} · 跌 {escape(str(down or "-"))}</em>'
+        f'</div>'
+    )
     st.markdown(
         '<div class="sentiment-index-grid">' + "".join(cards) + "</div>",
         unsafe_allow_html=True,
     )
-    with st.container(border=True):
-        st.markdown(
-            f'<div class="chart-title"><span>大盘诊断</span><span class="pill pill-cyan">{escape(str(breadth.get("source", "公共源")))}</span></div>',
-            unsafe_allow_html=True,
-        )
-        if breadth.get("available"):
-            st.caption(f"市场宽度：上涨 {up} / 下跌 {down}，两市成交额 {_format_money_yi(breadth.get('amount'))}。")
-        else:
-            st.caption("市场宽度暂按指数和涨跌停生态代理估算，等待公共行情源恢复后自动切回全市场宽度。")
 
 
 def _render_board_ladder(boards: pd.DataFrame, board_members: pd.DataFrame | None = None) -> None:
@@ -2089,7 +2530,7 @@ def _render_board_ladder(boards: pd.DataFrame, board_members: pd.DataFrame | Non
         tone = "danger" if width >= 75 else "good" if width >= 60 else "watch" if width >= 40 else "cool"
         pct_rank = "前排" if width >= 72 else "中段" if width >= 40 else "后排"
         cards.append(
-            f'<div class="sentiment-board-card {tone}">'
+            f'<div class="sentiment-board-card {tone} bento-size-2x2" data-bento-size="2x2">'
             f'<div>'
             f'  <div><strong>{escape(str(row.get("board_name") or "-"))}</strong><span>{escape(str(row.get("role") or "观察"))}</span></div>'
             f'  <b class="text-{tone}">{width:.0f}%</b>'
@@ -2171,7 +2612,7 @@ def _render_battlefield(tactics: dict) -> None:
         tone = "danger" if score >= 75 else "good" if score >= 60 else "watch" if score >= 40 else "cool"
         status = "强机会/高波动" if score >= 75 else "可参与" if score >= 60 else "观察" if score >= 40 else "偏弱"
         cards.append(
-            f'<div class="sentiment-method-card {tone}">'
+            f'<div class="sentiment-method-card {tone} bento-size-2x2" data-bento-size="2x2">'
             f'<span>{escape(str(item.get("tag", "观察")))}</span>'
             f'<strong>{escape(str(item.get("name", "-")))}</strong>'
             f'<b>{score:.1f}%</b>'
@@ -2219,8 +2660,29 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
     metrics = payload.get("metrics", {})
     latest = payload.get("latest", {})
     tactics = payload.get("tactics", {})
+    
+    # Position grids and timeline block
+    mismatch = "、".join(tactics.get("mismatch", [])[:3])
+    timeline = tactics.get("timeline", [])
+    
+    timeline_html = "".join(
+        f'<div class="market-time-chip">'
+        f'<strong>{escape(str(item.get("time", "")))}</strong>'
+        f'<span>{escape(str(item.get("action", "")))}</span>'
+        f'</div>'
+        for item in timeline
+    )
+    
+    pos_html = (
+        f'<div class="market-pos-grid">'
+        f'<div><span>激进型</span><strong>{escape(str(tactics.get("aggressive_position", "-")))}</strong></div>'
+        f'<div><span>稳健型</span><strong>{escape(str(tactics.get("stable_position", "-")))}</strong></div>'
+        f'<div><span>战术风格</span><strong>{escape(mismatch or "等待确认")}</strong></div>'
+        f'</div>'
+    )
+    
+    _render_market_spectrum_summary(payload, pos_html, timeline_html)
     render_section_title("市场情绪仪表盘", "全市场情绪、涨停生态、板块梯队和次日观察池。")
-    _render_sentiment_conclusion(payload)
     _render_index_monitor(payload)
 
     _render_sentiment_metric_grid(metrics, payload.get("history", pd.DataFrame()))
@@ -2340,18 +2802,15 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
 
 def _render_ai_market_dashboard(config: dict) -> None:
     provider_options = ["Gemini", "DeepSeek"]
-    selected_label = st.segmented_control(
-        "AI模型",
-        provider_options,
-        default=st.session_state.get("ai_market_provider_label", "DeepSeek"),
-        key="ai_market_provider_label",
-        label_visibility="collapsed",
-    )
+    if "ai_market_messages" not in st.session_state:
+        st.session_state["ai_market_messages"] = []
+    
+    selected_label = st.session_state.get("ai_market_provider_label", "DeepSeek")
+    if selected_label not in provider_options:
+        selected_label = "DeepSeek"
     provider = "deepseek" if selected_label == "DeepSeek" else "gemini"
     st.markdown(f'<div id="jocket-ai-provider" data-provider="{escape(str(selected_label))}"></div>', unsafe_allow_html=True)
     assistant = AIMarketAssistant(config, provider=provider)
-    if "ai_market_messages" not in st.session_state:
-        st.session_state["ai_market_messages"] = []
     has_pending_prompt = bool(st.session_state.get("pending_prompt"))
     if not has_pending_prompt:
         st.session_state["ai_market_processing"] = False
@@ -2360,23 +2819,37 @@ def _render_ai_market_dashboard(config: dict) -> None:
         f'<div id="jocket-ai-processing" data-running="{str(is_processing).lower()}"></div>',
         unsafe_allow_html=True,
     )
+    if st.session_state["ai_market_messages"] or has_pending_prompt:
+        st.markdown('<div id="jocket-ai-chat-active" data-active="true"></div>', unsafe_allow_html=True)
+
+    avatar_svg = """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="ai-avatar-icon"><path d="M12 2L14.85 9.15L22 12L14.85 14.85L12 22L9.15 14.85L2 12L9.15 9.15L12 2Z" fill="url(#ai-avatar-grad)" /><defs><linearGradient id="ai-avatar-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#37e8ff" /><stop offset="1" stop-color="#9b5cff" /></linearGradient></defs></svg>"""
 
     def render_ai_message(role: str, content: str) -> None:
         role_class = "user" if role == "user" else "assistant"
-        label = "你" if role_class == "user" else "AI洞察"
         safe_content = markdown.markdown(str(content or ""), extensions=['fenced_code', 'tables', 'nl2br'])
-        st.markdown(
-            f"""
-            <div class="ai-message-row {role_class}">
-              <div class="ai-message-avatar">{escape(label[:2])}</div>
-              <div class="ai-message-bubble">
-                <div class="ai-message-name">{escape(label)}</div>
-                <div class="ai-message-content">{safe_content}</div>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        if role_class == "user":
+            st.markdown(
+                f"""
+                <div class="ai-message-row user">
+                  <div class="ai-message-bubble">
+                    <div class="ai-message-content">{safe_content}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f"""
+                <div class="ai-message-row assistant">
+                  <div class="ai-message-avatar">{avatar_svg}</div>
+                  <div class="ai-message-bubble">
+                    <div class="ai-message-content">{safe_content}</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     if st.session_state.get("pending_prompt"):
         prompt_text = st.session_state.pop("pending_prompt")
@@ -2386,21 +2859,20 @@ def _render_ai_market_dashboard(config: dict) -> None:
         st.session_state["ai_market_messages"].append({"role": "user", "content": prompt_text})
         st.session_state["ai_market_processing"] = True
 
-        with st.container(height=600, border=False):
+        with st.container(border=False):
             st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
             placeholder = st.empty()
-            for message in reversed(st.session_state["ai_market_messages"]):
+            for message in st.session_state["ai_market_messages"]:
                 render_ai_message(message["role"], message["content"])
             st.markdown("</section>", unsafe_allow_html=True)
 
             full_answer = ""
-            safe_content = markdown.markdown("I'm Jocketing... 正在检索多维行情数据 ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+            safe_content = markdown.markdown("I'm Jocketing... 正在检索多维行情数据 <span class=\"streaming-cursor\">▌</span>", extensions=['fenced_code', 'tables', 'nl2br'])
             placeholder.markdown(
                 f"""
                 <div class="ai-message-row assistant">
-                  <div class="ai-message-avatar">AI</div>
+                  <div class="ai-message-avatar">{avatar_svg}</div>
                   <div class="ai-message-bubble">
-                    <div class="ai-message-name">AI洞察</div>
                     <div class="ai-message-content">{safe_content}</div>
                   </div>
                 </div>
@@ -2413,9 +2885,8 @@ def _render_ai_market_dashboard(config: dict) -> None:
                 placeholder.markdown(
                     f"""
                     <div class="ai-message-row assistant">
-                      <div class="ai-message-avatar">AI</div>
+                      <div class="ai-message-avatar">{avatar_svg}</div>
                       <div class="ai-message-bubble">
-                        <div class="ai-message-name">AI洞察</div>
                         <div class="ai-message-content">{safe_content}</div>
                       </div>
                     </div>
@@ -2427,13 +2898,12 @@ def _render_ai_market_dashboard(config: dict) -> None:
                     import time
                     
                     def update_snapshot_status(msg):
-                        safe_content = markdown.markdown(f"I'm Jocketing... **{msg}** ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+                        safe_content = markdown.markdown(f"I'm Jocketing... **{msg}** <span class=\"streaming-cursor\">▌</span>", extensions=['fenced_code', 'tables', 'nl2br'])
                         placeholder.markdown(
                             f"""
                             <div class="ai-message-row assistant">
-                              <div class="ai-message-avatar">AI</div>
+                              <div class="ai-message-avatar">{avatar_svg}</div>
                               <div class="ai-message-bubble">
-                                <div class="ai-message-name">AI洞察</div>
                                 <div class="ai-message-content">{safe_content}</div>
                               </div>
                             </div>
@@ -2459,13 +2929,12 @@ def _render_ai_market_dashboard(config: dict) -> None:
                         current_time = time.time()
                         # Throttle updates to at most once every 150ms to prevent browser WebSocket congestion
                         if current_time - last_update_time >= 0.15:
-                            safe_content = markdown.markdown(full_answer + " ▌", extensions=['fenced_code', 'tables', 'nl2br'])
+                            safe_content = markdown.markdown(full_answer + ' <span class="streaming-cursor">▌</span>', extensions=['fenced_code', 'tables', 'nl2br'])
                             placeholder.markdown(
                                 f"""
                                 <div class="ai-message-row assistant">
-                                  <div class="ai-message-avatar">AI</div>
+                                  <div class="ai-message-avatar">{avatar_svg}</div>
                                   <div class="ai-message-bubble">
-                                    <div class="ai-message-name">AI洞察</div>
                                     <div class="ai-message-content">{safe_content}</div>
                                   </div>
                                 </div>
@@ -2483,9 +2952,8 @@ def _render_ai_market_dashboard(config: dict) -> None:
             placeholder.markdown(
                 f"""
                 <div class="ai-message-row assistant">
-                  <div class="ai-message-avatar">AI</div>
+                  <div class="ai-message-avatar">{avatar_svg}</div>
                   <div class="ai-message-bubble">
-                    <div class="ai-message-name">AI洞察</div>
                     <div class="ai-message-content">{safe_content}</div>
                   </div>
                 </div>
@@ -2497,30 +2965,104 @@ def _render_ai_market_dashboard(config: dict) -> None:
             st.rerun()
 
     elif not st.session_state["ai_market_messages"]:
-        st.markdown(
-            f"""
-            <section class="ai-empty-state ai-chat-shell">
-              <div class="ai-chat-shell-inner" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
-                <div class="ai-breathing-orb"></div>
-                <div class="ai-chat-shell-text" style="display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1;">
-                  <h1>今天想看什么行情？</h1>
-                  <p>询问市场主线、板块催化、个股消息面或盘前观察清单。</p>
-                  <div class="ai-provider-line" style="margin-top: 10px;">{escape(assistant.provider_label())} · {"已连接" if assistant.ready() else "未配置"}</div>
-                </div>
-              </div>
-            </section>
-            """,
-            unsafe_allow_html=True,
-        )
+        from src.ui_components import render_jocket_unified_empty_state
+        with st.container(key="jocket_page_g_landing"):
+            render_jocket_unified_empty_state(
+                "你好，我是Jocket",
+                "询问大盘主线、板块催化或个股消息面，获取结合最新信号的深度研判。",
+                [],
+                show_model_selector=True
+            )
     else:
-        with st.container(height=600, border=False):
+        with st.container(border=False):
             st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
-            for message in reversed(st.session_state["ai_market_messages"]):
+            for message in st.session_state["ai_market_messages"]:
                 render_ai_message(message["role"], message["content"])
             st.markdown("</section>", unsafe_allow_html=True)
 
 
-st.markdown('<div class="product-masthead"><span>Jocket</span></div>', unsafe_allow_html=True)
+def _render_ai_command_bar() -> None:
+    with st.container(border=False):
+        st.markdown('<div class="jocket-bottom-dock style-bottom" data-jocket-dock-style="style bottom"></div>', unsafe_allow_html=True)
+        with st.form("ai_market_prompt_form", clear_on_submit=False, border=False):
+            st.markdown('<div class="ai-composer-shell"></div>', unsafe_allow_html=True)
+            ai_cols = st.columns([0.76, 0.24], vertical_alignment="center")
+            with ai_cols[0]:
+                _command_label("询问 AI洞察")
+                ai_prompt = st.text_input(
+                    "询问 AI洞察",
+                    placeholder="向 Jocket 提问...",
+                    label_visibility="collapsed",
+                    key="ai_market_prompt",
+                    autocomplete="off",
+                )
+            with ai_cols[1]:
+                st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
+                ai_submitted = st.form_submit_button(
+                    "来财来财",
+                    type="primary",
+                    use_container_width=True,
+                )
+        if ai_submitted and ai_prompt.strip():
+            st.session_state["pending_prompt"] = ai_prompt.strip()
+            st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
+            st.session_state["pending_forced_skills"] = st.session_state.get("ai_market_forced_skill_names", [])
+            st.session_state["clear_ai_market_prompt"] = True
+            st.rerun()
+
+
+st.markdown(
+	    """
+	    <svg class="jocket-glass-filter-defs" aria-hidden="true" focusable="false">
+	      <filter id="jocket-glass-refraction" color-interpolation-filters="sRGB" x="0%" y="0%" width="100%" height="100%">
+	        <feImage
+	          x="0"
+	          y="0"
+	          width="100%"
+	          height="100%"
+	          preserveAspectRatio="none"
+	          result="map"
+	          href="data:image/svg+xml,%3Csvg viewBox='0 0 1000 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3ClinearGradient id='r' x1='100%25' y1='0%25' x2='0%25' y2='0%25'%3E%3Cstop offset='0%25' stop-color='red' stop-opacity='0'/%3E%3Cstop offset='100%25' stop-color='red' stop-opacity='1'/%3E%3C/linearGradient%3E%3ClinearGradient id='b' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='blue' stop-opacity='0'/%3E%3Cstop offset='100%25' stop-color='blue' stop-opacity='1'/%3E%3C/linearGradient%3E%3Cfilter id='soft'%3E%3CfeGaussianBlur stdDeviation='11'/%3E%3C/filter%3E%3C/defs%3E%3Crect width='1000' height='80' fill='black'/%3E%3Crect width='1000' height='80' rx='40' fill='url(%23r)'/%3E%3Crect width='1000' height='80' rx='40' fill='url(%23b)' style='mix-blend-mode:difference'/%3E%3Crect x='4' y='4' width='992' height='72' rx='36' fill='rgb(128,128,128)' opacity='.93' filter='url(%23soft)'/%3E%3C/svg%3E"
+	        />
+		        <feDisplacementMap in="SourceGraphic" in2="map" scale="-235" xChannelSelector="R" yChannelSelector="G" result="dispRed" />
+	        <feColorMatrix
+	          in="dispRed"
+	          type="matrix"
+	          values="1 0 0 0 0
+	                  0 0 0 0 0
+	                  0 0 0 0 0
+	                  0 0 0 1 0"
+	          result="red"
+	        />
+		        <feDisplacementMap in="SourceGraphic" in2="map" scale="-220" xChannelSelector="R" yChannelSelector="G" result="dispGreen" />
+	        <feColorMatrix
+	          in="dispGreen"
+	          type="matrix"
+	          values="0 0 0 0 0
+	                  0 1 0 0 0
+	                  0 0 0 0 0
+	                  0 0 0 1 0"
+	          result="green"
+	        />
+		        <feDisplacementMap in="SourceGraphic" in2="map" scale="-205" xChannelSelector="R" yChannelSelector="G" result="dispBlue" />
+	        <feColorMatrix
+	          in="dispBlue"
+	          type="matrix"
+	          values="0 0 0 0 0
+	                  0 0 0 0 0
+	                  0 0 1 0 0
+	                  0 0 0 1 0"
+	          result="blue"
+	        />
+	        <feBlend in="red" in2="green" mode="screen" result="rg" />
+	        <feBlend in="rg" in2="blue" mode="screen" result="output" />
+	        <feGaussianBlur in="output" stdDeviation="0.7" />
+	      </filter>
+	    </svg>
+    """
+    '<div class="product-masthead"><span class="brand-jocket shiny-text">JOCKET</span><i></i></div>',
+    unsafe_allow_html=True,
+)
 page = st.segmented_control(
     "核心功能",
     ["AI洞察", "个股行情", "市场情绪", "投研分析", "量化对冲"],
@@ -2542,6 +3084,7 @@ config.setdefault("data", {})["provider"] = "auto"
 
 code = ""
 name = ""
+stock_query = ""
 dcf_years = 5
 dcf_growth = 5.0
 dcf_terminal_growth = 2.0
@@ -2567,6 +3110,8 @@ run = False
 ai_prompt = ""
 ai_submitted = False
 ai_forced_skills = []
+matched_msg = ""
+unmatched_msg = ""
 AI_SKILL_BUTTONS = [
     ("alphaear-news", "实时财经新闻与热点趋势"),
     ("alphaear-stock", "A股/港股/美股行情与基本面"),
@@ -2579,132 +3124,67 @@ AI_SKILL_BUTTONS = [
     ("qqqq", "QQQ 量化回测、策略胜率、支撑压力与交易计划"),
 ]
 
-if page == "AI洞察":
-    def _queue_ai_market_prompt():
-        prompt = st.session_state.get("ai_market_prompt", "").strip()
-        if prompt:
-            st.session_state["pending_prompt"] = prompt
-            st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
-            st.session_state["pending_forced_skills"] = st.session_state.get("ai_market_forced_skill_names", [])
-            st.session_state["clear_ai_market_prompt"] = True
+def _toggle_ai_skill(s_name):
+    skills = set(st.session_state.get("ai_market_forced_skill_names", []))
+    if s_name in skills:
+        skills.remove(s_name)
+    else:
+        skills.add(s_name)
+    st.session_state["ai_market_forced_skill_names"] = [name for name, _ in AI_SKILL_BUTTONS if name in skills]
 
+
+if page == "AI洞察":
     if st.session_state.pop("clear_ai_market_prompt", False):
         st.session_state["ai_market_prompt"] = ""
-
-    with st.container(border=True):
-        st.markdown('<div class="command-bar-title">AI 行情问答</div>', unsafe_allow_html=True)
-        with st.form("ai_market_prompt_form", clear_on_submit=False, border=False):
-            ai_cols = st.columns([0.76, 0.24], vertical_alignment="top")
-            with ai_cols[0]:
-                inner_cols = st.columns(1)
-                with inner_cols[0]:
-                    _command_label("询问内容 / 提示词")
-                    ai_prompt = st.text_input(
-                        "询问 AI洞察",
-                        placeholder="询问大盘主线、板块催化、个股消息面...",
-                        label_visibility="collapsed",
-                        key="ai_market_prompt",
-                        autocomplete="off",
-                    )
-            with ai_cols[1]:
-                st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
-                ai_submitted = st.form_submit_button("来财来财", use_container_width=True)
-        if ai_submitted and ai_prompt.strip():
-            st.session_state["pending_prompt"] = ai_prompt.strip()
-            st.session_state["pending_keywords"] = DEFAULT_MARKET_KEYWORDS
-            st.session_state["pending_forced_skills"] = st.session_state.get("ai_market_forced_skill_names", [])
-            st.session_state["clear_ai_market_prompt"] = True
-            st.rerun()
-        if "ai_market_forced_skill_names" not in st.session_state:
-            st.session_state["ai_market_forced_skill_names"] = []
-
-        def _toggle_ai_skill(s_name):
-            skills = set(st.session_state.get("ai_market_forced_skill_names", []))
-            if s_name in skills:
-                skills.remove(s_name)
-            else:
-                skills.add(s_name)
-            st.session_state["ai_market_forced_skill_names"] = [name for name, _ in AI_SKILL_BUTTONS if name in skills]
-
-        with st.expander("请选择Skill", expanded=False):
-            st.markdown('<div class="ai-skill-buttons-container" style="display:none"></div>', unsafe_allow_html=True)
-            selected_skills = set(st.session_state.get("ai_market_forced_skill_names", []))
-
-            for skill_name, help_text in AI_SKILL_BUTTONS:
-                display_name = "QQQ" if skill_name == "qqqq" else skill_name.replace("alphaear-", "").title()
-                st.button(
-                    display_name,
-                    key=f"ai_skill_{skill_name.replace('-', '_')}",
-                    help=help_text,
-                    type="primary" if skill_name in selected_skills else "secondary",
-                    use_container_width=False,
-                    on_click=_toggle_ai_skill,
-                    args=(skill_name,)
-                )
-        ai_forced_skills = st.session_state.get("ai_market_forced_skill_names", [])
+    if "ai_market_forced_skill_names" not in st.session_state:
+        st.session_state["ai_market_forced_skill_names"] = []
+    ai_forced_skills = st.session_state.get("ai_market_forced_skill_names", [])
 elif page in {"个股行情", "市场情绪"}:
-    with st.container(border=True):
-        st.markdown('<div class="command-bar-title">参数与操作</div>', unsafe_allow_html=True)
+    with st.container(border=False):
+        st.markdown('<div class="jocket-bottom-dock style-bottom" data-jocket-dock-style="style bottom"></div>', unsafe_allow_html=True)
         if page == "个股行情":
-            command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
-            with command_cols[0]:
-                inner_cols = st.columns(2)
-                with inner_cols[0]:
-                    _command_label("股票代码 / 名称")
+            with st.form("stock_quote_form", clear_on_submit=False, border=False):
+                command_cols = st.columns([0.76, 0.24], vertical_alignment="center")
+                with command_cols[0]:
+                    _command_label("股票名称/代码")
                     stock_query = st.text_input(
-                        "股票代码 / 名称",
+                        "股票名称/代码",
                         placeholder="输入 600519、贵州茅台、茅台等",
-                        help="支持 6 位股票代码、完整中文名和中文名称模糊匹配。",
+                        help="支持 6 位股票代码、完整中文名 and 中文名称模糊匹配。",
                         key="stock_query",
                         autocomplete="off",
                         label_visibility="collapsed",
                     )
-            with command_cols[1]:
-                st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
-                run = st.button("来财来财", type="primary", use_container_width=True, key="run_stock_quote")
-
-            matches = resolve_stock_query(stock_query, _stock_directory()) if stock_query.strip() else []
-            if matches:
-                selected = matches[0]
-                code = str(selected.get("code") or "")
-                name = str(selected.get("name") or "")
-                st.caption(f"已匹配：{name}（{code}）")
-            elif stock_query.strip():
-                st.warning("没有匹配到股票。可以尝试输入 6 位代码、完整名称或更短的名称关键词。")
-
-            with st.expander("DCF 估值假设", expanded=False):
-                dcf_cols = st.columns(5, vertical_alignment="top")
-                with dcf_cols[0]:
-                    dcf_years = st.number_input("DCF 年数", min_value=1, max_value=10, value=5, step=1)
-                with dcf_cols[1]:
-                    dcf_growth = st.slider("现金流增长率", min_value=-20.0, max_value=30.0, value=5.0, step=0.5, format="%.2f%%")
-                with dcf_cols[2]:
-                    dcf_terminal_growth = st.slider("永续增长率", min_value=-5.0, max_value=6.0, value=2.0, step=0.25, format="%.2f%%")
-                with dcf_cols[3]:
-                    dcf_discount = st.slider("折现率", min_value=4.0, max_value=20.0, value=10.0, step=0.5, format="%.2f%%")
-                with dcf_cols[4]:
-                    dcf_margin = st.slider("安全边际", min_value=0.0, max_value=50.0, value=20.0, step=1.0, format="%.2f%%")
-        elif page == "市场情绪":
-            command_cols = st.columns([0.76, 0.24], vertical_alignment="top")
-            with command_cols[0]:
-                inner_cols = st.columns(2)
-                with inner_cols[0]:
-                    _command_label("交易日")
-                    sentiment_date = st.date_input("交易日", value=sentiment_date, key="sentiment_date", label_visibility="collapsed")
-                with inner_cols[1]:
-                    _command_label("观察窗口")
-                    sentiment_window = st.segmented_control(
-                        "观察窗口",
-                        options=[14, 30, 60],
-                        default=60,
-                        format_func=lambda x: f"{x}日",
-                        key="sentiment_window_segment",
-                        label_visibility="collapsed"
+                with command_cols[1]:
+                    st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
+                    run = st.form_submit_button(
+                        "来财来财",
+                        type="primary",
+                        use_container_width=True,
                     )
-                    st.markdown(f'<div id="jocket-sentiment-window" data-window="{sentiment_window}日"></div>', unsafe_allow_html=True)
+
+            stock_query = str(st.session_state.get("stock_query") or stock_query or "")
+            resolved_code, resolved_name, resolved_ok = _resolve_stock_query_once(stock_query)
+            matched_msg = ""
+            unmatched_msg = ""
+            if resolved_ok:
+                code = resolved_code
+                name = resolved_name
+                matched_msg = f"已匹配：{name}（{code}）"
+            elif stock_query.strip():
+                unmatched_msg = "没有匹配到股票。可以尝试输入 6 位代码、完整名称或更短的名称关键词。"
+
+        elif page == "市场情绪":
+            matched_msg = ""
+            unmatched_msg = ""
+            command_cols = st.columns([0.76, 0.24], vertical_alignment="center")
+            with command_cols[0]:
+                _command_label("选择日期")
+                sentiment_date = st.date_input("选择日期", value=sentiment_date, key="sentiment_date", label_visibility="collapsed")
             with command_cols[1]:
                 st.markdown('<div class="command-field-label spacer">&nbsp;</div>', unsafe_allow_html=True)
                 run = st.button("来财来财", type="primary", use_container_width=True, key="run_market_sentiment")
+            sentiment_window = 60
 
             sentiment_refresh = False
             sentiment_backfill = False
@@ -2779,8 +3259,11 @@ if market_future is not None:
         market_job_running = page == "市场情绪"
 
 if run and page == "个股行情":
+    stock_query = str(st.session_state.get("stock_query") or stock_query or "")
+    if not code and stock_query.strip():
+        code, name, _ = _resolve_stock_query_once(stock_query)
     if not code:
-        run_error = "请先输入股票代码或股票名称，并从匹配结果中选择一个个股。"
+        run_error = "请先输入股票代码或股票名称。支持直接输入 6 位代码，也可以输入完整名称或简称关键词。"
     else:
         signature = _stock_job_signature(code, dcf_assumptions)
         progress = {"stage": "fetch"}
@@ -2802,7 +3285,13 @@ elif run and page == "市场情绪":
         "window_days": int(sentiment_window or 60),
         "progress": progress,
         "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "future": _analysis_executor().submit(_run_market_sentiment_job, sentiment_date, int(sentiment_window or 60), progress, force_refresh=True),
+        "future": _analysis_executor().submit(
+            _run_market_sentiment_job,
+            sentiment_date,
+            int(sentiment_window or 60),
+            progress,
+            force_refresh=False,
+        ),
     }
     market_job_running = True
 
@@ -2833,6 +3322,13 @@ if page == "市场情绪" and sentiment_result is None and not run_error and not
     elif "market_sentiment_result" in st.session_state and not cached_market_result:
         sentiment_result = st.session_state.get("market_sentiment_result")
         sentiment_window = int(st.session_state.get("market_sentiment_window_days", sentiment_window or 60))
+
+
+if page in {"个股行情", "市场情绪"} and not run_error:
+    if matched_msg:
+        st.markdown(f'<div class="dock-matching-msg matched">{escape(matched_msg)}</div>', unsafe_allow_html=True)
+    if unmatched_msg:
+        st.markdown(f'<div class="dock-matching-msg unmatched">{escape(unmatched_msg)}</div>', unsafe_allow_html=True)
 
 
 # Mode Info for Hero
@@ -2885,38 +3381,63 @@ elif sentiment_result:
 
 # Render Global Hero (Page-Aware)
 if page in {"个股行情", "市场情绪"}:
-    ai_summary_to_pass = ai_stock_summary if page == "个股行情" else None
-    render_hero(
-        hero_code,
-        hero_source,
-        hero_latest,
-        datetime.now().strftime("%Y-%m-%d %H:%M"),
-        title=hero_title,
-        subtitle=hero_subtitle,
-        ai_summary=ai_summary_to_pass,
-    )
+    # Only render when results are empty
+    has_results = False
+    if page == "个股行情" and analysis_result is not None:
+        has_results = True
+    elif page == "市场情绪" and sentiment_result is not None:
+        has_results = True
+        
+    if not has_results:
+        from src.ui_components import render_jocket_unified_empty_state
+        if page == "个股行情":
+            if stock_job_running:
+                with st.container(key="jocket_page_g_landing"):
+                    render_jocket_unified_empty_state(
+                        "个股行情",
+                        "",
+                        [],
+                        show_progress_key=stock_job_state_key
+                    )
+            else:
+                with st.container(key="jocket_page_g_landing"):
+                    render_jocket_unified_empty_state(
+                        "个股行情",
+                        "输入股票代码或名称后运行，系统会自动生成趋势评级、量价证据、基本面与消息面研究视图",
+                        []
+                    )
+        else:
+            if market_job_running:
+                with st.container(key="jocket_page_g_landing"):
+                    render_jocket_unified_empty_state(
+                        "市场情绪",
+                        "",
+                        [],
+                        show_progress_key=market_job_state_key
+                    )
+            else:
+                with st.container(key="jocket_page_g_landing"):
+                    render_jocket_unified_empty_state(
+                        "市场情绪",
+                        "复盘全市场涨停生态、情绪周期、板块梯队和次日条件观察池",
+                        []
+                    )
 
 # Dashboard Content
 if page == "AI洞察":
     _render_ai_market_dashboard(config)
+    _render_ai_command_bar()
 elif stock_job_running:
-    _render_background_job_fragment(
-        stock_job_state_key,
-        "个股查询进行中",
-        "正在拉取行情、基本面、资金和消息面信号。可以先切到其他功能页；任务完成后会自动接上结果。",
-    )
+    pass
 elif market_job_running:
-    _render_background_job_fragment(
-        market_job_state_key,
-        "市场情绪分析进行中",
-        "正在拉取涨停生态、板块梯队、资金验证和观察池信号。可以先切到其他功能页；任务完成后会自动接上结果。",
-    )
+    pass
 elif run_error and page in {"个股行情", "市场情绪"}:
-    with st.container(border=True):
-        st.markdown('<div class="chart-title"><span>运行失败</span><span class="pill pill-orange">需要处理</span></div>', unsafe_allow_html=True)
-        st.error(f"本次请求没有成功生成结果。请稍后重试，或更换个股验证最新行情源。\n\n**错误详情：** `{run_error}`")
-        with st.expander("调试信息（Streamlit Cloud / Railway 排错用）"):
-            st.code(run_error)
+    st.markdown(
+        f'<div class="dock-matching-msg failed" data-error="{escape(str(run_error))}">'
+        '运行失败：请稍后重试，或更换个股验证行情源。'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 elif page == "个股行情" and analysis_result:
     score, hist, report_path = analysis_result
     _render_analysis_dashboard(score, hist, report_path, dcf_assumptions, fundamental_context_result)
