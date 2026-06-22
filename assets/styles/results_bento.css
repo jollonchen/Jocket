@@ -1,0 +1,3479 @@
+/* Results-only visual authority. Landing, logo and navigation are intentionally excluded. */
+body.jocket-results-page {
+  --result-radius: 30px;
+  --result-gap: clamp(12px, 1vw, 16px);
+  --result-row: clamp(112px, 8.5vw, 132px);
+  --result-glow: 218, 220, 224;
+  --result-surface: linear-gradient(145deg, rgba(30, 31, 42, 0.76), rgba(13, 14, 22, 0.68));
+  --result-border: rgba(232, 234, 240, 0.14);
+  --result-text: rgba(248, 248, 250, 0.94);
+  --result-muted: rgba(224, 224, 232, 0.58);
+}
+
+body.jocket-results-page [data-testid="stMainBlockContainer"],
+body.jocket-results-page .main .block-container {
+  padding-top: 118px !important;
+}
+
+/* Streamlit containers only provide layout. They must never draw a second card. */
+body.jocket-results-page [data-testid="stVerticalBlockBorderWrapper"]:not(.jocket-dock-host),
+body.jocket-results-page .result-frame-only {
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow: visible !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+body.jocket-results-page [data-testid="stVerticalBlockBorderWrapper"]:not(.jocket-dock-host)::before,
+body.jocket-results-page [data-testid="stVerticalBlockBorderWrapper"]:not(.jocket-dock-host)::after,
+body.jocket-results-page .result-frame-only::before,
+body.jocket-results-page .result-frame-only::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* Section headings are open page typography, never Bento cards. */
+body.jocket-results-page .section-title {
+  margin: clamp(38px, 5vw, 64px) 0 8px !important;
+  padding: 0 !important;
+  color: var(--result-text) !important;
+  font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif !important;
+  font-size: clamp(25px, 2.25vw, 34px) !important;
+  line-height: 1.18 !important;
+  font-weight: 320 !important;
+  letter-spacing: -0.025em !important;
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+body.jocket-results-page .section-subtitle {
+  max-width: 920px !important;
+  margin: 0 0 20px !important;
+  padding: 0 !important;
+  color: var(--result-muted) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.65 !important;
+  font-weight: 320 !important;
+  letter-spacing: 0.018em !important;
+  background: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Content-sized KPI rows: a 2x1 card must never be taller than its grid track. */
+body.jocket-results-page :is(.bento-grid, .insight-grid):has(> .sentiment-metric-card.bento-size-2x1) {
+  grid-auto-rows: minmax(176px, auto) !important;
+  row-gap: clamp(16px, 1.25vw, 22px) !important;
+  margin-bottom: clamp(30px, 3vw, 44px) !important;
+}
+
+body.jocket-results-page :is(.bento-grid, .insight-grid) > .sentiment-metric-card.bento-size-2x1 {
+  height: 100% !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* Magic Bento is reserved for real data/insight surfaces. No tilt or pointer-following displacement. */
+body.jocket-results-page .magic-bento-card {
+  position: relative !important;
+  isolation: isolate !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid var(--result-border) !important;
+  border-radius: var(--result-radius) !important;
+  background: var(--result-surface) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 16px 40px rgba(0, 0, 0, 0.22) !important;
+  backdrop-filter: blur(26px) saturate(1.08) !important;
+  -webkit-backdrop-filter: blur(26px) saturate(1.08) !important;
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-intensity: 0;
+  --glow-radius: 300px;
+  --glow-color: var(--result-glow);
+  transform: translate3d(0, 0, 0) scale(1) !important;
+  animation: none !important;
+  filter: none !important;
+  transition: transform 700ms cubic-bezier(0.16, 1, 0.3, 1), border-color 450ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 700ms cubic-bezier(0.16, 1, 0.3, 1), background 450ms ease !important;
+}
+
+body.jocket-results-page .magic-bento-card:hover {
+  transform: translate3d(0, -6px, 0) scale(1.004) !important;
+  border-color: rgba(232, 234, 239, 0.22) !important;
+  background: linear-gradient(145deg, rgba(35, 35, 49, 0.92), rgba(20, 20, 30, 0.82)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 32px 64px -12px rgba(0, 0, 0, 0.48), 0 0 36px rgba(var(--result-glow), 0.1) !important;
+  filter: none !important;
+}
+
+body.jocket-results-page .magic-bento-card::before {
+  content: none !important;
+  display: none !important;
+}
+
+body.jocket-results-page .magic-bento-card--border-glow::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 4 !important;
+  padding: 2px !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  opacity: 1 !important;
+  background: radial-gradient(
+    var(--glow-radius) circle at var(--glow-x) var(--glow-y),
+    rgba(var(--glow-color), calc(var(--glow-intensity) * 0.72)) 0%,
+    rgba(var(--glow-color), calc(var(--glow-intensity) * 0.30)) 32%,
+    transparent 64%
+  ) !important;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0) !important;
+  -webkit-mask-composite: xor !important;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0) !important;
+  mask-composite: exclude !important;
+}
+
+body.jocket-results-page .magic-bento-card > * {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+/* One strict page language: every Bento group is an eight-column grid. */
+body.jocket-results-page :is(
+  .result-grid-8,
+  .bento-grid,
+  .insight-grid,
+  .sentiment-metric-grid,
+  .sentiment-index-grid,
+  .sentiment-board-grid,
+  .sentiment-method-grid,
+  .sentiment-cycle-metrics,
+  .ta-stats-container
+) {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  grid-auto-flow: row dense !important;
+  grid-auto-rows: var(--result-row) !important;
+  align-items: stretch !important;
+  gap: var(--result-gap) !important;
+  width: 100% !important;
+  margin: 12px 0 28px !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-1x1 {
+  grid-column: span 1 !important;
+  grid-row: span 1 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-2x1 {
+  grid-column: span 2 !important;
+  grid-row: span 1 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-2x2 {
+  grid-column: span 2 !important;
+  grid-row: span 2 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-3x2 {
+  grid-column: span 3 !important;
+  grid-row: span 2 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-2x3 {
+  grid-column: span 2 !important;
+  grid-row: span 3 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-4x1 {
+  grid-column: span 4 !important;
+  grid-row: span 1 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-4x2 {
+  grid-column: span 4 !important;
+  grid-row: span 2 !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .bento-size-4x4 {
+  grid-column: span 4 !important;
+  grid-row: span 4 !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid) > .bento-size-8x2 {
+  grid-column: 1 / -1 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid) > .bento-size-8x4 {
+  grid-column: 1 / -1 !important;
+  grid-row: span 4 !important;
+}
+
+/* Stock result composition: every visible surface is a direct grid child. */
+body.jocket-results-page .stock-spectrum-terminal {
+  width: 100% !important;
+  max-width: none !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > * {
+  min-width: 0 !important;
+  margin: 0 !important;
+}
+
+body.jocket-results-page .stock-terminal-hero,
+body.jocket-results-page .stock-live-price,
+body.jocket-results-page .stock-ai-thesis,
+body.jocket-results-page .stock-ai-score,
+body.jocket-results-page .stock-rating-card,
+body.jocket-results-page .stock-score-ring {
+  padding: clamp(20px, 2vw, 28px) !important;
+}
+
+body.jocket-results-page .stock-terminal-hero {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: flex-start !important;
+}
+
+body.jocket-results-page .stock-terminal-hero h2 {
+  margin: 0 0 14px !important;
+  font-size: clamp(28px, 2.8vw, 44px) !important;
+  line-height: 1.04 !important;
+  font-weight: 520 !important;
+  letter-spacing: -0.04em !important;
+}
+
+body.jocket-results-page .stock-terminal-hero h2 span {
+  font-size: .45em !important;
+  font-weight: 380 !important;
+  letter-spacing: .02em !important;
+  color: var(--result-muted) !important;
+}
+
+body.jocket-results-page .stock-terminal-business {
+  max-width: 68ch !important;
+  margin: 14px 0 0 !important;
+  color: rgba(236, 237, 242, .7) !important;
+  font-size: 13px !important;
+  line-height: 1.62 !important;
+  font-weight: 340 !important;
+}
+
+body.jocket-results-page .stock-terminal-tags {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 7px !important;
+}
+
+body.jocket-results-page .stock-terminal-tags > * {
+  padding: 5px 9px !important;
+  border: 1px solid rgba(236, 238, 244, .1) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, .025) !important;
+  color: rgba(239, 240, 244, .68) !important;
+  font-size: 10px !important;
+  font-weight: 430 !important;
+  letter-spacing: .045em !important;
+}
+
+body.jocket-results-page .stock-ai-score {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: auto 1fr !important;
+  align-items: end !important;
+  gap: 4px 10px !important;
+}
+
+body.jocket-results-page .stock-rating-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+  gap: 5px !important;
+}
+
+body.jocket-results-page :is(.stock-live-head, .stock-ai-summary-head) > span,
+body.jocket-results-page .stock-ai-thesis > span {
+  color: var(--result-muted) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif !important;
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+  font-weight: 460 !important;
+  letter-spacing: .07em !important;
+}
+
+body.jocket-results-page .stock-ai-score strong {
+  grid-column: 2 !important;
+  grid-row: 1 / span 2 !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(34px, 3.2vw, 52px) !important;
+  line-height: 1 !important;
+  font-weight: 680 !important;
+}
+
+body.jocket-results-page .stock-ai-score-meter {
+  width: 100% !important;
+  height: 7px !important;
+  overflow: hidden !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.07) !important;
+}
+
+body.jocket-results-page .stock-ai-score-meter i {
+  display: block !important;
+  height: 100% !important;
+  border-radius: inherit !important;
+  background: linear-gradient(90deg, var(--j-cyan), var(--j-purple)) !important;
+  box-shadow: 0 0 18px rgba(55,232,255,.28) !important;
+}
+
+body.jocket-results-page :is(.stock-ai-score, .stock-rating-card) small {
+  color: rgba(235, 236, 242, .56) !important;
+  font-size: 10px !important;
+  font-weight: 350 !important;
+}
+
+body.jocket-results-page .stock-rating-card strong {
+  display: -webkit-box !important;
+  overflow: hidden !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+  font-size: clamp(15px, 1.2vw, 19px) !important;
+  line-height: 1.15 !important;
+  font-weight: 590 !important;
+}
+
+body.jocket-results-page .stock-live-price {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: auto auto 1fr !important;
+  gap: 8px 16px !important;
+}
+
+body.jocket-results-page .stock-live-price > strong {
+  align-self: center !important;
+  font-size: clamp(42px, 4.6vw, 72px) !important;
+  line-height: 1 !important;
+  font-weight: 680 !important;
+}
+
+body.jocket-results-page .stock-live-price > em {
+  align-self: center !important;
+  font-size: clamp(18px, 1.6vw, 26px) !important;
+  font-weight: 620 !important;
+}
+
+body.jocket-results-page .stock-live-price svg {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+  height: 76px !important;
+}
+
+body.jocket-results-page .stock-chart-legend { display: none !important; }
+
+body.jocket-results-page .stock-ai-thesis {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis p {
+  margin: 0 !important;
+  color: var(--result-text) !important;
+  font-size: clamp(15px, 1.2vw, 18px) !important;
+  line-height: 1.55 !important;
+  font-weight: 420 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis ul {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px 18px !important;
+  margin: 0 !important;
+  padding-left: 17px !important;
+  color: rgba(235, 236, 242, .62) !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  font-weight: 340 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > div {
+  display: grid !important;
+  grid-template-columns: auto 1fr auto 1fr !important;
+  gap: 8px 12px !important;
+  margin-top: auto !important;
+}
+
+body.jocket-results-page .stock-score-ring {
+  --ring-color: rgba(190, 202, 206, .92) !important;
+  display: grid !important;
+  grid-template-columns: 54px 1fr !important;
+  grid-template-rows: 1fr auto !important;
+  align-items: center !important;
+  gap: 0 10px !important;
+  padding: 15px 16px !important;
+}
+
+body.jocket-results-page .stock-score-ring.purple { --ring-color: rgba(197, 191, 207, .92) !important; }
+body.jocket-results-page .stock-score-ring.pink { --ring-color: rgba(207, 191, 198, .92) !important; }
+
+body.jocket-results-page .stock-ring-svg {
+  grid-column: 1 !important;
+  grid-row: 1 / span 2 !important;
+  width: 52px !important;
+  height: 52px !important;
+  filter: drop-shadow(0 0 7px rgba(220, 222, 228, .16)) !important;
+}
+
+body.jocket-results-page .stock-score-ring strong {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: end !important;
+  margin: 0 !important;
+  font-size: clamp(22px, 1.8vw, 30px) !important;
+  line-height: 1 !important;
+  font-weight: 660 !important;
+}
+
+body.jocket-results-page .stock-score-ring span {
+  grid-column: 1 / -1 !important;
+  grid-row: 2 !important;
+  justify-self: center !important;
+  align-self: end !important;
+  margin: 7px 0 0 !important;
+  white-space: nowrap !important;
+  color: var(--result-muted) !important;
+  font-size: 10px !important;
+  font-weight: 420 !important;
+  letter-spacing: .04em !important;
+}
+
+body.jocket-results-page .stock-ring-progress {
+  animation: none !important;
+}
+
+/* Stock overview: four balanced 2-column rails, each exactly four grid rows. */
+body.jocket-results-page .stock-spectrum-terminal > :is(
+  .stock-result-column,
+  .stock-ai-summary,
+  .stock-ai-thesis
+) {
+  grid-column: span 2 !important;
+  grid-row: span 4 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page .stock-result-column {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+  gap: var(--result-gap) !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+body.jocket-results-page .stock-result-column > :first-child {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 !important;
+}
+
+body.jocket-results-page .stock-result-column > :last-child {
+  grid-column: 1 / -1 !important;
+  grid-row: 2 !important;
+}
+
+body.jocket-results-page .stock-result-column > :is(
+  .stock-terminal-hero,
+  .stock-market-metrics,
+  .stock-live-price,
+  .stock-score-grid
+) {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  align-self: stretch !important;
+  justify-self: stretch !important;
+}
+
+body.jocket-results-page :is(
+  .stock-terminal-hero,
+  .stock-live-price,
+  .stock-market-metrics,
+  .stock-ai-summary,
+  .stock-ai-thesis,
+  .stock-score-ring,
+  .research-explanation-panel
+) {
+  border: 1px solid var(--result-border) !important;
+  border-radius: var(--result-radius) !important;
+  background: var(--result-surface) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.075), 0 16px 42px rgba(0,0,0,.24) !important;
+  overflow: hidden !important;
+}
+
+body.jocket-results-page .stock-terminal-hero,
+body.jocket-results-page .stock-market-metrics,
+body.jocket-results-page .stock-live-price,
+body.jocket-results-page .stock-ai-summary,
+body.jocket-results-page .stock-ai-thesis {
+  padding: clamp(18px, 1.55vw, 24px) !important;
+}
+
+/* Cards 5–8: one 2x2 surface with four purposeful information zones. */
+body.jocket-results-page .stock-market-metrics {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0 !important;
+  aspect-ratio: auto !important;
+}
+
+body.jocket-results-page .stock-mini-metric {
+  display: grid !important;
+  grid-template-rows: auto auto 1fr !important;
+  align-content: start !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+  padding: 2px 14px 14px 2px !important;
+}
+
+body.jocket-results-page .stock-mini-metric:nth-child(even) {
+  padding-right: 2px !important;
+  padding-left: 14px !important;
+  border-left: 1px solid rgba(232,234,240,.09) !important;
+}
+
+body.jocket-results-page .stock-mini-metric:nth-child(n+3) {
+  padding-top: 14px !important;
+  padding-bottom: 2px !important;
+  border-top: 1px solid rgba(232,234,240,.09) !important;
+}
+
+body.jocket-results-page .stock-mini-metric > div {
+  display: flex !important;
+  align-items: baseline !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+}
+
+body.jocket-results-page .stock-mini-metric span,
+body.jocket-results-page .stock-mini-metric b,
+body.jocket-results-page .stock-ai-summary-score span,
+body.jocket-results-page .stock-ai-summary-split span,
+body.jocket-results-page .stock-ai-summary-conclusion span {
+  color: var(--result-muted) !important;
+  font-size: 10px !important;
+  line-height: 1.3 !important;
+  font-weight: 460 !important;
+}
+
+body.jocket-results-page .stock-ai-summary-head small {
+  color: var(--j-cyan, #37e8ff) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .stock-mini-metric b {
+  color: rgba(242,243,246,.78) !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .stock-mini-metric > strong {
+  overflow: hidden !important;
+  color: var(--result-text) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(18px, 1.45vw, 25px) !important;
+  line-height: 1.05 !important;
+  font-weight: 650 !important;
+  letter-spacing: -.035em !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .stock-mini-metric.return > strong {
+  color: var(--j-rose, #ff5c7a) !important;
+}
+
+body.jocket-results-page .stock-mini-metric > p {
+  display: -webkit-box !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  color: rgba(232,233,238,.60) !important;
+  font-size: 10px !important;
+  line-height: 1.38 !important;
+  font-weight: 360 !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+}
+
+/* Card 2: chart is the primary visual, with a restrained two-colour system. */
+body.jocket-results-page .stock-live-price {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  grid-template-rows: auto auto auto minmax(0, 1fr) !important;
+  gap: 7px !important;
+}
+
+body.jocket-results-page .stock-live-head {
+  display: flex !important;
+  align-items: baseline !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+body.jocket-results-page .stock-live-head small {
+  color: rgba(232,233,238,.52) !important;
+  font-size: 9px !important;
+  font-weight: 390 !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .stock-live-kpi {
+  display: flex !important;
+  align-items: baseline !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+body.jocket-results-page .stock-live-kpi > strong {
+  color: var(--result-text) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(28px, 2.25vw, 38px) !important;
+  line-height: 1 !important;
+  font-weight: 670 !important;
+  letter-spacing: -.045em !important;
+}
+
+body.jocket-results-page .stock-live-kpi > em {
+  font-size: clamp(15px, 1.2vw, 20px) !important;
+  line-height: 1 !important;
+  font-style: normal !important;
+  font-weight: 630 !important;
+}
+
+body.jocket-results-page .stock-chart-legend {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  color: rgba(232,233,238,.48) !important;
+  font-size: 9px !important;
+  line-height: 1 !important;
+}
+
+body.jocket-results-page .stock-chart-legend i {
+  width: 12px !important;
+  height: 2px !important;
+  margin-left: 5px !important;
+  box-shadow: none !important;
+}
+
+body.jocket-results-page .stock-chart-legend i.price { background: var(--j-rose, #ff5c7a) !important; }
+body.jocket-results-page .stock-chart-legend i.volume { background: rgba(200,203,211,.45) !important; }
+
+body.jocket-results-page .stock-live-price .stock-sparkline {
+  grid-column: 1 !important;
+  grid-row: 4 !important;
+  align-self: stretch !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 128px !important;
+}
+
+body.jocket-results-page .stock-spark-area {
+  fill: url(#stockLineFill) !important;
+  opacity: .34 !important;
+}
+
+body.jocket-results-page .stock-spark-bars rect {
+  fill: rgba(205,208,216,.24) !important;
+}
+
+body.jocket-results-page .stock-spark-bars rect:hover {
+  fill: rgba(224,226,232,.52) !important;
+}
+
+body.jocket-results-page .stock-spark-glow {
+  opacity: .42 !important;
+  stroke-width: 7px !important;
+}
+
+body.jocket-results-page .stock-spark-line {
+  stroke-width: 3px !important;
+  filter: none !important;
+}
+
+/* Cards 9–12: four independent compact score cards below the price chart. */
+body.jocket-results-page .stock-score-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+  grid-auto-flow: row !important;
+  gap: var(--result-gap) !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+  padding: 10px 12px !important;
+  --ring-color: var(--j-gold, #ffe66d) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring.good {
+  --ring-color: var(--j-cyan, #37e8ff) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring.watch {
+  --ring-color: var(--j-gold, #ffe66d) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring.warning {
+  --ring-color: var(--j-pink, #ff5cc8) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring.danger {
+  --ring-color: var(--j-rose, #ff5c7a) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-ring-gauge {
+  position: relative !important;
+  display: grid !important;
+  place-items: center !important;
+  width: 64px !important;
+  height: 64px !important;
+  flex: 0 0 64px !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-ring-svg {
+  width: 64px !important;
+  height: 64px !important;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--ring-color) 28%, transparent)) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring strong {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  margin: 0 !important;
+  color: var(--result-text) !important;
+  font-size: clamp(17px, 1.15vw, 21px) !important;
+  line-height: 1 !important;
+  font-weight: 680 !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring span {
+  overflow: hidden !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  color: var(--result-muted) !important;
+  font-size: 9px !important;
+  line-height: 1.2 !important;
+  text-align: center !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* Cards 3 + 4: one score-and-conclusion narrative with a clear reading order. */
+body.jocket-results-page .stock-ai-summary {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 18px !important;
+}
+
+body.jocket-results-page .stock-ai-summary-head {
+  display: flex !important;
+  align-items: baseline !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+body.jocket-results-page .stock-ai-summary-score {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 7px !important;
+  padding-top: 8px !important;
+}
+
+body.jocket-results-page .stock-ai-summary-score strong {
+  color: var(--result-text) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(64px, 5.4vw, 88px) !important;
+  line-height: .88 !important;
+  font-weight: 680 !important;
+  letter-spacing: -.07em !important;
+}
+
+body.jocket-results-page .stock-ai-summary .stock-ai-score-meter {
+  height: 8px !important;
+  margin-top: 2px !important;
+  background: rgba(255,255,255,.065) !important;
+}
+
+body.jocket-results-page .stock-ai-summary .stock-ai-score-meter i {
+  background: linear-gradient(90deg, rgba(207,211,218,.92), rgba(137,142,154,.72)) !important;
+  box-shadow: none !important;
+}
+
+body.jocket-results-page .stock-ai-summary-split {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+}
+
+body.jocket-results-page .stock-ai-summary-split > div {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  padding: 14px !important;
+  border: 1px solid rgba(232,234,240,.08) !important;
+  border-radius: 18px !important;
+  background: rgba(255,255,255,.022) !important;
+}
+
+body.jocket-results-page .stock-ai-summary-split strong {
+  color: var(--result-text) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(22px, 1.8vw, 30px) !important;
+  line-height: 1 !important;
+}
+
+body.jocket-results-page .stock-ai-summary-conclusion {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  margin-top: auto !important;
+  padding-top: 18px !important;
+  border-top: 1px solid rgba(232,234,240,.09) !important;
+}
+
+body.jocket-results-page .stock-ai-summary-conclusion strong {
+  color: var(--j-cyan, #37e8ff) !important;
+  font-size: clamp(24px, 2vw, 34px) !important;
+  line-height: 1.2 !important;
+  font-weight: 690 !important;
+}
+
+body.jocket-results-page .stock-ai-summary-conclusion p {
+  margin: 0 !important;
+  color: rgba(232,233,238,.64) !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+}
+
+/* Card 13: a 2x4 research note anchored on the right rail. */
+body.jocket-results-page .stock-ai-thesis {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+  gap: 14px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll {
+  display: block !important;
+  grid-template-columns: none !important;
+  grid-template-rows: none !important;
+  gap: 0 !important;
+  margin-top: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  padding: 2px 12px 4px 0 !important;
+  scrollbar-gutter: stable !important;
+  overscroll-behavior: contain !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll::-webkit-scrollbar {
+  width: 5px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll::-webkit-scrollbar-track {
+  background: rgba(255,255,255,.025) !important;
+  border-radius: 99px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll::-webkit-scrollbar-thumb {
+  background: rgba(210,213,220,.22) !important;
+  border-radius: 99px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll > p {
+  display: block !important;
+  overflow: visible !important;
+  margin: 0 !important;
+  color: var(--result-text) !important;
+  font-size: clamp(14px, 1vw, 16px) !important;
+  line-height: 1.48 !important;
+  font-weight: 520 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll > ul {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 8px !important;
+  margin: 14px 0 0 !important;
+  padding-left: 18px !important;
+  color: rgba(232,233,238,.66) !important;
+  font-size: clamp(11px, .8vw, 13px) !important;
+  line-height: 1.46 !important;
+  font-weight: 360 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  margin-top: 0 !important;
+  padding-top: 14px !important;
+  border-top: 1px solid rgba(232,234,240,.09) !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels > div {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 7px !important;
+  padding: 13px 14px !important;
+  border: 1px solid rgba(232,234,240,.08) !important;
+  border-radius: 17px !important;
+  background: rgba(255,255,255,.022) !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels small {
+  color: var(--result-muted) !important;
+  font-size: 9px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels b {
+  color: var(--j-cyan, #37e8ff) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(20px, 1.55vw, 27px) !important;
+  line-height: 1 !important;
+}
+
+@media (max-width: 980px) {
+  body.jocket-results-page .stock-spectrum-terminal > :is(.stock-result-column, .stock-ai-summary, .stock-ai-thesis) {
+    grid-column: span 2 !important;
+    grid-row: span 4 !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page .stock-spectrum-terminal > :is(.stock-result-column, .stock-ai-summary, .stock-ai-thesis) {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+    min-height: 0 !important;
+  }
+
+  body.jocket-results-page .stock-result-column {
+    grid-template-rows: auto auto !important;
+  }
+
+  body.jocket-results-page .stock-terminal-hero,
+  body.jocket-results-page .stock-market-metrics,
+  body.jocket-results-page .stock-live-price,
+  body.jocket-results-page .stock-ai-summary,
+  body.jocket-results-page .stock-ai-thesis {
+    min-height: 300px !important;
+  }
+
+  body.jocket-results-page .stock-score-grid {
+    min-height: 240px !important;
+  }
+}
+
+/* Market hero uses the same eight-column footprints and no outer shell. */
+body.jocket-results-page .market-spectrum-terminal {
+  width: 100% !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  grid-template-areas: none !important;
+}
+
+body.jocket-results-page .market-spectrum-terminal > * {
+  grid-area: auto !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: clamp(18px, 1.6vw, 24px) !important;
+}
+
+body.jocket-results-page .market-pos-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  height: 100% !important;
+}
+
+body.jocket-results-page .market-pos-grid > div {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: baseline !important;
+  gap: 10px !important;
+  padding: 7px 0 !important;
+  border-bottom: 1px solid rgba(232, 234, 240, .08) !important;
+}
+
+body.jocket-results-page .market-pos-grid span,
+body.jocket-results-page .market-time-chip span,
+body.jocket-results-page .market-pulse-card span {
+  color: var(--result-muted) !important;
+  font-size: 11px !important;
+  font-weight: 410 !important;
+  letter-spacing: .04em !important;
+}
+
+body.jocket-results-page .market-timeline-rail {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 14px !important;
+  height: 100% !important;
+}
+
+body.jocket-results-page .market-time-chip {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+body.jocket-results-page .market-time-chip strong {
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: 20px !important;
+  font-weight: 640 !important;
+}
+
+body.jocket-results-page .market-pulse-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+}
+
+body.jocket-results-page .market-pulse-card p {
+  margin: 0 !important;
+  max-width: 48ch !important;
+  font-size: clamp(14px, 1.15vw, 18px) !important;
+  line-height: 1.45 !important;
+  font-weight: 460 !important;
+}
+
+body.jocket-results-page .market-cycle-pressure {
+  display: none !important;
+}
+
+body.jocket-results-page .market-cycle-card {
+  justify-content: flex-start !important;
+}
+
+body.jocket-results-page .market-gauge {
+  width: 116px !important;
+  height: 116px !important;
+  margin: 7px auto !important;
+  box-shadow: 0 0 18px rgba(218, 220, 224, .08) !important;
+}
+
+body.jocket-results-page .market-gauge::before {
+  inset: 11px !important;
+}
+
+body.jocket-results-page .market-gauge strong {
+  font-size: 38px !important;
+  font-weight: 680 !important;
+}
+
+body.jocket-results-page .market-gauge small {
+  font-size: 10px !important;
+  font-weight: 430 !important;
+}
+
+body.jocket-results-page .market-gauge-meta {
+  grid-template-columns: 1fr 1fr !important;
+  gap: 12px !important;
+}
+
+body.jocket-results-page .market-gauge-meta > div {
+  padding: 5px 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 10px !important;
+}
+
+body.jocket-results-page .market-bubble-stage {
+  position: static !important;
+  display: grid !important;
+  grid-template-columns: 1.15fr 1fr 1fr !important;
+  grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+  gap: 9px !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+  margin-top: 13px !important;
+  overflow: hidden !important;
+}
+
+body.jocket-results-page .market-bubble {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  inset: auto !important;
+  padding: 10px !important;
+  border: 1px solid rgba(232, 234, 240, .1) !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, .025) !important;
+  box-shadow: none !important;
+  animation: none !important;
+  transform: none !important;
+}
+
+body.jocket-results-page .market-bubble.bubble-1 {
+  grid-column: 1 !important;
+  grid-row: 1 / span 2 !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+body.jocket-results-page .market-bubble :is(span, strong) {
+  overflow: hidden !important;
+  max-width: 100% !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .market-bubble span {
+  color: var(--result-muted) !important;
+  font-size: 10px !important;
+  font-weight: 400 !important;
+}
+
+body.jocket-results-page .market-bubble strong {
+  margin-top: 4px !important;
+  font-size: clamp(16px, 1.25vw, 21px) !important;
+  font-weight: 620 !important;
+}
+
+body.jocket-results-page .sentiment-index-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+  gap: 4px !important;
+  padding: 16px !important;
+}
+
+body.jocket-results-page .sentiment-index-card > span {
+  width: 100% !important;
+  overflow: hidden !important;
+  color: var(--result-muted) !important;
+  font-size: 10px !important;
+  line-height: 1.3 !important;
+  font-weight: 430 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .sentiment-index-card > strong {
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(16px, 1.15vw, 20px) !important;
+  line-height: 1 !important;
+  font-weight: 650 !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .sentiment-index-card > em {
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  font-weight: 520 !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .sentiment-index-card.sentiment-index-up > strong,
+body.jocket-results-page .sentiment-index-card.sentiment-index-up > em {
+  color: var(--j-rose, #ff5c7a) !important;
+}
+
+body.jocket-results-page .sentiment-index-card.sentiment-index-down > strong,
+body.jocket-results-page .sentiment-index-card.sentiment-index-down > em {
+  color: var(--j-green, #33d69f) !important;
+}
+
+
+body.jocket-results-page .sentiment-metric-card {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: auto auto 5px 1fr !important;
+  gap: 5px 12px !important;
+  padding: 15px 17px !important;
+}
+
+body.jocket-results-page .sentiment-metric-top {
+  display: contents !important;
+}
+
+body.jocket-results-page .sentiment-metric-top > span {
+  color: var(--result-muted) !important;
+  font-size: 10px !important;
+  font-weight: 450 !important;
+  letter-spacing: .035em !important;
+}
+
+body.jocket-results-page .sentiment-metric-top > b {
+  justify-self: end !important;
+  font-size: 10px !important;
+  font-weight: 520 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > strong {
+  grid-column: 1 / -1 !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(20px, 1.65vw, 28px) !important;
+  line-height: 1 !important;
+  font-weight: 660 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card .semantic-meter {
+  grid-column: 1 / -1 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 99px !important;
+  height: 6px !important;
+  margin: 6px 0 2px !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  position: relative !important;
+}
+
+body.jocket-results-page .sentiment-metric-card .semantic-meter i {
+  display: block !important;
+  height: 100% !important;
+  border-radius: 99px !important;
+  transition: width 0.4s ease-in-out !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > p {
+  grid-column: 1 / -1 !important;
+  display: -webkit-box !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  color: rgba(235, 236, 242, .62) !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  font-weight: 360 !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > .sentiment-delta {
+  position: absolute !important;
+  right: 17px !important;
+  bottom: 15px !important;
+  font-size: 10px !important;
+}
+
+/* Content adapts inside the footprint instead of enlarging the footprint. */
+body.jocket-results-page .metric-card,
+body.jocket-results-page .ta-stat-card,
+body.jocket-results-page .sentiment-metric-card,
+body.jocket-results-page .sentiment-index-card,
+body.jocket-results-page .sentiment-cycle-metrics .mini-metric {
+  min-width: 0 !important;
+  padding: 17px 19px !important;
+}
+
+body.jocket-results-page .metric-inner {
+  display: grid !important;
+  grid-template-rows: auto 1fr auto !important;
+  align-items: start !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+  height: 100% !important;
+}
+
+body.jocket-results-page .metric-label,
+body.jocket-results-page .ta-stat-title,
+body.jocket-results-page .insight-label,
+body.jocket-results-page .rank-label {
+  color: var(--result-muted) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+  font-weight: 430 !important;
+  letter-spacing: 0.055em !important;
+}
+
+body.jocket-results-page .metric-value,
+body.jocket-results-page .ta-stat-value,
+body.jocket-results-page .sentiment-score,
+body.jocket-results-page .meta-value {
+  color: var(--result-text) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, ui-monospace, monospace !important;
+  font-variant-numeric: tabular-nums !important;
+  font-size: clamp(23px, 1.9vw, 34px) !important;
+  line-height: 1.08 !important;
+  font-weight: 650 !important;
+  overflow-wrap: anywhere !important;
+}
+
+body.jocket-results-page .metric-foot,
+body.jocket-results-page .insight-body,
+body.jocket-results-page .sentiment-board-card p,
+body.jocket-results-page .sentiment-method-card p {
+  color: rgba(232, 232, 238, 0.70) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.62 !important;
+  font-weight: 360 !important;
+  overflow-wrap: anywhere !important;
+}
+
+body.jocket-results-page .metric-foot {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+}
+
+body.jocket-results-page .metric-foot > span:first-child {
+  display: -webkit-box !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+}
+
+body.jocket-results-page .insight-card,
+body.jocket-results-page .rank-card,
+body.jocket-results-page .sentiment-board-card,
+body.jocket-results-page .sentiment-method-card {
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  padding: 22px !important;
+}
+
+body.jocket-results-page .insight-foot {
+  margin-top: auto !important;
+  padding-top: 16px !important;
+}
+
+/* Charts are one card each; Plotly is content, not a second card. */
+body.jocket-results-page [class*="st-key-result_chart_"] {
+  padding: 20px 22px 16px !important;
+  min-width: 0 !important;
+}
+
+body.jocket-results-page .result-chart-surface {
+  padding: 16px !important;
+  min-width: 0 !important;
+}
+
+/* Streamlit chart rows also obey the eight-column rhythm. */
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has([class*="st-key-result_chart_"]) {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  gap: var(--result-gap) !important;
+  align-items: stretch !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has([class*="st-key-result_chart_"]) > [data-testid="stColumn"] {
+  grid-column: span 4 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  flex: none !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:not(:has(.chart-size-marker)):has(> [data-testid="stColumn"]:nth-child(3)):has([class*="st-key-result_chart_"]) > [data-testid="stColumn"]:nth-child(3) {
+  grid-column: 1 / -1 !important;
+}
+
+body.jocket-results-page [class*="st-key-result_chart_"] [data-testid="stPlotlyChart"],
+body.jocket-results-page .result-chart-surface [data-testid="stPlotlyChart"],
+body.jocket-results-page [class*="st-key-result_chart_"] .js-plotly-plot,
+body.jocket-results-page .result-chart-surface .js-plotly-plot,
+body.jocket-results-page [class*="st-key-result_chart_"] .plot-container,
+body.jocket-results-page .result-chart-surface .plot-container,
+body.jocket-results-page [class*="st-key-result_chart_"] .svg-container,
+body.jocket-results-page .result-chart-surface .svg-container {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+body.jocket-results-page .chart-title {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  min-width: 0 !important;
+  margin: 0 0 12px !important;
+  color: var(--result-text) !important;
+  font-family: Inter, "SF Pro Display", "PingFang SC", system-ui, sans-serif !important;
+  font-size: clamp(16px, 1.3vw, 20px) !important;
+  line-height: 1.3 !important;
+  font-weight: 480 !important;
+}
+
+/* Premium glass table: sticky header, readable rows, frosted glass texture. */
+body.jocket-results-page .glass-table-wrap,
+.glass-table-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: auto !important;
+  padding: 0 !important;
+  border-radius: 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  background: linear-gradient(135deg, rgba(22, 22, 35, 0.60), rgba(12, 12, 20, 0.50)) !important;
+  backdrop-filter: blur(24px) saturate(1.1) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.1) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 16px 40px rgba(0, 0, 0, 0.28) !important;
+  transition: all 0.3s ease !important;
+}
+
+/* Thin premium scrollbar styling */
+body.jocket-results-page .glass-table-wrap::-webkit-scrollbar,
+.glass-table-wrap::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+body.jocket-results-page .glass-table-wrap::-webkit-scrollbar-track,
+.glass-table-wrap::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+body.jocket-results-page .glass-table-wrap::-webkit-scrollbar-thumb,
+.glass-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 3px !important;
+}
+body.jocket-results-page .glass-table-wrap::-webkit-scrollbar-thumb:hover,
+.glass-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25) !important;
+}
+
+body.jocket-results-page .glass-dataframe-table,
+.glass-dataframe-table {
+  width: max-content !important;
+  min-width: 100% !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  color: var(--result-text, rgba(248, 248, 250, 0.94)) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.52 !important;
+  table-layout: auto !important;
+}
+
+body.jocket-results-page .glass-dataframe-table thead th,
+.glass-dataframe-table thead th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 3 !important;
+  min-width: 92px !important;
+  padding: 14px 18px !important;
+  text-align: left !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+  background: rgba(26, 27, 38, 0.85) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+  font-weight: 560 !important;
+  white-space: nowrap !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+}
+
+body.jocket-results-page .glass-dataframe-table tbody td,
+.glass-dataframe-table tbody td {
+  min-width: 92px !important;
+  max-width: 360px !important;
+  padding: 12px 18px !important;
+  color: rgba(244, 244, 248, 0.85) !important;
+  background: transparent !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+  border-right: 0 !important;
+  font-weight: 380 !important;
+  vertical-align: middle !important;
+  overflow-wrap: anywhere !important;
+}
+
+body.jocket-results-page .glass-dataframe-table tbody tr:nth-child(even) td,
+.glass-dataframe-table tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015) !important;
+}
+
+body.jocket-results-page .glass-dataframe-table tbody tr:hover td,
+.glass-dataframe-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.045) !important;
+  transition: background 0.15s ease !important;
+}
+
+/* Rows inside a data card are content; they never draw nested cards. */
+body.jocket-results-page .magic-bento-card :is(.profile-kv, .rating-row, .rating-overall, .hero-meta-item, .market-ladder-row, .market-pulse-card, .sentiment-plan-grid > div, .sentiment-time-row) {
+  padding: 10px 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+body.jocket-results-page .magic-bento-card :is(.profile-kv, .rating-row, .mini-metric) + :is(.profile-kv, .rating-row, .mini-metric) {
+  border-top: 1px solid rgba(226, 228, 234, 0.08) !important;
+}
+
+/* Expanders and selectors are controls, not cards. */
+body.jocket-results-page [data-testid="stExpander"] {
+  margin: 4px 0 !important;
+  border: 1px solid rgba(226, 228, 234, 0.10) !important;
+  border-radius: 14px !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+body.jocket-results-page [data-testid="stExpander"]:has(details[open]) {
+  border-radius: 16px !important;
+}
+
+body.jocket-results-page [data-testid="stExpander"] summary,
+body.jocket-results-page [data-testid="stExpanderHeader"] {
+  min-height: 46px !important;
+  padding: 5px 18px !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 430 !important;
+  line-height: 1.35 !important;
+}
+
+body.jocket-results-page [data-testid="stExpander"] summary p,
+body.jocket-results-page [data-testid="stExpanderHeader"] p {
+  margin: 0 !important;
+  color: rgba(240, 241, 246, 0.78) !important;
+  letter-spacing: 0.01em !important;
+}
+
+body.jocket-results-page [data-testid="stExpander"] summary strong,
+body.jocket-results-page [data-testid="stExpanderHeader"] strong {
+  color: var(--result-text) !important;
+  font-weight: 650 !important;
+}
+
+body.jocket-results-page [class*="st-key-ai_market_provider_label"] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+body.jocket-results-page .ai-message-row {
+  margin: 10px 0 !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+body.jocket-results-page .ai-message-bubble {
+  max-width: min(820px, 88%) !important;
+  border: 1px solid rgba(226, 228, 234, 0.09) !important;
+  border-radius: 20px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-weight: 360 !important;
+  line-height: 1.65 !important;
+  transform: none !important;
+  animation: none !important;
+}
+
+/* One continuous page spotlight plus local Bento border glow. */
+body.jocket-results-page #global-cursor-glow {
+  display: block !important;
+  position: fixed !important;
+  z-index: 30 !important;
+  width: 760px !important;
+  height: 760px !important;
+  border-radius: 50% !important;
+  pointer-events: none !important;
+  transform: translate(-50%, -50%) !important;
+  mix-blend-mode: screen !important;
+  background: radial-gradient(circle, rgba(var(--result-glow), 0.085) 0%, rgba(var(--result-glow), 0.038) 22%, rgba(var(--result-glow), 0.012) 46%, transparent 70%) !important;
+  transition: left 90ms ease-out, top 90ms ease-out, opacity 180ms ease !important;
+}
+
+body:not(.jocket-results-page) #global-cursor-glow {
+  display: none !important;
+}
+
+body.jocket-results-page .magic-bento-ripple {
+  position: absolute !important;
+  z-index: 5 !important;
+  left: var(--ripple-x) !important;
+  top: var(--ripple-y) !important;
+  width: var(--ripple-size) !important;
+  height: var(--ripple-size) !important;
+  border-radius: 50% !important;
+  pointer-events: none !important;
+  background: radial-gradient(circle, rgba(var(--result-glow), 0.30) 0%, rgba(var(--result-glow), 0.12) 35%, transparent 70%) !important;
+  animation: result-magic-ripple 800ms cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards !important;
+}
+
+@keyframes result-magic-ripple {
+  from { transform: scale(0); opacity: 0.9; }
+  to { transform: scale(1); opacity: 0; }
+}
+
+body.jocket-results-page .particle,
+body.jocket-results-page .particle-container {
+  display: none !important;
+}
+
+body.jocket-results-page button:not(.magic-bento-card),
+body.jocket-results-page [role="button"]:not(.magic-bento-card) {
+  animation: none !important;
+}
+
+body.jocket-results-page button:not(.magic-bento-card):hover,
+body.jocket-results-page [role="button"]:not(.magic-bento-card):hover {
+  box-shadow: 0 0 22px rgba(var(--result-glow), 0.09) !important;
+}
+
+@media (max-width: 980px) {
+  body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-auto-rows: 118px !important;
+  }
+
+  body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > :is(.bento-size-4x1, .bento-size-4x2, .bento-size-4x4, .bento-size-8x2, .bento-size-8x4) {
+    grid-column: 1 / -1 !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page {
+    --result-radius: 24px;
+  }
+
+  body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-rows: auto !important;
+    gap: 12px !important;
+  }
+
+  body.jocket-results-page :is(.result-grid-8, .bento-grid, .insight-grid, .sentiment-metric-grid, .sentiment-index-grid, .sentiment-board-grid, .sentiment-method-grid, .sentiment-cycle-metrics, .ta-stats-container) > .magic-bento-card {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+    min-height: 0 !important;
+  }
+
+  body.jocket-results-page .magic-bento-card {
+    transform: none !important;
+    transition: border-color 160ms ease, box-shadow 160ms ease !important;
+  }
+
+  body.jocket-results-page #global-cursor-glow,
+  body.jocket-results-page .magic-bento-ripple {
+    display: none !important;
+  }
+
+  body.jocket-results-page .section-title {
+    margin-top: 34px !important;
+    font-size: 24px !important;
+  }
+
+  body.jocket-results-page .section-subtitle {
+    font-size: 13px !important;
+  }
+
+  body.jocket-results-page .stock-ai-thesis ul,
+  body.jocket-results-page .market-timeline-rail {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Unified chart-heading hierarchy, shared by stock and market results.
+   Keep this final: earlier page/card rules deliberately cannot override it. */
+body.jocket-results-page .chart-title,
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title,
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) .chart-title {
+  --chart-heading-size: clamp(12px, 0.9vw, 14px);
+  gap: 14px !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+  font-weight: 560 !important;
+}
+
+body.jocket-results-page .chart-title > span:first-child {
+  min-width: 0 !important;
+  color: rgba(224, 224, 232, 0.48) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+  font-weight: 520 !important;
+  letter-spacing: 0.015em !important;
+}
+
+body.jocket-results-page .chart-title > .pill,
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title > .pill {
+  position: relative !important;
+  flex: 0 1 auto !important;
+  max-width: 68% !important;
+  overflow: hidden !important;
+  padding: 0 0 3px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+  font-weight: 760 !important;
+  letter-spacing: 0.005em !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+}
+
+body.jocket-results-page .chart-title > .pill::after {
+  content: "" !important;
+  position: absolute !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: min(54px, 58%) !important;
+  height: 1px !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+  opacity: 0.62 !important;
+  box-shadow: 0 0 9px currentColor !important;
+}
+
+body.jocket-results-page .chart-title > .pill-green {
+  color: var(--j-cyan, #37e8ff) !important;
+  text-shadow: 0 0 14px rgba(55, 232, 255, 0.26) !important;
+}
+
+body.jocket-results-page .chart-title > .pill-cyan {
+  color: var(--j-gold, #ffe66d) !important;
+  text-shadow: 0 0 14px rgba(255, 230, 109, 0.22) !important;
+}
+
+body.jocket-results-page .chart-title > .pill-purple {
+  color: var(--j-purple, #a55eea) !important;
+  text-shadow: 0 0 14px rgba(165, 94, 234, 0.24) !important;
+}
+
+body.jocket-results-page .chart-title > .pill-orange {
+  color: var(--j-pink, #ff5cc8) !important;
+  text-shadow: 0 0 14px rgba(255, 92, 200, 0.25) !important;
+}
+
+body.jocket-results-page .chart-title > .pill-red {
+  color: var(--j-rose, #ff5c7a) !important;
+  text-shadow: 0 0 14px rgba(255, 92, 122, 0.28) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.jocket-results-page .magic-bento-card {
+    transform: none !important;
+    transition: border-color 160ms ease, box-shadow 160ms ease !important;
+  }
+
+  body.jocket-results-page #global-cursor-glow,
+  body.jocket-results-page .magic-bento-ripple {
+    display: none !important;
+  }
+}
+
+/* ========================================================================== 
+   V3 CARD AUTHORITY — reference-density typography and true 2x2 narratives
+   ========================================================================== */
+body.jocket-results-page {
+  --result-radius: 30px;
+  --result-label: 13px;
+  --result-body: 14px;
+  --result-caption: 12px;
+  --result-kpi: clamp(34px, 2.7vw, 46px);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif !important;
+}
+
+body.jocket-results-page :is(
+  .stock-spectrum-terminal,
+  .market-spectrum-terminal,
+  .sentiment-metric-grid,
+  .sentiment-index-grid,
+  .sentiment-board-grid,
+  .sentiment-method-grid,
+  .sentiment-alert
+) * {
+  box-sizing: border-box !important;
+  font-family: inherit !important;
+}
+
+body.jocket-results-page .stock-terminal-hero h2 {
+  font-size: clamp(27px, 2.25vw, 38px) !important;
+  font-weight: 760 !important;
+}
+
+body.jocket-results-page .stock-terminal-business {
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 4 !important;
+  overflow: hidden !important;
+  font-size: var(--result-body) !important;
+  line-height: 1.55 !important;
+}
+
+body.jocket-results-page :is(.stock-ai-score, .stock-rating-card) > span,
+body.jocket-results-page .stock-live-head span,
+body.jocket-results-page .stock-ai-thesis > span,
+body.jocket-results-page .metric-label {
+  font-size: var(--result-label) !important;
+  line-height: 1.4 !important;
+  font-weight: 650 !important;
+  letter-spacing: .015em !important;
+}
+
+body.jocket-results-page .stock-ai-score {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+}
+
+body.jocket-results-page .stock-ai-score strong {
+  font-size: var(--result-kpi) !important;
+  color: var(--j-cyan) !important;
+}
+
+body.jocket-results-page .stock-rating-card strong {
+  font-size: clamp(25px, 2vw, 34px) !important;
+  line-height: 1.18 !important;
+  font-weight: 750 !important;
+}
+
+body.jocket-results-page :is(.stock-ai-score, .stock-rating-card) small,
+body.jocket-results-page .metric-foot,
+body.jocket-results-page .metric-foot span {
+  font-size: var(--result-caption) !important;
+  line-height: 1.5 !important;
+}
+
+body.jocket-results-page .stock-live-price {
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: auto auto 1fr !important;
+  padding: 16px 18px !important;
+}
+
+body.jocket-results-page .stock-live-price > strong {
+  font-size: var(--result-kpi) !important;
+}
+
+body.jocket-results-page .stock-live-price svg {
+  height: 80px !important;
+}
+
+body.jocket-results-page .stock-ai-thesis p {
+  display: -webkit-box !important;
+  overflow: hidden !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 4 !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+  font-weight: 560 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis ul {
+  grid-template-columns: 1fr !important;
+  gap: 7px !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+
+body.jocket-results-page .metric-inner {
+  gap: 12px !important;
+}
+
+body.jocket-results-page .metric-value {
+  align-self: center !important;
+  font-size: var(--result-kpi) !important;
+  letter-spacing: -.04em !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 {
+  padding: 16px 18px !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 .metric-inner {
+  grid-template-rows: auto auto 1fr !important;
+  gap: 5px !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 .metric-value {
+  align-self: start !important;
+  font-size: clamp(27px, 2vw, 34px) !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 .metric-foot,
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 .metric-foot span {
+  font-size: 10.5px !important;
+  line-height: 1.32 !important;
+}
+
+body.jocket-results-page .stock-spectrum-terminal > .metric-card.bento-size-2x1 .metric-foot > span:first-child {
+  -webkit-line-clamp: 2 !important;
+}
+
+body.jocket-results-page .metric-foot > span:first-child {
+  -webkit-line-clamp: 5 !important;
+}
+
+/* Emotion KPI cards use the reference image's complete label/value/story stack. */
+body.jocket-results-page .sentiment-metric-card {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: 24px 54px 6px 14px 1fr !important;
+  gap: 12px 14px !important;
+  padding: 22px !important;
+}
+
+body.jocket-results-page .sentiment-metric-top > span,
+body.jocket-results-page .sentiment-metric-top > b {
+  font-size: var(--result-label) !important;
+  line-height: 1.35 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > strong {
+  grid-column: 1 / -1 !important;
+  font-size: var(--result-kpi) !important;
+  line-height: 1 !important;
+  letter-spacing: -.045em !important;
+  color: var(--j-cyan) !important;
+}
+
+body.jocket-results-page .sentiment-metric-card .semantic-scale {
+  grid-column: 1 / -1 !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  color: rgba(255, 255, 255, 0.24) !important;
+  font-size: 9px !important;
+  margin-top: -2px !important;
+  margin-bottom: 6px !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Color rules for semantic-meter based on card tone */
+body.jocket-results-page .sentiment-metric-card.danger .semantic-meter i {
+  background: var(--j-rose, #ff5c7a) !important;
+  box-shadow: 0 0 8px rgba(255, 92, 122, 0.35) !important;
+}
+body.jocket-results-page .sentiment-metric-card.warning .semantic-meter i {
+  background: var(--j-pink, #ff5cc8) !important;
+  box-shadow: 0 0 8px rgba(255, 92, 200, 0.3) !important;
+}
+body.jocket-results-page .sentiment-metric-card.good .semantic-meter i {
+  background: var(--j-cyan, #37e8ff) !important;
+  box-shadow: 0 0 8px rgba(55, 232, 255, 0.35) !important;
+}
+body.jocket-results-page .sentiment-metric-card.watch .semantic-meter i {
+  background: var(--j-gold, #ffe66d) !important;
+  box-shadow: 0 0 8px rgba(255, 230, 109, 0.3) !important;
+}
+body.jocket-results-page .sentiment-metric-card.cool .semantic-meter i {
+  background: var(--j-muted, #a7adba) !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > p {
+  grid-column: 1 / -1 !important;
+  display: block !important;
+  overflow: visible !important;
+  margin: 0 !important;
+  color: rgba(235,236,242,.68) !important;
+  font-size: var(--result-body) !important;
+  line-height: 1.55 !important;
+  font-weight: 390 !important;
+  -webkit-line-clamp: unset !important;
+  align-self: end !important;
+}
+
+body.jocket-results-page .sentiment-metric-card > .sentiment-delta {
+  right: 22px !important;
+  bottom: 20px !important;
+  font-size: var(--result-caption) !important;
+}
+
+/* Main market story: KPI first, compact timeline, actual round floating bubbles. */
+body.jocket-results-page .market-cycle-card,
+body.jocket-results-page .market-pos-card,
+body.jocket-results-page .market-timeline-card,
+body.jocket-results-page .market-narrative-card,
+body.jocket-results-page .market-ladder-card {
+  min-width: 0 !important;
+}
+
+body.jocket-results-page .market-cycle-card { order: 1 !important; }
+body.jocket-results-page .market-pos-card { order: 2 !important; }
+body.jocket-results-page .market-timeline-card { order: 3 !important; }
+body.jocket-results-page .market-narrative-card { order: 4 !important; }
+body.jocket-results-page .market-ladder-card { order: 5 !important; }
+body.jocket-results-page .market-pulse-card { order: 6 !important; }
+
+body.jocket-results-page .market-gauge {
+  width: 128px !important;
+  height: 128px !important;
+  margin: 7px auto !important;
+}
+
+body.jocket-results-page .market-gauge strong {
+  font-size: 44px !important;
+}
+
+body.jocket-results-page .market-pos-grid span,
+body.jocket-results-page .market-time-chip span,
+body.jocket-results-page .market-pulse-card span {
+  font-size: var(--result-label) !important;
+  line-height: 1.4 !important;
+}
+
+body.jocket-results-page .market-pos-grid strong {
+  color: var(--j-cyan) !important;
+  font-size: clamp(21px, 1.7vw, 28px) !important;
+  line-height: 1.15 !important;
+}
+
+body.jocket-results-page .market-timeline-rail {
+  grid-template-columns: 1fr !important;
+  gap: 0 !important;
+}
+
+body.jocket-results-page .market-time-chip {
+  display: grid !important;
+  grid-template-columns: 62px minmax(0, 1fr) !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-height: 72px !important;
+  border-bottom: 1px solid rgba(232,234,240,.08) !important;
+}
+
+body.jocket-results-page .market-time-chip:last-child {
+  border-bottom: 0 !important;
+}
+
+body.jocket-results-page .market-time-chip strong {
+  font-size: 18px !important;
+}
+
+body.jocket-results-page .market-time-chip span {
+  color: var(--result-text) !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+body.jocket-results-page .market-bubble-stage {
+  position: relative !important;
+  display: block !important;
+  flex: 1 1 auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  margin-top: 8px !important;
+  overflow: hidden !important;
+}
+
+body.jocket-results-page .market-bubble {
+  --pointer-x: 0px;
+  --pointer-y: 0px;
+  position: absolute !important;
+  inset: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  padding: 8px !important;
+  border: 1px solid rgba(55,232,255,.26) !important;
+  border-radius: 50% !important;
+  background: radial-gradient(circle at 35% 24%, rgba(255,255,255,.14), transparent 23%), radial-gradient(circle at 50% 70%, rgba(55,232,255,.14), rgba(16,17,27,.88) 66%) !important;
+  box-shadow: inset 0 0 22px rgba(55,232,255,.08), 0 10px 24px rgba(0,0,0,.28), 0 0 22px rgba(55,232,255,.09) !important;
+  animation: jocketBubbleDriftV3 7.2s ease-in-out infinite alternate !important;
+  transform: translate3d(var(--pointer-x), var(--pointer-y), 0) !important;
+  will-change: transform, translate !important;
+  cursor: crosshair !important;
+}
+
+body.jocket-results-page .market-bubble.bubble-1 { grid-area: auto !important; width: 112px !important; height: 112px !important; left: 2% !important; top: 23% !important; }
+body.jocket-results-page .market-bubble.bubble-2 { width: 84px !important; height: 84px !important; left: 43% !important; top: 1% !important; }
+body.jocket-results-page .market-bubble.bubble-3 { width: 78px !important; height: 78px !important; right: 1% !important; top: 27% !important; }
+body.jocket-results-page .market-bubble.bubble-4 { width: 80px !important; height: 80px !important; left: 39% !important; bottom: 0 !important; }
+body.jocket-results-page .market-bubble.bubble-5 { width: 68px !important; height: 68px !important; right: 9% !important; bottom: 0 !important; }
+
+body.jocket-results-page .market-bubble.purple {
+  border-color: rgba(155,92,255,.32) !important;
+  background: radial-gradient(circle at 35% 24%, rgba(255,255,255,.14), transparent 23%), radial-gradient(circle at 50% 70%, rgba(155,92,255,.18), rgba(16,17,27,.88) 66%) !important;
+}
+
+body.jocket-results-page .market-bubble.pink {
+  border-color: rgba(255,92,200,.30) !important;
+  background: radial-gradient(circle at 35% 24%, rgba(255,255,255,.14), transparent 23%), radial-gradient(circle at 50% 70%, rgba(255,92,200,.15), rgba(16,17,27,.88) 66%) !important;
+}
+
+body.jocket-results-page .market-bubble:hover {
+  z-index: 10 !important;
+  border-color: rgba(255,255,255,.44) !important;
+  box-shadow: inset 0 0 24px rgba(255,255,255,.07), 0 16px 30px rgba(0,0,0,.34), 0 0 28px rgba(55,232,255,.21) !important;
+  animation-play-state: paused !important;
+}
+
+body.jocket-results-page .market-bubble :is(span, strong) {
+  max-width: 82% !important;
+  overflow: visible !important;
+  white-space: normal !important;
+  text-align: center !important;
+}
+
+body.jocket-results-page .market-bubble span {
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+}
+
+body.jocket-results-page .market-bubble strong {
+  margin: 0 !important;
+  font-size: 19px !important;
+  line-height: 1 !important;
+}
+
+@keyframes jocketBubbleDriftV3 {
+  0% { translate: 0 4px; rotate: -1deg; }
+  50% { translate: 6px -7px; rotate: 1deg; }
+  100% { translate: -4px -12px; rotate: -.5deg; }
+}
+
+body.jocket-results-page .market-ladder-row {
+  height: 54px !important;
+  min-height: 54px !important;
+  max-height: 54px !important;
+  margin: 7px 0 0 !important;
+  padding: 0 14px !important;
+  border-radius: 15px !important;
+}
+
+body.jocket-results-page .market-pulse-card p {
+  font-size: 16px !important;
+  line-height: 1.5 !important;
+  font-weight: 580 !important;
+}
+
+/* Remaining market cards inherit the same readable baseline. */
+body.jocket-results-page .sentiment-index-card > span,
+body.jocket-results-page .sentiment-index-card > em {
+  font-size: 11px !important;
+}
+
+body.jocket-results-page .sentiment-index-card > strong {
+  font-size: clamp(19px, 1.45vw, 25px) !important;
+}
+
+body.jocket-results-page :is(.sentiment-board-card, .sentiment-method-card) {
+  justify-content: space-between !important;
+  gap: 11px !important;
+  padding: 22px !important;
+}
+
+body.jocket-results-page :is(.sentiment-board-card, .sentiment-method-card) p,
+body.jocket-results-page :is(.sentiment-board-card, .sentiment-method-card) small {
+  display: block !important;
+  overflow: visible !important;
+  margin: 0 !important;
+  font-size: var(--result-body) !important;
+  line-height: 1.48 !important;
+}
+
+body.jocket-results-page .sentiment-method-card strong {
+  color: var(--j-cyan) !important;
+  font-size: 20px !important;
+  line-height: 1.2 !important;
+}
+
+body.jocket-results-page .sentiment-method-card b {
+  font-size: clamp(36px, 2.7vw, 46px) !important;
+  line-height: 1 !important;
+  letter-spacing: -.045em !important;
+}
+
+body.jocket-results-page .sentiment-alert {
+  min-height: 168px !important;
+  padding: 22px !important;
+}
+
+body.jocket-results-page .sentiment-alert small {
+  font-size: var(--result-body) !important;
+  line-height: 1.55 !important;
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page .market-bubble-stage { min-height: 230px !important; }
+  body.jocket-results-page .market-time-chip { min-height: 64px !important; }
+}
+
+/* Jocket Card Layout overrides and standardizations */
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  grid-template-rows: auto auto auto 1fr !important;
+  gap: 8px 12px !important;
+  padding: 16px 18px !important;
+  min-height: 156px !important;
+  height: auto !important;
+}
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 > strong {
+  grid-column: 1 / -1 !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace !important;
+  font-size: clamp(16px, 1.45vw, 22px) !important;
+  line-height: 1.25 !important;
+  font-weight: 700 !important;
+  margin: 4px 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 .semantic-meter {
+  grid-column: 1 / -1 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 99px !important;
+  height: 4px !important;
+  margin: 4px 0 !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  position: relative !important;
+}
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 .semantic-meter i {
+  display: block !important;
+  height: 100% !important;
+  border-radius: 99px !important;
+  transition: width 0.4s ease-in-out !important;
+}
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 .semantic-scale {
+  display: none !important;
+}
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1 > p {
+  grid-column: 1 / -1 !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3 !important;
+  -webkit-box-orient: vertical !important;
+  color: rgba(235, 236, 242, 0.68) !important;
+  align-self: end !important;
+}
+
+/* Fundamental cards follow the same dense KPI contract as Market Sentiment. */
+body.jocket-results-page .chart-size-marker,
+body.jocket-results-page .fundamental-rating-layout-marker,
+body.jocket-results-page .fundamental-rating-kpi-marker {
+  display: none !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-1x1 {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-rows: 18px 34px minmax(0, 1fr) !important;
+  gap: 5px 8px !important;
+  padding: 12px 13px !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-1x1 > strong {
+  grid-column: 1 / -1 !important;
+  align-self: center !important;
+  margin: 0 !important;
+  font-size: clamp(18px, 1.3vw, 23px) !important;
+  line-height: 1 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-1x1 .sentiment-metric-top > span,
+body.jocket-results-page .sentiment-metric-card.bento-size-1x1 .sentiment-metric-top > b {
+  overflow: hidden !important;
+  font-size: 9px !important;
+  line-height: 18px !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-1x1 > p {
+  grid-column: 1 / -1 !important;
+  align-self: end !important;
+  display: -webkit-box !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  color: rgba(235, 236, 242, .58) !important;
+  font-size: 10px !important;
+  line-height: 1.35 !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1:not(:has(.semantic-meter)) {
+  grid-template-rows: 20px 36px minmax(0, 1fr) !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.bento-size-2x1:not(:has(.semantic-meter)) > p {
+  grid-row: 3 !important;
+}
+
+body.jocket-results-page .compact-kpi > strong {
+  color: var(--j-cyan) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  letter-spacing: -.035em !important;
+}
+
+body.jocket-results-page .compact-kpi.bento-size-2x1 {
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+  gap: 10px 12px !important;
+  padding: 20px 22px !important;
+}
+
+body.jocket-results-page .compact-kpi.bento-size-2x1 > strong {
+  margin: 2px 0 !important;
+  overflow: visible !important;
+  color: var(--j-cyan) !important;
+  font-size: clamp(18px, 1.45vw, 24px) !important;
+  line-height: 1.18 !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+body.jocket-results-page .compact-kpi.bento-size-2x1 > p {
+  align-self: end !important;
+  font-size: 13px !important;
+  line-height: 1.62 !important;
+  -webkit-line-clamp: 3 !important;
+}
+
+/* Editorial research panels replace unstructured full-width text walls. */
+body.jocket-results-page .research-explanation-panel {
+  margin: clamp(26px, 3vw, 42px) 0 clamp(34px, 4vw, 54px) !important;
+  padding: clamp(22px, 2.5vw, 32px) !important;
+}
+
+body.jocket-results-page .research-explanation-head {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 18px !important;
+  margin-bottom: 14px !important;
+}
+
+body.jocket-results-page .research-eyebrow {
+  display: block !important;
+  margin-bottom: 6px !important;
+  color: var(--j-cyan) !important;
+  font-size: 10px !important;
+  line-height: 1.3 !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+}
+
+body.jocket-results-page .research-explanation-head h3 {
+  margin: 0 !important;
+  color: var(--result-text) !important;
+  font-size: clamp(20px, 1.8vw, 27px) !important;
+  line-height: 1.25 !important;
+  font-weight: 540 !important;
+  letter-spacing: -0.02em !important;
+}
+
+body.jocket-results-page .research-view-badge {
+  flex: 0 0 auto !important;
+  padding: 6px 10px !important;
+  border: 1px solid rgba(255, 188, 92, 0.18) !important;
+  border-radius: 999px !important;
+  background: rgba(255, 188, 92, 0.07) !important;
+  color: rgba(255, 211, 150, 0.82) !important;
+  font-size: 10px !important;
+  font-weight: 520 !important;
+}
+
+body.jocket-results-page .research-explanation-lead {
+  max-width: 88ch !important;
+  margin: 0 0 22px !important;
+  color: rgba(238, 239, 244, 0.76) !important;
+  font-size: 14px !important;
+  line-height: 1.78 !important;
+  font-weight: 370 !important;
+}
+
+body.jocket-results-page .research-point-grid,
+body.jocket-results-page .research-limit-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+body.jocket-results-page .research-point-card {
+  display: grid !important;
+  grid-template-columns: 34px minmax(0, 1fr) !important;
+  gap: 12px !important;
+  min-width: 0 !important;
+  padding: 17px 18px !important;
+  border: 1px solid rgba(232, 234, 240, 0.09) !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, 0.028) !important;
+}
+
+body.jocket-results-page .research-point-index {
+  display: inline-grid !important;
+  place-items: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 10px !important;
+  background: rgba(55, 232, 255, 0.08) !important;
+  color: rgba(94, 236, 255, 0.84) !important;
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 10px !important;
+  font-weight: 650 !important;
+}
+
+body.jocket-results-page .research-point-card strong {
+  display: block !important;
+  margin: 1px 0 6px !important;
+  color: rgba(248, 248, 250, 0.92) !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  font-weight: 600 !important;
+}
+
+body.jocket-results-page .research-point-card p,
+body.jocket-results-page .research-limit-card p {
+  margin: 0 !important;
+  color: rgba(232, 233, 239, 0.64) !important;
+  font-size: 12px !important;
+  line-height: 1.68 !important;
+  font-weight: 360 !important;
+  overflow-wrap: anywhere !important;
+}
+
+body.jocket-results-page .research-limit-grid {
+  margin-top: 14px !important;
+}
+
+body.jocket-results-page .research-limit-card {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) !important;
+  align-items: start !important;
+  gap: 10px !important;
+  padding: 12px 14px !important;
+  border-left: 2px solid rgba(255, 188, 92, 0.38) !important;
+  border-radius: 0 12px 12px 0 !important;
+  background: rgba(255, 188, 92, 0.035) !important;
+}
+
+body.jocket-results-page .research-limit-card > span {
+  color: rgba(255, 211, 150, 0.74) !important;
+  font-size: 10px !important;
+  line-height: 1.6 !important;
+  font-weight: 600 !important;
+}
+
+body.jocket-results-page .score-breakdown-marker {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page :is(.bento-grid, .insight-grid):has(> .sentiment-metric-card.bento-size-2x1) {
+    grid-auto-rows: auto !important;
+  }
+
+  body.jocket-results-page .research-point-grid,
+  body.jocket-results-page .research-limit-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body.jocket-results-page .research-explanation-panel {
+    padding: 20px 16px !important;
+    border-radius: 22px !important;
+  }
+}
+
+body.jocket-results-page .rating-kpi-grid {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  grid-auto-rows: var(--result-row) !important;
+  gap: var(--result-gap) !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.fundamental-rating-layout-marker) {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  grid-auto-rows: var(--result-row) !important;
+  gap: var(--result-gap) !important;
+  align-items: stretch !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.fundamental-rating-layout-marker) > [data-testid="stColumn"]:has(.fundamental-rating-layout-marker) {
+  grid-column: span 3 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.fundamental-rating-layout-marker) > [data-testid="stColumn"]:has(.fundamental-rating-kpi-marker) {
+  grid-column: span 5 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) > [data-testid="stColumn"]:has(.chart-size-marker[data-bento-size="2x2"]) {
+  grid-column: span 2 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) > [data-testid="stColumn"]:has(.chart-size-marker[data-bento-size="3x2"]) {
+  grid-column: span 3 !important;
+  grid-row: span 2 !important;
+}
+
+/* A four-card core-chart row is always 2+2+2+2 across the eight-column grid. */
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(4)):has(.chart-size-marker) > [data-testid="stColumn"] {
+  grid-column: span 2 !important;
+  grid-row: span 2 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  flex: none !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) > [data-testid="stColumn"]:has(.chart-size-marker[data-bento-size="4x2"]) {
+  grid-column: span 4 !important;
+  grid-row: span 2 !important;
+}
+
+/* Financial trend: 2 + 2 + 4 must stay on one eight-column row. */
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(3)):has(.chart-size-marker[data-bento-size="4x2"]) > [data-testid="stColumn"]:nth-child(1),
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(3)):has(.chart-size-marker[data-bento-size="4x2"]) > [data-testid="stColumn"]:nth-child(2) {
+  grid-column: span 2 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(3)):has(.chart-size-marker[data-bento-size="4x2"]) > [data-testid="stColumn"]:nth-child(3) {
+  grid-column: span 4 !important;
+  grid-row: span 2 !important;
+}
+
+body.jocket-results-page [class*="st-key-result_chart_"].bento-size-2x2,
+body.jocket-results-page [class*="st-key-result_chart_"].bento-size-3x2,
+body.jocket-results-page [class*="st-key-result_chart_"].bento-size-4x2 {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) .chart-title {
+  margin-bottom: 4px !important;
+  font-size: clamp(13px, 1vw, 16px) !important;
+}
+
+/* Individual-stock charts use compact chrome so the plot remains the focus. */
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title {
+  gap: 8px !important;
+  margin-bottom: 2px !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title .pill {
+  font-size: 9px !important;
+  line-height: 1.2 !important;
+  padding: 3px 7px !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.fundamental-rating-layout-marker) .chart-title {
+  font-size: clamp(12px, 0.95vw, 14px) !important;
+}
+
+/* Prominent styling for the overall rating card */
+body.jocket-results-page .sentiment-metric-card.rating-overall-card {
+  background: linear-gradient(135deg, rgba(55, 232, 255, 0.16) 0%, rgba(165, 94, 234, 0.16) 100%) !important;
+  border: 1px solid rgba(55, 232, 255, 0.45) !important;
+  box-shadow: 0 0 15px rgba(55, 232, 255, 0.18), inset 0 0 10px rgba(55, 232, 255, 0.05) !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.rating-overall-card > strong {
+  color: #ffffff !important;
+  text-shadow: 0 0 10px rgba(55, 232, 255, 0.6) !important;
+  font-weight: 750 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.rating-overall-card .sentiment-metric-top > span {
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-weight: 600 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.rating-overall-card .sentiment-metric-top > b {
+  color: var(--j-cyan, #37e8ff) !important;
+  text-shadow: 0 0 8px rgba(55, 232, 255, 0.4) !important;
+  font-weight: 650 !important;
+}
+
+body.jocket-results-page .sentiment-metric-card.rating-overall-card > p {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) [data-testid="stPlotlyChart"] {
+  min-height: 0 !important;
+}
+
+@media (max-width: 980px) {
+  body.jocket-results-page .rating-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-auto-rows: 118px !important;
+  }
+
+  body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.fundamental-rating-layout-marker) > [data-testid="stColumn"] {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page .rating-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-auto-rows: 112px !important;
+  }
+
+  body.jocket-results-page [data-testid="stHorizontalBlock"]:has(.chart-size-marker) > [data-testid="stColumn"] {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+}
+
+body.jocket-results-page .sentiment-method-card,
+body.jocket-results-page .sentiment-board-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 22px !important;
+}
+body.jocket-results-page .sentiment-method-card .method-card-top,
+body.jocket-results-page .sentiment-board-card .board-card-top {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  width: 100% !important;
+}
+body.jocket-results-page .sentiment-method-card .method-card-top {
+  height: 112px !important;
+}
+body.jocket-results-page .sentiment-board-card .board-card-top {
+  height: 106px !important;
+}
+body.jocket-results-page .sentiment-board-card .board-card-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+body.jocket-results-page .sentiment-method-card .method-card-bottom,
+body.jocket-results-page .sentiment-board-card .board-card-bottom {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  margin-top: auto !important;
+  width: 100% !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding-top: 12px !important;
+}
+
+/* Premium styling for sentiment strength progress bars */
+body.jocket-results-page .sentiment-strength {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 99px !important;
+  height: 4px !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  margin-top: 4px !important;
+}
+body.jocket-results-page .sentiment-strength i {
+  display: block !important;
+  height: 100% !important;
+  border-radius: 99px !important;
+}
+body.jocket-results-page .sentiment-strength.danger i {
+  background: var(--j-rose, #ff5c7a) !important;
+}
+body.jocket-results-page .sentiment-strength.good i {
+  background: var(--j-cyan, #37e8ff) !important;
+}
+body.jocket-results-page .sentiment-strength.watch i {
+  background: var(--j-gold, #ffe66d) !important;
+}
+body.jocket-results-page .sentiment-strength.cool i {
+  background: var(--j-muted, #a7adba) !important;
+}
+
+body.jocket-results-page .market-cycle-content {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  height: calc(100% - 24px) !important;
+  width: 100% !important;
+  margin-top: 10px !important;
+}
+body.jocket-results-page .market-cycle-content .market-gauge {
+  width: 136px !important;
+  height: 136px !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+  animation: bubble-pulse 4s ease-in-out infinite !important;
+}
+@keyframes bubble-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 16px rgba(55,232,255,0.12); }
+  50% { transform: scale(1.03); box-shadow: 0 0 28px rgba(55,232,255,0.25); }
+  100% { transform: scale(1); box-shadow: 0 0 16px rgba(55,232,255,0.12); }
+}
+body.jocket-results-page .market-gauge-side {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  gap: 14px !important;
+  padding-left: 20px !important;
+  flex-grow: 1 !important;
+}
+body.jocket-results-page .market-gauge-metric {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  border-left: 2px solid rgba(255, 255, 255, 0.08) !important;
+  padding-left: 14px !important;
+}
+body.jocket-results-page .market-gauge-metric span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em !important;
+}
+body.jocket-results-page .market-gauge-metric strong {
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  line-height: 1.1 !important;
+}
+body.jocket-results-page .market-gauge-metric strong em {
+  font-style: normal !important;
+  font-weight: 600 !important;
+}
+body.jocket-results-page .market-gauge-metric strong em.up {
+  color: var(--j-rose) !important;
+}
+body.jocket-results-page .market-gauge-metric strong em.down {
+  color: var(--j-green) !important;
+}
+
+body.jocket-results-page .market-pos-card {
+  min-height: 148px !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 16px 20px !important;
+  background: var(--j-card-bg) !important;
+  border: 1px solid var(--j-border) !important;
+  border-radius: var(--j-radius) !important;
+}
+body.jocket-results-page .market-pos-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-bottom: 6px !important;
+  width: 100% !important;
+}
+body.jocket-results-page .market-pos-header span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+body.jocket-results-page .market-pos-content {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 20px !important;
+  align-items: center !important;
+  flex-grow: 1 !important;
+  width: 100% !important;
+}
+body.jocket-results-page .market-pos-metrics {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 20px !important;
+  flex-shrink: 0 !important;
+}
+body.jocket-results-page .pos-metric-item {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+body.jocket-results-page .pos-metric-item span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+}
+body.jocket-results-page .pos-metric-item strong {
+  color: var(--j-cyan) !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+}
+body.jocket-results-page .market-pos-conclusion {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  flex-grow: 1 !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding-left: 16px !important;
+  min-width: 0 !important;
+}
+body.jocket-results-page .market-pos-conclusion span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+body.jocket-results-page .market-pos-conclusion p {
+  color: rgba(235, 236, 242, 0.85) !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+}
+
+
+/* Merged Card 1 (4x2) layouts and Bubble Narrative overrides */
+body.jocket-results-page .market-cycle-card.bento-size-4x2 {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 26px 28px !important;
+  box-sizing: border-box !important;
+}
+body.jocket-results-page .market-cycle-card.bento-size-4x2 .market-cycle-content {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 36px !important;
+  height: 100% !important;
+  margin-top: 0 !important;
+}
+body.jocket-results-page .market-cycle-card.bento-size-4x2 .market-gauge {
+  width: 156px !important;
+  height: 156px !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+}
+body.jocket-results-page .market-cycle-card.bento-size-4x2 .market-gauge-side {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-self: stretch !important;
+  gap: 22px !important;
+  flex-grow: 1 !important;
+  min-width: 0 !important;
+}
+body.jocket-results-page .gauge-side-row {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 32px !important;
+  width: 100% !important;
+}
+body.jocket-results-page .market-gauge-metric {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  border-left: 2px solid rgba(255, 255, 255, 0.08) !important;
+  padding-left: 14px !important;
+}
+body.jocket-results-page .market-gauge-metric span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+}
+body.jocket-results-page .market-gauge-metric strong {
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  line-height: 1.1 !important;
+}
+body.jocket-results-page .market-gauge-metric strong.cyan-text {
+  color: var(--j-cyan) !important;
+}
+body.jocket-results-page .market-gauge-metric strong em {
+  font-style: normal !important;
+  font-weight: 600 !important;
+}
+body.jocket-results-page .market-gauge-metric strong em.up {
+  color: var(--j-rose) !important;
+}
+body.jocket-results-page .market-gauge-metric strong em.down {
+  color: var(--j-green) !important;
+}
+body.jocket-results-page .market-gauge-conclusion {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  border-left: 2px solid rgba(255, 255, 255, 0.08) !important;
+  padding-left: 14px !important;
+  width: 100% !important;
+}
+body.jocket-results-page .market-gauge-conclusion span {
+  color: var(--j-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+body.jocket-results-page .market-gauge-conclusion p {
+  color: rgba(235, 236, 242, 0.85) !important;
+  font-size: 12px !important;
+  line-height: 1.65 !important;
+  margin: 0 !important;
+}
+
+body.jocket-results-page .market-narrative-card {
+  padding: 22px !important;
+}
+body.jocket-results-page .market-narrative-card .market-bubble-stage {
+  height: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+  position: relative !important;
+  min-height: 240px !important;
+}
+body.jocket-results-page .market-narrative-card .market-card-head {
+  display: none !important;
+}
+
+/* Card Height Alignments and Timeline Scrollbar configuration */
+body.jocket-results-page .market-cycle-card.bento-size-4x2,
+body.jocket-results-page .market-timeline-card,
+body.jocket-results-page .market-narrative-card {
+  height: calc(var(--result-row) + var(--result-row) + var(--result-gap)) !important;
+  min-height: calc(var(--result-row) + var(--result-row) + var(--result-gap)) !important;
+  max-height: calc(var(--result-row) + var(--result-row) + var(--result-gap)) !important;
+  box-sizing: border-box !important;
+  align-self: stretch !important;
+}
+
+body.jocket-results-page .market-timeline-card {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+body.jocket-results-page .market-timeline-rail {
+  overflow-y: auto !important;
+  height: 100% !important;
+  flex-grow: 1 !important;
+  padding-right: 6px !important;
+}
+
+body.jocket-results-page .market-timeline-rail::-webkit-scrollbar {
+  width: 5px !important;
+}
+body.jocket-results-page .market-timeline-rail::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+body.jocket-results-page .market-timeline-rail::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 3px !important;
+}
+body.jocket-results-page .market-timeline-rail::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24) !important;
+}
+
+/* ========================================================================== 
+   V3 INDIVIDUAL STOCK PROFILE REDESIGN & SPACING OPTIMIZATIONS
+   ========================================================================== */
+
+/* 1. Company Profile Bento Grid */
+body.jocket-results-page .profile-grid {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+  margin-top: 12px !important;
+  margin-bottom: 24px !important;
+  width: 100% !important;
+}
+
+body.jocket-results-page .profile-main-card {
+  grid-column: span 4 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 24px !important;
+  min-height: 256px !important;
+  border-radius: var(--result-radius, 30px) !important;
+  border: 1px solid var(--result-border, rgba(255, 255, 255, 0.08)) !important;
+  background: var(--result-surface, rgba(255, 255, 255, 0.03)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 32px rgba(0, 0, 0, 0.22) !important;
+  --glow-color: var(--result-glow) !important;
+}
+
+body.jocket-results-page .profile-main-header {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+}
+
+body.jocket-results-page .profile-main-card h3 {
+  margin: 4px 0 !important;
+  font-family: Inter, "SF Pro Display", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 26px !important;
+  font-weight: 760 !important;
+  color: var(--result-text, #fff) !important;
+}
+
+body.jocket-results-page .profile-code {
+  color: var(--result-muted, rgba(255, 255, 255, 0.5)) !important;
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 13px !important;
+  font-weight: 430 !important;
+}
+
+body.jocket-results-page .profile-badges {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  margin-top: 6px !important;
+}
+
+body.jocket-results-page .profile-summary-text {
+  margin-top: 16px !important;
+  color: rgba(232, 232, 238, 0.78) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 13px !important;
+  line-height: 1.62 !important;
+  font-weight: 380 !important;
+  max-height: 160px !important;
+  overflow-y: auto !important;
+  padding-right: 6px !important;
+}
+
+/* Right Metric Grid (1x1 small cards) */
+body.jocket-results-page .profile-metrics-grid {
+  grid-column: span 4 !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+}
+
+body.jocket-results-page .profile-kv-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  padding: 16px 20px !important;
+  min-height: 120px !important;
+  border-radius: var(--result-radius, 30px) !important;
+  border: 1px solid var(--result-border, rgba(255, 255, 255, 0.08)) !important;
+  background: var(--result-surface, rgba(255, 255, 255, 0.03)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 32px rgba(0, 0, 0, 0.22) !important;
+  --glow-color: var(--result-glow) !important;
+}
+
+body.jocket-results-page .profile-kv-card .profile-kv-top {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+}
+
+body.jocket-results-page .profile-kv-card .profile-kv-top span {
+  color: var(--result-muted, rgba(255, 255, 255, 0.5)) !important;
+  font-size: var(--result-label, 13px) !important;
+  font-weight: 650 !important;
+}
+
+body.jocket-results-page .profile-kv-card strong {
+  margin: 6px 0 !important;
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace !important;
+  font-size: clamp(16px, 1.4vw, 24px) !important;
+  line-height: 1.15 !important;
+  font-weight: 700 !important;
+  color: var(--result-text, #fff) !important;
+}
+
+body.jocket-results-page .profile-kv-card strong.highlight-cyan {
+  color: var(--j-cyan, #37e8ff) !important;
+}
+
+body.jocket-results-page .profile-kv-card p {
+  margin: 0 !important;
+  color: rgba(232, 232, 238, 0.48) !important;
+  font-size: var(--result-caption, 12px) !important;
+  font-weight: 450 !important;
+}
+
+/* Scrollbars for description */
+body.jocket-results-page .profile-summary-text::-webkit-scrollbar {
+  width: 4px !important;
+}
+body.jocket-results-page .profile-summary-text::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+body.jocket-results-page .profile-summary-text::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 2px !important;
+}
+
+/* 2. Insight Card Spacing & Header Restructuring */
+body.jocket-results-page .insight-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  min-height: 220px !important;
+  padding: 24px !important;
+}
+
+body.jocket-results-page .insight-card .insight-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  margin-bottom: 12px !important;
+}
+
+body.jocket-results-page .insight-card .insight-header > span:first-child {
+  color: var(--result-muted, rgba(255, 255, 255, 0.5)) !important;
+  font-family: Inter, system-ui, sans-serif !important;
+  font-size: var(--result-label, 13px) !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.02em !important;
+}
+
+body.jocket-results-page .insight-card .insight-title {
+  margin-top: 4px !important;
+  margin-bottom: 12px !important;
+  font-family: Inter, system-ui, sans-serif !important;
+  font-size: clamp(18px, 1.45vw, 24px) !important;
+  font-weight: 760 !important;
+  line-height: 1.25 !important;
+  display: block !important;
+}
+
+body.jocket-results-page .insight-card .insight-body {
+  color: rgba(232, 232, 238, 0.68) !important;
+  font-family: Inter, system-ui, sans-serif !important;
+  font-size: var(--result-body, 14px) !important;
+  line-height: 1.62 !important;
+  font-weight: 380 !important;
+  margin: 0 !important;
+  flex-grow: 1 !important;
+}
+
+/* Dynamic color styles for Insight Cards based on tone classes */
+body.jocket-results-page .insight-card.red .insight-title {
+  color: var(--j-rose, #ff5c7a) !important;
+}
+body.jocket-results-page .insight-card.green .insight-title {
+  color: var(--j-green, #33d69f) !important;
+}
+body.jocket-results-page .insight-card.cyan .insight-title {
+  color: var(--j-cyan, #37e8ff) !important;
+}
+body.jocket-results-page .insight-card.orange .insight-title {
+  color: var(--j-pink, #ff5cc8) !important;
+}
+body.jocket-results-page .insight-card.purple .insight-title {
+  color: var(--j-purple, #a55eea) !important;
+}
+
+/* 3. News Summary Frosted Glass Callout Box */
+body.jocket-results-page .news-summary-box {
+  margin: 20px 0 !important;
+  padding: 16px 20px !important;
+  border-radius: var(--result-radius, 30px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: rgba(255, 255, 255, 0.015) !important;
+  color: rgba(232, 232, 238, 0.85) !important;
+  font-family: Inter, "SF Pro Text", "PingFang SC", system-ui, sans-serif !important;
+  font-size: 13.5px !important;
+  line-height: 1.62 !important;
+  font-weight: 380 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* 4. Spacing Adjustments & Breathing Room */
+body.jocket-results-page [data-testid="stHorizontalBlock"] {
+  margin-top: 14px !important;
+  margin-bottom: 14px !important;
+}
+
+body.jocket-results-page .glass-table-wrap {
+  margin-top: 18px !important;
+  margin-bottom: 24px !important;
+}
+
+body.jocket-results-page .bento-section {
+  margin-top: 16px !important;
+  margin-bottom: 16px !important;
+}
+
+body.jocket-results-page .section-subtitle + div[data-testid="stHorizontalBlock"],
+body.jocket-results-page .section-subtitle + div.insight-grid {
+  margin-top: 8px !important;
+}
+
+@media (max-width: 900px) {
+  body.jocket-results-page .profile-grid {
+    grid-template-columns: 1fr !important;
+  }
+  body.jocket-results-page .profile-main-card {
+    grid-column: 1 / -1 !important;
+  }
+  body.jocket-results-page .profile-metrics-grid {
+    grid-column: 1 / -1 !important;
+  }
+}
+
+/* Final core-chart authority: exactly four equal 2x2 cards on desktop. */
+body.jocket-results-page .st-key-result_core_charts_row [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(4)) {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  gap: var(--result-gap) !important;
+  align-items: stretch !important;
+}
+
+body.jocket-results-page .st-key-result_core_charts_row [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(4)) > [data-testid="stColumn"] {
+  grid-column: span 2 !important;
+  grid-row: span 2 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  flex: none !important;
+}
+
+body.jocket-results-page .st-key-result_core_charts_row [class*="st-key-result_chart_"] {
+  height: 340px !important;
+  min-height: 340px !important;
+  max-height: 340px !important;
+  box-sizing: border-box !important;
+}
+
+@media (max-width: 760px) {
+  body.jocket-results-page .st-key-result_core_charts_row [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(4)) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  body.jocket-results-page .st-key-result_core_charts_row [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(4)) > [data-testid="stColumn"] {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+}
+
+/* Final chart-heading authority. */
+body.jocket-results-page .chart-title,
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title {
+  --chart-heading-size: clamp(12px, 0.9vw, 14px);
+  gap: 14px !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+}
+
+body.jocket-results-page .chart-title > span:first-child {
+  color: rgba(224, 224, 232, 0.48) !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+  font-weight: 520 !important;
+}
+
+body.jocket-results-page .chart-title > .pill,
+body.jocket-results-page:has(.stock-spectrum-terminal) [class*="st-key-result_chart_"] .chart-title > .pill {
+  padding: 0 0 3px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: var(--chart-heading-size) !important;
+  line-height: 1.35 !important;
+  font-weight: 760 !important;
+}
+
+body.jocket-results-page .chart-title > .pill-green { color: var(--j-cyan, #37e8ff) !important; }
+body.jocket-results-page .chart-title > .pill-cyan { color: var(--j-gold, #ffe66d) !important; }
+body.jocket-results-page .chart-title > .pill-purple { color: var(--j-purple, #a55eea) !important; }
+body.jocket-results-page .chart-title > .pill-orange { color: var(--j-pink, #ff5cc8) !important; }
+body.jocket-results-page .chart-title > .pill-red { color: var(--j-rose, #ff5c7a) !important; }
+
+/* Magic Bento Hover & Spotlight overrides to prevent !important background/border clashing */
+body.jocket-results-page :is(
+  .stock-terminal-hero,
+  .stock-live-price,
+  .stock-market-metrics,
+  .stock-ai-summary,
+  .stock-ai-thesis,
+  .stock-score-ring,
+  .profile-main-card,
+  .profile-kv-card,
+  .research-explanation-panel
+).magic-bento-card:hover {
+  transform: translate3d(0, -6px, 0) scale(1.004) !important;
+  border-color: rgba(232, 234, 239, 0.22) !important;
+  background: linear-gradient(145deg, rgba(35, 35, 49, 0.92), rgba(20, 20, 30, 0.82)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 32px 64px -12px rgba(0, 0, 0, 0.48), 0 0 36px rgba(var(--result-glow), 0.1) !important;
+}
+
+/* Reset grid column positions on score ring SVGs and values to center them */
+body.jocket-results-page .stock-score-grid .stock-ring-svg {
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+
+body.jocket-results-page .stock-score-grid .stock-score-ring strong {
+  grid-column: auto !important;
+  grid-row: auto !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+}
+
+/* AI Thesis Layout Redesign */
+body.jocket-results-page .stock-ai-thesis {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > * {
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  margin: 0 !important;
+  padding: 0 0 14px 0 !important;
+  border: none !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels > div {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 4px !important;
+  padding: 10px 14px !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 12px !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels small {
+  color: var(--result-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 1.2 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels b {
+  font-family: "JetBrains Mono", monospace !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels .support b {
+  color: var(--j-green, #00e676) !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-levels .resistance b {
+  color: var(--j-red, #ff1744) !important;
+}
+
+body.jocket-results-page .stock-ai-thesis > .stock-thesis-scroll {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  padding-right: 8px !important;
+  border-left: none !important;
+}
+
+body.jocket-results-page .stock-thesis-scroll::-webkit-scrollbar {
+  width: 5px !important;
+}
+body.jocket-results-page .stock-thesis-scroll::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+body.jocket-results-page .stock-thesis-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border-radius: 999px !important;
+}
+body.jocket-results-page .stock-thesis-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+}

@@ -1,0 +1,4 @@
+started
+market clicked
+run clicked
+{"bodyClass": "", "cards": 0, "controlCards": 0, "expanderCards": 0, "moved": 0, "nested": 0, "overflows": [], "page": {"h": 857, "vw": 1600, "w": 1600}, "radii": [], "sizes": {}, "titleCards": 0}

@@ -1,0 +1,32 @@
+{
+  "bodyClass": "jocket-results-page",
+  "cards": 31,
+  "controlCards": 0,
+  "expanderCards": 0,
+  "moved": 0,
+  "nested": 0,
+  "overflows": [
+    {
+      "ch": 518,
+      "cls": "glass-table-wrap magic-bento-card magic-bento-card--border-glow bento-size-4x4",
+      "cw": 1300,
+      "sh": 11666,
+      "sw": 1300
+    }
+  ],
+  "page": {
+    "h": 857,
+    "vw": 1600,
+    "w": 1600
+  },
+  "radii": [
+    "24px"
+  ],
+  "sizes": {
+    "1x1": 23,
+    "2x2": 2,
+    "4x2": 4,
+    "4x4": 2
+  },
+  "titleCards": 0
+}

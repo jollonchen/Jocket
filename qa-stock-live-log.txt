@@ -1,0 +1,36 @@
+stock clicked
+filled
+run clicked
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 0, 'fail': False, 'r': False}
+{'cards': 18, 'fail': False, 'r': True}
+{"bodyClass": "jocket-results-page", "cards": 18, "controlCards": 0, "expanderCards": 0, "moved": 0, "nested": 0, "overflows": [], "radii": ["24px"], "sizes": {"1x1": 10, "2x2": 7, "4x2": 1}, "titleCards": 0}

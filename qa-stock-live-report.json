@@ -1,0 +1,18 @@
+{
+  "bodyClass": "jocket-results-page",
+  "cards": 18,
+  "controlCards": 0,
+  "expanderCards": 0,
+  "moved": 0,
+  "nested": 0,
+  "overflows": [],
+  "radii": [
+    "24px"
+  ],
+  "sizes": {
+    "1x1": 10,
+    "2x2": 7,
+    "4x2": 1
+  },
+  "titleCards": 0
+}

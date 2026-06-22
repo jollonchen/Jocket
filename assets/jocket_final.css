@@ -982,11 +982,11 @@ button[kind="primary"]:hover,
   opacity: 1 !important;
 }
 
-/* ───────────────────────────────────────────────────────────────────────────
+/* /* ───────────────────────────────────────────────────────────────────────────
    Rainbow Marching Border – 来财来财 buttons
-   Technique: CSS mask-composite "exclude" punches a button-sized hole in the
-   center of the ::before conic-gradient, leaving only a 2px outer ring glow.
-   No z-index tricks or overflow changes needed — the mask handles clipping.
+   Ring technique: CSS mask-composite "exclude" creates a hollow donut shape
+   on the ::before – only the 3px padding ring is visible (center punched out).
+   Glow: blur filter gives a 1-4px diffuse "弥散光" effect (no sharp border lines).
    Triggers on: hover, :active (click), data-laicai-running (spinner running).
 ─────────────────────────────────────────────────────────────────────────── */
 @property --laicai-angle {
@@ -995,12 +995,43 @@ button[kind="primary"]:hover,
   inherits: false;
 }
 
-@keyframes laicai-rainbow-spin {
-  to { --laicai-angle: 360deg; }
+@property --laicai-t { syntax: '<length>'; initial-value: 3px; inherits: false; }
+@property --laicai-r { syntax: '<length>'; initial-value: 3px; inherits: false; }
+@property --laicai-b { syntax: '<length>'; initial-value: 3px; inherits: false; }
+@property --laicai-l { syntax: '<length>'; initial-value: 3px; inherits: false; }
+
+@keyframes laicai-aurora-glow {
+  0%, 100% {
+    --laicai-angle: 0deg;
+    --laicai-t: 1.5px;
+    --laicai-r: 3.5px;
+    --laicai-b: 4px;
+    --laicai-l: 2px;
+  }
+  25% {
+    --laicai-t: 3.5px;
+    --laicai-r: 1.5px;
+    --laicai-b: 2.5px;
+    --laicai-l: 4px;
+  }
+  50% {
+    --laicai-angle: 180deg;
+    --laicai-t: 4px;
+    --laicai-r: 2.5px;
+    --laicai-b: 1.5px;
+    --laicai-l: 3px;
+  }
+  75% {
+    --laicai-t: 2.5px;
+    --laicai-r: 4px;
+    --laicai-b: 3.5px;
+    --laicai-l: 1.5px;
+  }
 }
 
-/* ── ::before on the button – ring hidden by default ── */
+/* ── ::before ring on button – invisible by default ── */
 .jocket-dock-host button::before,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button::before,
 .st-key-run_stock_quote button::before,
 .st-key-run_market_sentiment button::before,
 .st-key-run_stock_analysis button::before,
@@ -1008,27 +1039,33 @@ button[kind="primary"]:hover,
 .st-key-run_hedge_analysis button::before,
 .st-key-ai_market_submit button::before,
 button[kind="primary"]::before,
-.jocket-dock-host .jocket-ai-composer-form [data-testid="stFormSubmitButton"] > button::before,
+button[kind="primaryFormSubmit"]::before,
 [data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button::before {
   content: '' !important;
   position: absolute !important;
-  /* Extend 2px outside the button on all sides */
-  inset: -2px !important;
-  border-radius: calc(var(--j-pill) + 2px) !important;
-  /* Full conic rainbow fill – the mask below cuts out the center */
+  /* Top, Right, Bottom, Left inset matches negative of variable thickness */
+  top: calc(-1 * var(--laicai-t)) !important;
+  right: calc(-1 * var(--laicai-r)) !important;
+  bottom: calc(-1 * var(--laicai-b)) !important;
+  left: calc(-1 * var(--laicai-l)) !important;
+  border-radius: var(--j-pill) !important;
+  /* Full conic rainbow – mask below cuts out the center, leaving only the outer ring */
   background: conic-gradient(
     from var(--laicai-angle),
-    #ff0000 0deg,
-    #ff7700 51deg,
-    #ffff00 102deg,
-    #00ff00 154deg,
-    #00ffff 205deg,
-    #0066ff 256deg,
-    #8800ff 308deg,
+    #ff0000   0deg,
+    #ff8800  51deg,
+    #ffee00 102deg,
+    #00dd00 154deg,
+    #00ddff 205deg,
+    #0055ff 256deg,
+    #9900ff 308deg,
     #ff0000 360deg
   ) !important;
-  /* Donut mask: show only the 2px padding ring, punch out the center */
-  padding: 2px !important;
+  /* Donut mask: padding matches variable thickness to ensure content-box aligns exactly at 0px (no gaps) */
+  padding-top: var(--laicai-t) !important;
+  padding-right: var(--laicai-r) !important;
+  padding-bottom: var(--laicai-b) !important;
+  padding-left: var(--laicai-l) !important;
   -webkit-mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0) !important;
@@ -1037,17 +1074,15 @@ button[kind="primary"]::before,
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0) !important;
   mask-composite: exclude !important;
-  /* Slight glow softness */
-  filter: blur(2px) !important;
   opacity: 0 !important;
   pointer-events: none !important;
-  transition: opacity 250ms ease !important;
-  /* Sit above button background so glow is visible at edge */
+  transition: opacity 300ms ease !important;
   z-index: 20 !important;
 }
 
-/* ── Activate ring: hover ── */
+/* ── Activate ring + diffuse glow: hover / active / running ── */
 .jocket-dock-host button:hover::before,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button:hover::before,
 .st-key-run_stock_quote button:hover::before,
 .st-key-run_market_sentiment button:hover::before,
 .st-key-run_stock_analysis button:hover::before,
@@ -1055,10 +1090,11 @@ button[kind="primary"]::before,
 .st-key-run_hedge_analysis button:hover::before,
 .st-key-ai_market_submit button:hover::before,
 button[kind="primary"]:hover::before,
-.jocket-dock-host .jocket-ai-composer-form [data-testid="stFormSubmitButton"] > button:hover::before,
+button[kind="primaryFormSubmit"]:hover::before,
 [data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button:hover::before,
-/* :active (click) */
+/* :active */
 .jocket-dock-host button:active::before,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button:active::before,
 .st-key-run_stock_quote button:active::before,
 .st-key-run_market_sentiment button:active::before,
 .st-key-run_stock_analysis button:active::before,
@@ -1066,21 +1102,29 @@ button[kind="primary"]:hover::before,
 .st-key-run_hedge_analysis button:active::before,
 .st-key-ai_market_submit button:active::before,
 button[kind="primary"]:active::before,
-/* data-laicai-running (spinner running) */
+button[kind="primaryFormSubmit"]:active::before,
+/* data-laicai-running */
 .jocket-dock-host button[data-laicai-running="true"]::before,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button[data-laicai-running="true"]::before,
 .st-key-run_stock_quote button[data-laicai-running="true"]::before,
 .st-key-run_market_sentiment button[data-laicai-running="true"]::before,
 .st-key-run_stock_analysis button[data-laicai-running="true"]::before,
 .st-key-run_ta_analysis button[data-laicai-running="true"]::before,
 .st-key-run_hedge_analysis button[data-laicai-running="true"]::before,
 .st-key-ai_market_submit button[data-laicai-running="true"]::before,
-button[kind="primary"][data-laicai-running="true"]::before {
+button[kind="primary"][data-laicai-running="true"]::before,
+button[kind="primaryFormSubmit"][data-laicai-running="true"]::before,
+[data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button[data-laicai-running="true"]::before {
   opacity: 1 !important;
-  animation: laicai-rainbow-spin 5s linear infinite !important;
+  animation: laicai-aurora-glow 6s ease-in-out infinite !important;
+  /* 弥散光: blur creates a soft 1-4px feathered color aura instead of a sharp border line */
+  filter: blur(2px) !important;
 }
 
-/* ── Ensure overflow:visible on hover/active/running so the 2px ring shows outside the button ── */
+/* ── overflow:visible so the 3px ring shows outside the button clip ──
+   Use high-specificity selectors to beat the base overflow:hidden rules. ── */
 .jocket-dock-host button:hover,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button:hover,
 .st-key-run_stock_quote button:hover,
 .st-key-run_market_sentiment button:hover,
 .st-key-run_stock_analysis button:hover,
@@ -1088,7 +1132,11 @@ button[kind="primary"][data-laicai-running="true"]::before {
 .st-key-run_hedge_analysis button:hover,
 .st-key-ai_market_submit button:hover,
 button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover,
+[data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button:hover,
+/* active */
 .jocket-dock-host button:active,
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button:active,
 .st-key-run_stock_quote button:active,
 .st-key-run_market_sentiment button:active,
 .st-key-run_stock_analysis button:active,
@@ -1096,14 +1144,20 @@ button[kind="primary"]:hover,
 .st-key-run_hedge_analysis button:active,
 .st-key-ai_market_submit button:active,
 button[kind="primary"]:active,
+button[kind="primaryFormSubmit"]:active,
+[data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button:active,
+/* running */
 .jocket-dock-host button[data-laicai-running="true"],
+.jocket-dock-host [data-testid="stFormSubmitButton"] > button[data-laicai-running="true"],
 .st-key-run_stock_quote button[data-laicai-running="true"],
 .st-key-run_market_sentiment button[data-laicai-running="true"],
 .st-key-run_stock_analysis button[data-laicai-running="true"],
 .st-key-run_ta_analysis button[data-laicai-running="true"],
 .st-key-run_hedge_analysis button[data-laicai-running="true"],
 .st-key-ai_market_submit button[data-laicai-running="true"],
-button[kind="primary"][data-laicai-running="true"] {
+button[kind="primary"][data-laicai-running="true"],
+button[kind="primaryFormSubmit"][data-laicai-running="true"],
+[data-testid="stVerticalBlock"]:has(.ai-composer-shell) [data-testid="stFormSubmitButton"] > button[data-laicai-running="true"] {
   overflow: visible !important;
 }
 
@@ -1226,7 +1280,7 @@ button[kind="primary"]:hover::after,
   background: rgba(255, 255, 255, 0.038) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 22px 58px rgba(0,0,0,0.24) !important;
   backdrop-filter: blur(26px) saturate(132%) !important;
-  transition: transform 220ms var(--j-ease), border-color 180ms ease, box-shadow 220ms var(--j-ease) !important;
+  transition: transform 700ms cubic-bezier(0.16, 1, 0.3, 1), border-color 450ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 700ms cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 .metric-card,
@@ -2100,7 +2154,7 @@ button[kind="primary"]:hover::after,
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 20px 48px rgba(0, 0, 0, 0.36) !important;
   backdrop-filter: blur(26px) saturate(132%) !important;
   overflow: hidden !important;
-  transition: transform 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), filter 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+  transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1), filter 0.7s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.7s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 /* Old card background diffuse gradient and hover styles removed to allow Magic Bento styles to apply */
@@ -3359,6 +3413,31 @@ div[data-testid="stElementContainer"]:has(> [data-testid="stMarkdownContainer"] 
   animation: border-glow-flow 3s infinite linear !important;
   background: rgba(255, 255, 255, 0.08) !important;
 }
+
+/* Strip nested inner container border and background to prevent double-border styling */
+.stTextInput [data-testid="stTextInputRootElement"] [data-baseweb="input"],
+.stTextInput [data-baseweb="input"] [data-testid="stTextInputRootElement"],
+.stDateInput [data-testid="stDateInputField"] [data-baseweb="input"],
+.stDateInput [data-baseweb="input"] [data-testid="stDateInputField"] {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.stTextInput [data-testid="stTextInputRootElement"] [data-baseweb="input"]:hover,
+.stTextInput [data-baseweb="input"] [data-testid="stTextInputRootElement"]:hover,
+.stDateInput [data-testid="stDateInputField"] [data-baseweb="input"]:hover,
+.stDateInput [data-baseweb="input"] [data-testid="stDateInputField"]:hover,
+.stTextInput [data-testid="stTextInputRootElement"] [data-baseweb="input"]:focus-within,
+.stTextInput [data-baseweb="input"] [data-testid="stTextInputRootElement"]:focus-within,
+.stDateInput [data-testid="stDateInputField"] [data-baseweb="input"]:focus-within,
+.stDateInput [data-baseweb="input"] [data-testid="stDateInputField"]:focus-within {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+
 
 /* Inner input tag normalization */
 .stTextInput input,
@@ -6484,6 +6563,22 @@ body:has(#jocket-ai-chat-active) .ai-message-content p:last-child {
   margin-bottom: 0 !important;
 }
 
+/* Use the same React Bits Text Type port as the other loading pages while
+   preserving the lighter chat typography. */
+body:has(#jocket-ai-chat-active) .ai-chat-loading-text-type {
+  color: rgba(244, 247, 251, 0.82) !important;
+  font-family: inherit !important;
+  font-size: 15px !important;
+  font-weight: 300 !important;
+  line-height: 1.62 !important;
+  text-shadow: none !important;
+}
+
+body:has(#jocket-ai-chat-active) .ai-chat-loading-text-type .jocket-text-type-output {
+  font: inherit !important;
+  color: inherit !important;
+}
+
 /* Blinking terminal-style cursor */
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -7301,6 +7396,17 @@ select {
   letter-spacing: -.04em !important;
 }
 
+.sentiment-index-card.sentiment-index-up strong,
+.sentiment-index-card.sentiment-index-up em {
+  color: var(--j-rose) !important;
+}
+
+.sentiment-index-card.sentiment-index-down strong,
+.sentiment-index-card.sentiment-index-down em {
+  color: var(--j-green) !important;
+}
+
+
 .sentiment-board-card,
 .sentiment-method-card {
   min-height: 238px !important;
@@ -7569,12 +7675,15 @@ div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button 
   min-height: 44px !important;
   max-height: 44px !important;
   width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
   border-radius: 9999px !important;
   transition: all 0.2s ease !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   padding: 0 16px !important;
+  transform: none !important;
 }
 div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button p,
 div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button span {
@@ -7595,6 +7704,7 @@ div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button:
   color: rgba(255, 255, 255, 0.9) !important;
   border-color: rgba(255, 255, 255, 0.28) !important;
   background: rgba(255, 255, 255, 0.06) !important;
+  transform: none !important;
 }
 
 /* Confirm button in analyst popover - white bg, black text */
@@ -7610,11 +7720,14 @@ div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] butto
   min-height: 44px !important;
   max-height: 44px !important;
   width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
   transition: all 0.2s ease !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   padding: 0 16px !important;
+  transform: none !important;
 }
 div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] button p,
 div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] button span {
@@ -7634,7 +7747,16 @@ div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] butto
 div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] button:hover {
   background: #ffffff !important;
   box-shadow: 0 10px 28px rgba(6, 6, 12, 0.28) !important;
-  transform: translateY(-1px) !important;
+  transform: none !important;
+}
+
+/* Ensure no laicai border-glowing animations/pseudo elements are applied to these popover buttons */
+div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button::before,
+div[data-testid="stPopoverBody"] div[class*="st-key-hedge_reset_agents"] button::after,
+div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] button::before,
+div[data-testid="stPopoverBody"] div[class*="st-key-hedge_confirm_agents"] button::after {
+  display: none !important;
+  content: none !important;
 }
 
 /* 4. Historical Reports Popover Details */
@@ -7760,7 +7882,7 @@ div[data-testid="stPopoverBody"] div[class*="st-key-ta_del_select"] button p {
   line-height: 1 !important;
 }
 
-/* ──────────────── Jocket Dot Field Background ──────────────── */
+/* React Bits Dot Field — results pages only. */
 #jocket-dot-field-container {
   position: fixed !important;
   inset: 0 !important;
@@ -7770,6 +7892,12 @@ div[data-testid="stPopoverBody"] div[class*="st-key-ta_del_select"] button p {
   pointer-events: none !important;
   overflow: hidden !important;
   background: transparent !important;
+  opacity: 0 !important;
+  transition: opacity 240ms ease !important;
+}
+
+#jocket-dot-field-container.active {
+  opacity: 1 !important;
 }
 
 #jocket-dot-field-canvas {
@@ -7779,8 +7907,21 @@ div[data-testid="stPopoverBody"] div[class*="st-key-ta_del_select"] button p {
   height: 100% !important;
   pointer-events: none !important;
   display: block !important;
-  opacity: 0 !important;
-  transition: opacity 0.8s ease-in-out !important;
+  opacity: 0.78 !important;
+}
+
+#jocket-dot-field-glow {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  display: block !important;
+}
+
+#jocket-dot-field-glow circle {
+  opacity: 0;
+  will-change: opacity;
 }
 
 /* ──────────────── Canonical Pill Nav authority ──────────────── */
@@ -8034,4 +8175,170 @@ body #root div.st-key-jocket_page_g_landing div.st-key-ai_market_provider_label 
     min-height: 46px !important;
     padding-inline: 15px !important;
   }
+}
+
+/* ==========================================================================
+   STREAMLIT DIALOG REDESIGN (Frosted Glass & Pill Buttons)
+   ========================================================================== */
+
+/* Dialog modal main card backdrop overlay (full-screen centered wrapper) */
+div[data-testid="stDialog"] {
+  background-color: rgba(6, 6, 8, 0.5) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 99999 !important;
+}
+
+/* Dialog modal main card content box */
+div[data-testid="stDialog"] div[role="dialog"] {
+  background: rgba(20, 23, 28, 0.82) !important;
+  backdrop-filter: blur(35px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(35px) saturate(160%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  width: 100% !important;
+  max-width: 420px !important;
+  padding: 22px 24px 20px 24px !important;
+  margin: auto !important;
+  position: relative !important;
+}
+
+/* Dialog header */
+div[role="dialog"] h1,
+div[role="dialog"] h2,
+div[role="dialog"] [data-testid="stDialogHeader"] h1,
+div[role="dialog"] [data-testid="stDialogHeader"] {
+  font-family: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif !important;
+  font-weight: 400 !important;
+  font-size: 15px !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+  letter-spacing: -0.2px !important;
+  margin-bottom: 12px !important;
+}
+
+/* Dialog close button top right */
+div[role="dialog"] button[aria-label="Close"] {
+  color: rgba(255, 255, 255, 0.4) !important;
+  transition: color 0.2s ease !important;
+}
+div[role="dialog"] button[aria-label="Close"]:hover {
+  color: rgba(255, 255, 255, 0.8) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Remove default backgrounds from intermediate layouts inside dialog */
+div[role="dialog"] > div,
+div[role="dialog"] div[data-testid="stVerticalBlockBorderWrapper"],
+div[role="dialog"] div[data-testid="stVerticalBlock"],
+div[role="dialog"] div[data-testid="stColumn"],
+div[role="dialog"] div[data-testid="stHorizontalBlock"],
+div[role="dialog"] div[data-testid="stElementContainer"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Cancel button in dialog */
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-size: 13px !important;
+  font-weight: 300 !important;
+  box-shadow: none !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  border-radius: 9999px !important;
+  transition: all 0.2s ease !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 16px !important;
+  transform: none !important;
+  font-family: Inter, -apple-system, sans-serif !important;
+}
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button p,
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button span {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+  font-size: 13px !important;
+  font-weight: 300 !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+}
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button:hover {
+  color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  transform: none !important;
+}
+
+/* Confirm delete button in dialog */
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button {
+  background: #ffffff !important;
+  color: #09090b !important;
+  border-radius: 9999px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  border: none !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  transition: all 0.2s ease !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 16px !important;
+  transform: none !important;
+  font-family: Inter, -apple-system, sans-serif !important;
+}
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button p,
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button span {
+  color: #09090b !important;
+  -webkit-text-fill-color: #09090b !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+}
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button:hover {
+  background: #ffffff !important;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28) !important;
+  transform: none !important;
+}
+
+/* Fully disable glowing borders and conic rings for dialog buttons */
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button::before,
+div[role="dialog"] div[class*="st-key-cancel_del_btn"] button::after,
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button::before,
+div[role="dialog"] div[class*="st-key-confirm_del_btn"] button::after {
+  display: none !important;
+  content: none !important;
 }

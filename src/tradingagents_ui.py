@@ -110,13 +110,13 @@ def confirm_delete_dialog(entry):
     
     st.markdown(
         f"""
-        <div style="text-align: center; margin: 5px 0 15px;">
-            <p class="dialog-sub-text" style="font-size: 0.85rem !important; color: #A7ADBA; margin-bottom: 10px; line-height: 1.4;">您确定要永久删除该投研报告吗？</p>
-            <div style="background: rgba(255, 92, 122, 0.06); border: 1px solid rgba(255, 92, 122, 0.2); border-radius: 20px; padding: 12px; margin: 12px 0;">
-                <p class="dialog-stock-name" style="font-size: 1.05rem !important; font-weight: 800; color: #FF5C7A; margin: 0 0 4px;">{display_name}</p>
-                <p class="dialog-report-date" style="font-size: 0.8rem !important; color: #A7ADBA; margin: 0;">报告日期：{d}</p>
+        <div style="text-align: center; margin: 0 0 12px; font-family: Inter, -apple-system, sans-serif;">
+            <p class="dialog-sub-text" style="font-size: 13px !important; font-weight: 300 !important; color: rgba(255, 255, 255, 0.6) !important; margin: 0 0 10px; line-height: 1.4;">您确定要永久删除该投研报告吗？</p>
+            <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 10px; margin: 10px 0;">
+                <p class="dialog-stock-name" style="font-size: 13px !important; font-weight: 400 !important; color: rgba(255, 255, 255, 0.9) !important; margin: 0 0 4px; letter-spacing: 0.3px;">{display_name}</p>
+                <p class="dialog-report-date" style="font-size: 11px !important; font-weight: 300 !important; color: rgba(255, 255, 255, 0.4) !important; margin: 0;">报告日期：{d}</p>
             </div>
-            <p class="dialog-warning-text" style="font-size: 0.76rem !important; color: #FFB86B; margin-top: 10px; opacity: 0.95; line-height: 1.45;">注意：此操作不仅会从页面移除，还将永久删除本地的 JSON 文件。</p>
+            <p class="dialog-warning-text" style="font-size: 11px !important; font-weight: 300 !important; color: rgba(255, 255, 255, 0.35) !important; margin: 8px 0 0; line-height: 1.4;">注意：此操作不仅会从页面移除，还将永久删除本地的 JSON 文件。</p>
         </div>
         """,
         unsafe_allow_html=True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -60,7 +61,7 @@ from src.ui_components import (
     render_bento_grid,
     render_hero,
     render_insight_cards,
-    render_ratings_list,
+    render_rating_metric_cards,
     render_recent_data_table,
     _render_emotion_cycle_position,
     render_section_title,
@@ -210,9 +211,9 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
     ma60_gap = ((close / ma60) - 1) if close and ma60 else None
 
     if close > ma20 > ma60:
-        trend_title, trend_tone = "多头结构占优", "green"
+        trend_title, trend_tone = "多头结构占优", "red"
     elif close < ma20:
-        trend_title, trend_tone = "短线趋势承压", "orange"
+        trend_title, trend_tone = "短线趋势承压", "green"
     else:
         trend_title, trend_tone = "趋势仍在确认", "cyan"
     trend_body = (
@@ -222,13 +223,13 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
     )
 
     if vol_ratio >= 1.8 and ret_1d > 0:
-        volume_title, volume_tone = "显著放量上涨", "green"
+        volume_title, volume_tone = "显著放量上涨", "red"
     elif vol_ratio >= 1.8 and ret_1d <= 0:
         volume_title, volume_tone = "高量分歧", "orange"
     elif vol_ratio >= 1.2:
         volume_title, volume_tone = "温和放量", "cyan"
     elif vol_ratio and vol_ratio < 0.8:
-        volume_title, volume_tone = "缩量运行", "orange"
+        volume_title, volume_tone = "缩量运行", "green"
     else:
         volume_title, volume_tone = "量能中性", "cyan"
     volume_body = (
@@ -242,7 +243,7 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
     risk_score = risk_control.get("score")
     risk_max = risk_control.get("max_score")
     if rsi >= 82:
-        risk_title, risk_tone = "RSI 过热", "red"
+        risk_title, risk_tone = "RSI 过热", "orange"
     elif ret_5d >= 0.25:
         risk_title, risk_tone = "短线涨幅偏大", "orange"
     elif risk_flags:
@@ -273,15 +274,86 @@ def _build_insights(score: dict, hist: pd.DataFrame, warning: str | None = None)
     ]
 
 
-def _render_chart_card(title: str, badge: str, fig, container_height: int | None = None, pill_class: str = "pill-cyan") -> None:
+def _render_chart_card(
+    title: str,
+    badge: str,
+    fig,
+    container_height: int | None = None,
+    pill_class: str = "pill-cyan",
+    size: str | None = None,
+    compact_text: bool = True,
+) -> None:
+    if compact_text:
+        fig = _compact_stock_chart_text(fig)
     key = "result_chart_" + re.sub(r"[^0-9A-Za-z_\u4e00-\u9fff]+", "_", title).strip("_")
     container = st.container(border=False, height=container_height, key=key) if container_height else st.container(border=False, key=key)
     with container:
+        if size:
+            st.markdown(
+                f'<span class="chart-size-marker" data-bento-size="{escape(size)}" aria-hidden="true"></span>',
+                unsafe_allow_html=True,
+            )
         st.markdown(
-            f'<div class="chart-title"><span>{title}</span><span class="pill {pill_class}">{badge}</span></div>',
+            f'<div class="chart-title"><span>{escape(title)}</span><span class="pill {escape(pill_class)}">{escape(badge)}</span></div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=f"chart_{title}")
+
+
+def _compact_stock_chart_text(fig):
+    """Keep labels readable without letting chart chrome crowd the data area."""
+    layout_update = dict(
+        font=dict(size=10),
+        legend=dict(font=dict(size=9)),
+        hoverlabel=dict(font=dict(size=10)),
+    )
+    
+    # Only set title_font if the figure actually has a title text
+    if hasattr(fig, "layout") and fig.layout is not None:
+        if hasattr(fig.layout, "title") and fig.layout.title is not None:
+            if getattr(fig.layout.title, "text", None):
+                layout_update["title_font"] = dict(size=11)
+
+    fig.update_layout(**layout_update)
+    fig.update_xaxes(tickfont=dict(size=9), title_font=dict(size=10))
+    fig.update_yaxes(tickfont=dict(size=9), title_font=dict(size=10))
+    
+    # Only update polars if the figure is a polar chart
+    is_polar = False
+    if hasattr(fig, "data") and fig.data:
+        for trace in fig.data:
+            if getattr(trace, "type", "") in {"scatterpolar", "barpolar"}:
+                is_polar = True
+                break
+                
+    if is_polar:
+        fig.update_polars(
+            radialaxis=dict(tickfont=dict(size=9)),
+            angularaxis=dict(tickfont=dict(size=9)),
+        )
+    return fig
+
+
+def _compact_core_chart(fig, height: int = 236):
+    """Fit a Plotly figure into the dashboard's compact 2x2 chart footprint."""
+    fig.update_layout(height=height)
+    return _compact_stock_chart_text(fig)
+
+
+def _score_chart_badge(score_value: float | None, scale: float = 100) -> tuple[str, str]:
+    """Return the shared market-style strength label and color for chart headers."""
+    try:
+        score = float(score_value)
+    except (TypeError, ValueError):
+        return "数据待补", "pill-purple"
+    ratio = score / max(float(scale), 1)
+    if ratio >= 0.80:
+        return f"强势 {score:.1f}", "pill-green"
+    if ratio >= 0.65:
+        return f"偏强 {score:.1f}", "pill-cyan"
+    if ratio >= 0.50:
+        return f"中性 {score:.1f}", "pill-purple"
+    return f"偏弱 {score:.1f}", "pill-orange"
 
 
 def analyze_recent_5d_emotion(history: pd.DataFrame) -> tuple[str, str]:
@@ -626,6 +698,35 @@ def _render_sector_heat_card(sector_payload: dict) -> None:
             metric_card("上涨板块数", str(pos_count), "所属方向扩散", "cyan", pos_ind),
         ]
         render_bento_grid(cards)
+
+        # Dynamic detailed sector analysis commentary
+        flow_desc = ""
+        net_flow_val = summary.get("net_flow_sum")
+        if net_flow_val is not None:
+            if net_flow_val > 100:
+                flow_desc = f"，板块整体呈主力增量买入态势（资金净流入 {net_flow_val:+.2f} 亿），具备极强的资金聚集效应"
+            elif net_flow_val < -100:
+                flow_desc = f"，板块整体面临主力资金净流出（净额 {net_flow_val:+.2f} 亿），需警惕高位分歧及回调风险"
+            else:
+                flow_desc = f"，整体资金呈现双向多空整固均衡（净流入 {net_flow_val:+.2f} 亿），市场情绪相对平稳"
+
+        rising_desc = f"在所属板块中，有 {pos_count} 个方向上涨"
+        if pos_count >= 5:
+            rising_desc += "，呈现极强的多头共振状态，行业题材贝塔风口扩散显著"
+        elif pos_count == 0:
+            rising_desc += "，所属方向板块全线承压下跌，行业概念基本面情绪目前偏冷"
+        else:
+            rising_desc += "，板块内部走势出现分化，主力资金仅在局部概念进行突破"
+
+        primary_list = summary.get("primary_boards", [])
+        primary_desc = f"个股核心涉猎板块题材包括：{', '.join(primary_list)}。" if primary_list else ""
+
+        deep_analysis_text = (
+            f"🎯 **行业与概念热度深研**：当前个股所属最强板块为【**{summary.get('top_board') or 'N/A'}**】（实时涨幅 {top_pct:+.2f}%），"
+            f"前三核心板块均值涨幅为 {avg3_pct:+.2f}%。{rising_desc}{flow_desc}。{primary_desc}"
+        )
+        st.info(deep_analysis_text)
+
         view = boards.head(10).copy()
         rename = {
             "board_name": "板块/概念",
@@ -880,14 +981,20 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
     )
     render_valuation_metric_cards(metrics)
 
-    rating_col, list_col = st.columns([1.2, 0.8])
+    rating_col, list_col = st.columns([3, 5])
     with rating_col:
-        _render_chart_card("基本面评级快照", "1-5 分", plot_ratings_snapshot(ratings, height=560))
+        st.markdown('<span class="fundamental-rating-layout-marker" aria-hidden="true"></span>', unsafe_allow_html=True)
+        rating_badge, rating_badge_class = _score_chart_badge(ratings.get("overall"), scale=5)
+        _render_chart_card(
+            "基本面评级快照",
+            rating_badge,
+            plot_ratings_snapshot(ratings, height=198),
+            size="3x2",
+            pill_class=rating_badge_class,
+        )
     with list_col:
-        with st.container(border=False):
-            st.markdown('<div class="chart-title"><span>核心财务与估值维度评分</span><span class="pill pill-cyan">综合</span></div>', unsafe_allow_html=True)
-            render_ratings_list(ratings, metrics)
-            st.caption("不可得指标显示 N/A，且不纳入综合评分。")
+        st.markdown('<span class="fundamental-rating-kpi-marker" aria-hidden="true"></span>', unsafe_allow_html=True)
+        render_rating_metric_cards(ratings, metrics)
 
     _render_dcf_card(metrics, valuation.get("assumptions", dcf_assumptions))
 
@@ -898,23 +1005,40 @@ def _render_fundamental_snapshot(code: str, hist: pd.DataFrame, score: dict, dcf
             if data is None or data.empty:
                 st.info("当前暂未取得该周期财务数据。")
                 continue
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns([1, 1, 2])
             with c1:
-                _render_chart_card(f"{label} 收入与净利润", "收入 / 利润", plot_financial_revenue_profit(data))
+                _render_chart_card(
+                    f"{label} 收入与净利润",
+                    "收入 / 利润",
+                    plot_financial_revenue_profit(data, height=198),
+                    size="2x2",
+                )
             with c2:
-                _render_chart_card(f"{label} 盈利能力", "ROE / ROA", plot_profitability(data))
-            _render_chart_card(f"{label} 现金流 vs 净利润", "现金流", plot_cashflow_vs_profit(data))
+                _render_chart_card(
+                    f"{label} 盈利能力",
+                    "ROE / ROA",
+                    plot_profitability(data, height=198),
+                    size="2x2",
+                )
+            with c3:
+                _render_chart_card(
+                    f"{label} 现金流 vs 净利润",
+                    "现金流",
+                    plot_cashflow_vs_profit(data, height=198),
+                    size="4x2",
+                )
             render_financial_table(data)
 
     render_section_title("财务质量摘要", "自动解释收入、利润质量、盈利能力、杠杆和分红能力。")
-    render_insight_cards(analysis.get("quality_cards", []))
+    render_insight_cards(analysis.get("quality_cards", []), variant="kpi", size="2x1")
 
-    with st.container(border=False):
-        st.markdown('<div class="chart-title"><span>基本面评级解释</span><span class="pill pill-purple">研究视图</span></div>', unsafe_allow_html=True)
-        st.write(analysis.get("fundamental_explanation"))
-        st.info(analysis.get("research_view"))
-        for note in analysis.get("limitations", []):
-            st.caption(f"限制：{note}")
+    _render_research_explanation_panel(
+        "基本面评级解释",
+        analysis.get("fundamental_explanation") or "暂无基本面评级解释。",
+        [analysis.get("research_view")] if analysis.get("research_view") else [],
+        analysis.get("limitations", []),
+        badge="研究视图",
+    )
     _render_signal_detail_tables(signal_payload)
     return fundamental_context
 
@@ -976,8 +1100,8 @@ def _sparkline_svg(hist: pd.DataFrame, *, points: int = 32) -> str:
 
     values = close.ffill().bfill().to_numpy(dtype=float)
     volumes = volume.to_numpy(dtype=float)
-    width, height = 320, 112
-    top_pad, bottom_pad = 14, 30
+    width, height = 360, 180
+    top_pad, bottom_pad = 16, 62
     vmin, vmax = float(np.nanmin(values)), float(np.nanmax(values))
     if vmax == vmin:
         vmax += 1
@@ -993,7 +1117,7 @@ def _sparkline_svg(hist: pd.DataFrame, *, points: int = 32) -> str:
         date_text = dates.iloc[idx].strftime("%Y-%m-%d") if idx < len(dates) and not pd.isna(dates.iloc[idx]) else f"第 {idx + 1} 点"
         vol_text = format_number_cn(volumes[idx], 2) if idx < len(volumes) else "-"
         hover_points.append(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" class="stock-spark-hit">'
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="10" class="stock-spark-hit">'
             f'<title>{escape(date_text)}｜收盘价 {format_price(value)}｜成交量 {escape(vol_text)}</title>'
             f'</circle>'
         )
@@ -1003,17 +1127,25 @@ def _sparkline_svg(hist: pd.DataFrame, *, points: int = 32) -> str:
     bars = []
     if max_volume > 0:
         for idx, value in enumerate(volumes):
-            bar_h = max(3, (float(value) / max_volume) * 22)
+            bar_h = max(4, (float(value) / max_volume) * 46)
             x = idx * x_step - bar_width / 2
-            y = height - bar_h - 2
-            bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_h:.1f}" rx="2.2" />')
+            y = height - bar_h - 4
+            date_text = dates.iloc[idx].strftime("%Y-%m-%d") if idx < len(dates) and not pd.isna(dates.iloc[idx]) else f"第 {idx + 1} 点"
+            vol_text = format_number_cn(value, 2)
+            bars.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_h:.1f}" rx="2.2">'
+                f'<title>{escape(date_text)}｜收盘价 {format_price(values[idx])}｜成交量 {escape(vol_text)}</title>'
+                f'</rect>'
+            )
 
     tone = "#FF5C7A" if values[-1] >= values[0] else "#33D69F"
+    area_points = f'0,{height - bottom_pad + 8} ' + " ".join(coords) + f' {width},{height - bottom_pad + 8}'
     return (
-        '<svg class="stock-sparkline" viewBox="0 0 320 112" role="img" aria-label="近32个交易日价格与成交量走势">'
+        '<svg class="stock-sparkline" viewBox="0 0 360 180" role="img" aria-label="近32个交易日价格与成交量走势；悬停可查看日期、收盘价和成交量">'
         '<defs>'
         f'<linearGradient id="stockLineFill" x1="0" x2="0" y1="0" y2="1"><stop stop-color="{tone}" stop-opacity=".30"/><stop offset="1" stop-color="{tone}" stop-opacity="0"/></linearGradient>'
         '</defs>'
+        f'<polygon class="stock-spark-area" points="{area_points}" />'
         f'<g class="stock-spark-bars">{"".join(bars)}</g>'
         f'<polyline class="stock-spark-glow" points="{" ".join(coords)}" />'
         f'<polyline class="stock-spark-line" style="--spark-color:{tone}" points="{" ".join(coords)}" />'
@@ -1798,6 +1930,65 @@ def _render_scoring_methodology(score: dict) -> None:
         st.warning("评分代表信号强度，不代表确定收益；短线高分仍需结合买入位置、止损、市场环境和仓位管理。")
 
 
+def _render_research_explanation_panel(
+    title: str,
+    lead: str,
+    points: list[str],
+    limitations: list[str],
+    *,
+    badge: str = "仅供研究",
+) -> None:
+    point_cards = []
+    for idx, raw_point in enumerate(points):
+        point = str(raw_point or "").strip()
+        if not point:
+            continue
+        heading, separator, detail = point.partition("：")
+        if not separator or len(heading) > 18:
+            inferred_heading = next(
+                (
+                    label
+                    for prefix, label in (
+                        ("短线评分", "短线评分"),
+                        ("中长线评分", "中长线评分"),
+                        ("中长线贡献", "贡献与拖累"),
+                        ("外部信号", "外部信号"),
+                        ("执行建议", "执行建议"),
+                    )
+                    if point.startswith(prefix)
+                ),
+                f"研究要点 {idx + 1}",
+            )
+            heading, detail = inferred_heading, point
+        point_cards.append(
+            '<article class="research-point-card">'
+            f'<span class="research-point-index">{idx + 1:02d}</span>'
+            f'<div><strong>{escape(heading.strip())}</strong><p>{escape(detail.strip())}</p></div>'
+            '</article>'
+        )
+
+    limitation_cards = "".join(
+        f'<div class="research-limit-card"><span>边界</span><p>{escape(str(note))}</p></div>'
+        for note in limitations
+        if note
+    )
+    limits_html = (
+        f'<div class="research-limit-grid">{limitation_cards}</div>' if limitation_cards else ""
+    )
+    st.markdown(
+        '<section class="research-explanation-panel">'
+        '<div class="research-explanation-head">'
+        f'<div><span class="research-eyebrow">研究解读</span><h3>{escape(title)}</h3></div>'
+        f'<span class="research-view-badge">{escape(badge)}</span>'
+        '</div>'
+        f'<p class="research-explanation-lead">{escape(str(lead or "暂无评级解释。"))}</p>'
+        f'<div class="research-point-grid">{"".join(point_cards)}</div>'
+        f'{limits_html}'
+        '</section>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_explainable_scoring(score: dict) -> None:
     short_breakdown = score.get("short_breakdown", [])
     long_breakdown = score.get("long_breakdown", [])
@@ -1806,6 +1997,8 @@ def _render_explainable_scoring(score: dict) -> None:
     rating_tone = _rating_tone(rating)
     risk_control = next((item for item in short_breakdown if item.get("dimension") == "风险控制"), {})
     risk_text = f"{format_price(risk_control.get('score'), 1)} / {format_price(risk_control.get('max_score'), 0)}"
+    short_chart_badge, short_chart_class = _score_chart_badge(score.get("short_score"))
+    long_chart_badge, long_chart_class = _score_chart_badge(score.get("long_score"))
 
     render_section_title("可解释评分", "评分不是黑盒：每个维度都能展开查看公式、触发条件、底层数据、加分项和扣分项。")
     sh_score = float(score.get('short_score', 0) or 0)
@@ -1827,13 +2020,12 @@ def _render_explainable_scoring(score: dict) -> None:
             metric_card("风险状态", risk_text, "风险控制分越高，技术风险越低", "green" if risk_control.get("score", 0) >= 10 else "orange", risk_indicator),
         ]
     )
-    with st.container(border=False):
-        st.markdown('<div class="chart-title"><span>评分含义说明</span><span class="pill pill-orange">仅供研究</span></div>', unsafe_allow_html=True)
-        st.write(score.get("rating_explanation", "暂无评级解释。"))
-        for line in score.get("score_explanations", []):
-            st.markdown(f"- {line}")
-        for note in score.get("limitations", []):
-            st.caption(f"限制：{note}")
+    _render_research_explanation_panel(
+        "评分含义说明",
+        score.get("rating_explanation", "暂无评级解释。"),
+        score.get("score_explanations", []),
+        score.get("limitations", []),
+    )
 
     _render_scoring_methodology(score)
 
@@ -1841,14 +2033,14 @@ def _render_explainable_scoring(score: dict) -> None:
     with tab_short:
         c1, c2 = st.columns(2)
         with c1:
-            _render_chart_card("短线维度得分 / 满分", "条形图", plot_explainable_bar(short_breakdown, "短线维度得分"))
+            _render_chart_card("短线维度得分 / 满分", short_chart_badge, plot_explainable_bar(short_breakdown, "短线维度得分"), pill_class=short_chart_class)
         with c2:
-            _render_chart_card("短线得分率雷达", "雷达图", plot_score_radar(short_breakdown, "短线得分率"))
+            _render_chart_card("短线得分率雷达", short_chart_badge, plot_score_radar(short_breakdown, "短线得分率"), pill_class=short_chart_class)
         c3, c4 = st.columns(2)
         with c3:
-            _render_chart_card("短线贡献度", "瀑布图", plot_score_waterfall(short_breakdown, "短线贡献度"))
+            _render_chart_card("短线贡献度", short_chart_badge, plot_score_waterfall(short_breakdown, "短线贡献度"), pill_class=short_chart_class)
         with c4:
-            _render_chart_card("短线扣分 / 缺口", "风险缺口", plot_risk_deductions(short_breakdown, "短线扣分 / 缺口"))
+            _render_chart_card("短线扣分 / 缺口", short_chart_badge, plot_risk_deductions(short_breakdown, "短线扣分 / 缺口"), pill_class=short_chart_class)
         render_dimension_cards(short_breakdown, "short")
 
     with tab_long:
@@ -1858,14 +2050,14 @@ def _render_explainable_scoring(score: dict) -> None:
             st.warning("中长线评分主要基于价格趋势代理，财务和估值数据不足，因此不应单独作为中长期投资依据。")
         c1, c2 = st.columns(2)
         with c1:
-            _render_chart_card("中长线维度得分 / 满分", "条形图", plot_explainable_bar(long_breakdown, "中长线维度得分"))
+            _render_chart_card("中长线维度得分 / 满分", long_chart_badge, plot_explainable_bar(long_breakdown, "中长线维度得分"), pill_class=long_chart_class)
         with c2:
-            _render_chart_card("中长线得分率雷达", "雷达图", plot_score_radar(long_breakdown, "中长线得分率"))
+            _render_chart_card("中长线得分率雷达", long_chart_badge, plot_score_radar(long_breakdown, "中长线得分率"), pill_class=long_chart_class)
         c3, c4 = st.columns(2)
         with c3:
-            _render_chart_card("中长线贡献度", "瀑布图", plot_score_waterfall(long_breakdown, "中长线贡献度"))
+            _render_chart_card("中长线贡献度", long_chart_badge, plot_score_waterfall(long_breakdown, "中长线贡献度"), pill_class=long_chart_class)
         with c4:
-            _render_chart_card("中长线扣分 / 缺口", "风险缺口", plot_risk_deductions(long_breakdown, "中长线扣分 / 缺口"))
+            _render_chart_card("中长线扣分 / 缺口", long_chart_badge, plot_risk_deductions(long_breakdown, "中长线扣分 / 缺口"), pill_class=long_chart_class)
         render_dimension_cards(long_breakdown, "long")
 
     with tab_evidence:
@@ -1910,38 +2102,42 @@ def _render_stock_spectrum_summary(score: dict, hist: pd.DataFrame, profile: dic
     amount = latest.get("amount_est", latest.get("amount"))
     if amount is None and latest.get("close") is not None and latest.get("volume") is not None:
         amount = latest.get("close") * latest.get("volume")
-    ret_tone = "red" if ret_1d > 0 else "green" if ret_1d < 0 else "cyan"
-    ret_indicator = "up" if ret_1d > 0 else "down" if ret_1d < 0 else "neutral"
-    short_tone = "green" if short_score >= 75 else "cyan" if short_score >= 60 else "orange"
-    long_tone = "green" if long_score >= 65 else "cyan" if long_score >= 50 else "orange"
     sparkline = _sparkline_svg(hist)
     rings = [
-        ("技术面得分", tech, "cyan"),
-        ("基本面得分", base, "purple"),
-        ("消息面得分", news, "cyan"),
-        ("资金/风险得分", risk, "pink"),
+        ("技术面得分", tech),
+        ("基本面得分", base),
+        ("消息面得分", news),
+        ("资金/风险得分", risk),
     ]
     ring_parts = []
-    for label, value, tone in rings:
+    for label, value in rings:
         pct = max(0, min(100, float(value or 0)))
+        tone = "good" if pct >= 80 else "watch" if pct >= 60 else "warning" if pct >= 40 else "danger"
         ring_parts.append(
-            f'<div class="stock-score-ring {tone} bento-size-1x1" data-bento-size="1x1" style="--score:{pct}">'
+            f'<div class="stock-score-ring {tone}" style="--score:{pct}" aria-label="{escape(label)} {format_price(value, 0)} 分">'
+            f'<div class="stock-ring-gauge">'
             f'<svg class="stock-ring-svg" viewBox="0 0 120 120" aria-hidden="true">'
             f'<circle class="stock-ring-track" cx="60" cy="60" r="46"></circle>'
             f'<circle class="stock-ring-progress" cx="60" cy="60" r="46" pathLength="100" style="stroke-dasharray:{pct} 100"></circle>'
             f'</svg>'
-            f'<strong>{format_price(value, 0)}</strong><span>{escape(label)}</span></div>'
+            f'<strong>{format_price(value, 0)}</strong></div><span>{escape(label)}</span></div>'
         )
     ring_html = "".join(ring_parts)
-    metric_cards = [
-        metric_card("最新价", format_price(latest.get("close")), _dashboard_card_note("最新价", score, hist, amount), "cyan", _metric_indicator_key("最新价", score, hist, amount), size="2x1"),
-        metric_card("当日涨跌幅", format_percent(ret_1d), _dashboard_card_note("当日涨跌幅", score, hist, amount), ret_tone, ret_indicator, size="2x1"),
-        metric_card("成交量", format_number_cn(latest.get("volume"), 2), _dashboard_card_note("成交量", score, hist, amount), "purple", _metric_indicator_key("成交量", score, hist, amount), size="2x1"),
-        metric_card("估算成交额", format_number_cn(amount, 2), _dashboard_card_note("估算成交额", score, hist, amount), "blue", _metric_indicator_key("估算成交额", score, hist, amount), size="2x1"),
+    metric_specs = [
+        ("最新价", format_price(latest.get("close")), "price"),
+        ("当日涨跌幅", format_percent(ret_1d), "return"),
+        ("成交量", format_number_cn(latest.get("volume"), 2), "volume"),
+        ("估算成交额", format_number_cn(amount, 2), "amount"),
     ]
-    headline_metric_html = "".join(metric_cards[:2])
-    liquidity_metric_html = "".join(metric_cards[2:])
-    diagnosis_items = "".join(f"<li>{escape(item)}</li>" for item in _diagnosis_points(score, hist, support, resistance)[:3])
+    market_metric_html = "".join(
+        f'<div class="stock-mini-metric {kind}">'
+        f'<div><span>{escape(label)}</span><b>{escape(_dashboard_card_indicator(label, score, hist, amount))}</b></div>'
+        f'<strong>{escape(value)}</strong>'
+        f'<p>{escape(_dashboard_card_note(label, score, hist, amount))}</p>'
+        f'</div>'
+        for label, value, kind in metric_specs
+    )
+    diagnosis_items = "".join(f"<li>{escape(item)}</li>" for item in _diagnosis_points(score, hist, support, resistance))
     
     exchange = profile.get("exchange")
     industry = profile.get("industry_cn") or profile.get("industry")
@@ -1966,48 +2162,74 @@ def _render_stock_spectrum_summary(score: dict, hist: pd.DataFrame, profile: dic
     st.markdown(
         f"""
         <section class="stock-spectrum-terminal result-grid-8">
-          <div class="stock-terminal-hero bento-size-2x2" data-bento-size="2x2">
-            <div>
-              <h2>{escape(title_text)}<span>（{escape(code_text)}）</span></h2>
-              <div class="stock-terminal-tags">
-                {tags_html}
+          <div class="stock-result-column stock-result-column-profile">
+            <div class="stock-terminal-hero">
+              <div>
+                <h2>{escape(title_text)}<span>（{escape(code_text)}）</span></h2>
+                <div class="stock-terminal-tags">
+                  {tags_html}
+                </div>
+                {summary_html}
               </div>
-              {summary_html}
+            </div>
+            <div class="stock-market-metrics">
+              {market_metric_html}
             </div>
           </div>
+
+          <div class="stock-result-column stock-result-column-market">
             <div class="stock-live-price bento-size-2x2" data-bento-size="2x2">
               <div class="stock-live-head">
-                <span>实时行情</span>
-                <small>近 32 个交易日走势</small>
+                <span>实时行情 · 近 32 个交易日</span>
+                <small>悬停查看历史价量</small>
               </div>
-              <strong>{format_price(close)}</strong>
-              <em class="{ 'up' if ret_1d >= 0 else 'down' }">{format_percent(ret_1d)}</em>
+              <div class="stock-live-kpi">
+                <strong>{format_price(close)}</strong>
+                <em class="{ 'up' if ret_1d >= 0 else 'down' }">{format_percent(ret_1d)}</em>
+              </div>
               <div class="stock-chart-legend"><i class="price"></i>收盘价折线<i class="volume"></i>成交量柱</div>
               {sparkline}
             </div>
-          <div class="stock-ai-score bento-size-2x2" data-bento-size="2x2" style="--score:{max(0, min(100, ai_score))}">
-            <span>AI 综合评分</span>
-            <small>击败 {min(99, max(1, int(ai_score + 6)))}% 同类样本</small>
+            <div class="stock-score-grid">
+              {ring_html}
+            </div>
+          </div>
+
+          <div class="stock-ai-summary">
+            <div class="stock-ai-summary-head">
+              <span>AI 综合评分</span>
+              <small>击败 {min(99, max(1, int(ai_score + 6)))}% 同类样本</small>
+            </div>
+            <div class="stock-ai-summary-score">
+              <strong>{format_price(ai_score, 0)}</strong><span>/ 100</span>
+            </div>
             <div class="stock-ai-score-meter"><i style="width:{max(0, min(100, ai_score))}%"></i></div>
-            <strong>{format_price(ai_score, 0)}</strong>
+            <div class="stock-ai-summary-split">
+              <div><span>短线结构</span><strong>{format_price(short_score, 1)}</strong></div>
+              <div><span>中长线质量</span><strong>{format_price(long_score, 1)}</strong></div>
+            </div>
+            <div class="stock-ai-summary-conclusion">
+              <span>模型结论</span>
+              <strong>{escape(rating)}</strong>
+              <p>{escape(trend_label)}。评分用于比较当前结构与同类样本，不替代价格与量能确认。</p>
+            </div>
           </div>
-          <div class="stock-rating-card bento-size-2x2" data-bento-size="2x2">
-            <span>模型结论</span>
-            <strong>{escape(rating)}</strong>
-            <small>{escape(trend_label)}</small>
-          </div>
-          {headline_metric_html}
-            <div class="stock-ai-thesis bento-size-2x3" data-bento-size="2x3">
-              <span>AI 诊断结论</span>
-              <p>“{escape(str(score.get("rating_explanation") or "当前结构处于模型观察区，需结合量能、位置和市场情绪确认。"))}”</p>
-              <ul>{diagnosis_items}</ul>
-              <div>
+
+          <div class="stock-ai-thesis">
+            <span>AI 诊断结论</span>
+            <div class="stock-thesis-levels">
+              <div class="support">
                 <small>支撑位</small><b>{format_price(support)}</b>
+              </div>
+              <div class="resistance">
                 <small>压力位</small><b>{format_price(resistance)}</b>
               </div>
             </div>
-          {ring_html}
-          {liquidity_metric_html}
+            <div class="stock-thesis-scroll">
+              <p>“{escape(str(score.get("rating_explanation") or "当前结构处于模型观察区，需结合量能、位置和市场情绪确认。"))}”</p>
+              <ul>{diagnosis_items}</ul>
+            </div>
+          </div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -2036,72 +2258,104 @@ def _render_analysis_dashboard(score: dict, hist: pd.DataFrame, report_path: str
     ma60_val = float(latest.get("ma60", 0) or 0)
     if close_val > ma20_val > ma60_val:
         trend_badge = "多头排列 (偏强)"
+        trend_class = "pill-green"
     elif close_val < ma20_val < ma60_val:
         trend_badge = "空头排列 (偏弱)"
+        trend_class = "pill-red"
     elif close_val > ma20_val:
         trend_badge = "站上MA20 (反弹)"
+        trend_class = "pill-cyan"
     elif close_val < ma20_val:
         trend_badge = "跌破MA20 (整理)"
+        trend_class = "pill-orange"
     else:
         trend_badge = "K线 + 均线"
+        trend_class = "pill-purple"
 
     vol_ratio_val = float(latest.get("vol_ratio_20", 0) or 0)
     if vol_ratio_val >= 1.8:
         vol_badge = f"显著放量 ({vol_ratio_val:.2f}x)"
+        vol_class = "pill-green"
     elif vol_ratio_val >= 1.2:
         vol_badge = f"温和放量 ({vol_ratio_val:.2f}x)"
+        vol_class = "pill-cyan"
     elif vol_ratio_val > 0 and vol_ratio_val < 0.8:
         vol_badge = f"缩量运行 ({vol_ratio_val:.2f}x)"
+        vol_class = "pill-purple"
     else:
         vol_badge = f"成交平稳 ({vol_ratio_val:.2f}x)"
+        vol_class = "pill-cyan"
 
     ret_1d_val = float(latest.get("ret_1d", 0) or 0)
     if ret_1d_val > 0 and vol_ratio_val >= 1.2:
         pv_badge = "量价齐升 (买盘强)"
+        pv_class = "pill-green"
     elif ret_1d_val < 0 and vol_ratio_val >= 1.2:
         pv_badge = "放量下跌 (抛压重)"
+        pv_class = "pill-red"
     elif ret_1d_val > 0 and vol_ratio_val < 0.8:
         pv_badge = "缩量上涨 (动量弱)"
+        pv_class = "pill-orange"
     elif ret_1d_val < 0 and vol_ratio_val < 0.8:
         pv_badge = "缩量下跌 (正常整理)"
+        pv_class = "pill-purple"
     else:
         pv_badge = "量价平衡"
+        pv_class = "pill-cyan"
 
     rsi_val = float(latest.get("rsi14", 0) or 0)
     if rsi_val >= 80:
         tech_badge = "RSI 超买 (警惕)"
+        tech_class = "pill-red"
     elif rsi_val <= 20:
         tech_badge = "RSI 超卖 (超跌)"
+        tech_class = "pill-orange"
     elif rsi_val >= 55:
         tech_badge = "RSI 偏强震荡"
+        tech_class = "pill-green"
     elif rsi_val <= 45:
         tech_badge = "RSI 偏弱震荡"
+        tech_class = "pill-orange"
     else:
         tech_badge = "RSI 中性整理"
+        tech_class = "pill-purple"
 
     render_section_title("市场解读", "关键发现由价格结构、量能、动量指标和模型风险信号自动归纳。")
     render_insight_cards(_build_insights(score, hist, warning))
 
     render_section_title("核心图表", "图表替代表格成为主叙事：价格、成交量、量价关系与技术指标分层展示。")
-    top_left, top_right = st.columns([1.45, 1])
-    with top_left:
-        _render_chart_card("价格趋势", trend_badge, plot_price_trend(hist))
-    with top_right:
-        _render_chart_card("成交量", vol_badge, plot_volume(hist))
-
-    lower_left, lower_right = st.columns([1, 1])
-    with lower_left:
-        _render_chart_card("量价关系", pv_badge, plot_price_volume_scatter(hist), container_height=560)
-    with lower_right:
-        with st.container(border=False, height=560, key="result_chart_technical_indicators"):
-            st.markdown(f'<div class="chart-title"><span>技术指标</span><span class="pill pill-purple">{tech_badge}</span></div>', unsafe_allow_html=True)
-            tab_rsi, tab_macd, tab_kdj = st.tabs(["RSI", "MACD", "KDJ"])
-            with tab_rsi:
-                st.plotly_chart(plot_rsi(hist), use_container_width=True, config={"displayModeBar": False})
-            with tab_macd:
-                st.plotly_chart(plot_macd(hist), use_container_width=True, config={"displayModeBar": False})
-            with tab_kdj:
-                st.plotly_chart(plot_kdj(hist), use_container_width=True, config={"displayModeBar": False})
+    core_chart_card_height = 340
+    with st.container(border=False, key="result_core_charts_row"):
+        price_col, volume_col, relation_col, technical_col = st.columns(4, gap="small")
+        with price_col:
+            _render_chart_card(
+                "价格趋势", trend_badge, _compact_core_chart(plot_price_trend(hist)),
+                container_height=core_chart_card_height, size="2x2", pill_class=trend_class,
+            )
+        with volume_col:
+            _render_chart_card(
+                "成交量", vol_badge, _compact_core_chart(plot_volume(hist)),
+                container_height=core_chart_card_height, size="2x2", pill_class=vol_class,
+            )
+        with relation_col:
+            _render_chart_card(
+                "量价关系", pv_badge, _compact_core_chart(plot_price_volume_scatter(hist)),
+                container_height=core_chart_card_height, size="2x2", pill_class=pv_class,
+            )
+        with technical_col:
+            with st.container(border=False, height=core_chart_card_height, key="result_chart_technical_indicators"):
+                st.markdown(
+                    f'<span class="chart-size-marker" data-bento-size="2x2" aria-hidden="true"></span>'
+                    f'<div class="chart-title"><span>技术指标</span><span class="pill {tech_class}">{escape(tech_badge)}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                tab_rsi, tab_macd, tab_kdj = st.tabs(["RSI", "MACD", "KDJ"])
+                with tab_rsi:
+                    st.plotly_chart(_compact_core_chart(plot_rsi(hist), 200), use_container_width=True, config={"displayModeBar": False})
+                with tab_macd:
+                    st.plotly_chart(_compact_core_chart(plot_macd(hist), 200), use_container_width=True, config={"displayModeBar": False})
+                with tab_kdj:
+                    st.plotly_chart(_compact_core_chart(plot_kdj(hist), 200), use_container_width=True, config={"displayModeBar": False})
 
     dashboard_code = str(
         score.get("code")
@@ -2371,50 +2625,34 @@ def _render_market_spectrum_summary(payload: dict, pos_html: str = "", timeline_
     history = payload.get("history", pd.DataFrame())
     emotion = _sent_num(metrics.get("emotion_score"), 0) or 0
     short_emotion = _sent_num(metrics.get("short_emotion"), 0) or 0
-    big_market = _sent_num(metrics.get("big_market_factor"), 0) or 0
     divergence = _sent_num(metrics.get("divergence"), 0) or 0
-    broken_rate = _sent_num(metrics.get("broken_rate"), 0) or 0
     prev_emotion = None
     if history is not None and len(history) >= 2:
         prev_emotion = _sent_num(history.iloc[-2].get("emotion_score"))
     delta = emotion - prev_emotion if prev_emotion is not None else None
     
-    top_boards = []
-    if boards is not None and not boards.empty:
-        for _, row in boards.head(3).iterrows():
-            strength = _sent_num(row.get("strength"), 0) or 0
-            top_boards.append(
-                f'<div class="market-ladder-row">'
-                f'<span>{escape(str(row.get("board_name") or "-"))}</span>'
-                f'<strong>{format_price(strength, 1)}</strong>'
-                f'<i style="width:{max(8, min(100, strength))}%"></i>'
-                f'</div>'
-            )
-    if not top_boards:
-        top_boards = [
-            '<div class="market-ladder-row"><span>主线待确认</span><strong>-</strong><i style="width:18%"></i></div>'
-        ]
-        
-    pulse_items = [
-        ("实时神经网络分析", metrics.get("suggestion") or tactics.get("main_line") or "等待公共源回传"),
-        ("社交热度", f"炸板率 {format_percent(broken_rate)}，分歧度 {format_price(divergence, 1)}"),
-    ]
-    pulse_html = "".join(
-        f'<div class="market-pulse-card bento-size-2x1" data-bento-size="2x1"><span>{escape(label)}</span><p>{escape(str(text))}</p></div>'
-        for label, text in pulse_items
-    )
     delta_html = f'<em class="{"up" if delta >= 0 else "down"}">{delta:+.1f}</em>' if delta is not None else "<em>-</em>"
     
-    # Narrative bubbles: compile up to 5 bubbles dynamically
+    # Calculate integrated Card 1 right-side metrics
+    mismatch = "、".join(tactics.get("mismatch", [])[:3])
+    aggressive_position = tactics.get("aggressive_position", "-")
+    stable_position = tactics.get("stable_position", "-")
+    suggestion = metrics.get("suggestion") or tactics.get("main_line") or "等待公共源回传"
+    
+    conclusion_text = ""
+    if mismatch:
+        conclusion_text += mismatch + "。 "
+    conclusion_text += suggestion
+
+    # Narrative bubbles: compile up to 5 bubbles dynamically (Generative AI + 4 hot sectors)
     bubbles_data = []
     bubbles_data.append(("生成式 AI", f"{format_price(short_emotion, 0)}%", "main"))
     if boards is not None and not boards.empty:
-        for idx, (_, row) in enumerate(boards.head(3).iterrows()):
+        for idx, (_, row) in enumerate(boards.head(4).iterrows()):
             board_name = row.get("board_name") or "-"
             strength = _sent_num(row.get("strength"), 0) or 0
             color_cls = "purple" if idx % 2 == 0 else "pink"
             bubbles_data.append((board_name, f"{format_price(strength, 0)}%", color_cls))
-    bubbles_data.append(("分歧度", f"{format_price(divergence, 0)}%", "pink"))
 
     bubble_htmls = []
     for i, (name, val, style_cls) in enumerate(bubbles_data):
@@ -2428,38 +2666,49 @@ def _render_market_spectrum_summary(payload: dict, pos_html: str = "", timeline_
         )
     bubble_stage_html = "\n".join(bubble_htmls)
 
-    # Reused Buying pressure HTML
-    buying_pressure_html = (
-        f'<div class="market-dist-row" style="margin-top: 14px; display: flex; justify-content: space-between; font-size: 12px; color: var(--j-dim); margin-bottom: 6px;">'
-        f'<span>买入压力</span>'
-        f'<strong>{format_price(max(0, 100 - divergence), 0)}%</strong>'
-        f'</div>'
-        f'<div class="market-dist-meter" style="height: 6px; border-radius: 3px; background: rgba(255,255,255,0.05); overflow: hidden; position: relative;">'
-        f'<i style="display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--j-cyan), var(--j-purple)); width:{max(5, min(100, 100 - divergence))}%"></i>'
-        f'</div>'
-    )
-
     st.markdown(
         f"""
         <section class="market-spectrum-terminal result-grid-8">
-          <div class="market-cycle-card bento-size-2x2" data-bento-size="2x2">
-            <div>
-              <span>情绪周期指数</span>
+          <div class="market-cycle-card bento-size-4x2" data-bento-size="4x2">
+            <div class="market-cycle-content">
               <div class="market-gauge" style="--score:{max(0, min(100, emotion))}">
-                <strong>{format_price(emotion, 0)}</strong>
+                <strong>{format_price(emotion, 1)}</strong>
                 <small>{escape(str(metrics.get("period") or "负荆区间"))}</small>
               </div>
-              <div class="market-gauge-meta">
-                <div><span>昨日收盘</span><b>{format_price(prev_emotion, 0) if prev_emotion is not None else "-"}</b></div>
-                <div><span>变化</span>{delta_html}</div>
+              <div class="market-gauge-side">
+                <!-- Row 1: close and change -->
+                <div class="gauge-side-row">
+                  <div class="market-gauge-metric">
+                    <span>昨日收盘</span>
+                    <strong>{format_price(prev_emotion, 1) if prev_emotion is not None else "-"}</strong>
+                  </div>
+                  <div class="market-gauge-metric">
+                    <span>今日变化</span>
+                    <strong>{delta_html}</strong>
+                  </div>
+                </div>
+                <!-- Row 2: positions and divergence -->
+                <div class="gauge-side-row">
+                  <div class="market-gauge-metric">
+                    <span>激进仓位</span>
+                    <strong class="cyan-text">{escape(str(aggressive_position))}</strong>
+                  </div>
+                  <div class="market-gauge-metric">
+                    <span>稳健仓位</span>
+                    <strong class="cyan-text">{escape(str(stable_position))}</strong>
+                  </div>
+                  <div class="market-gauge-metric">
+                    <span>当前分歧</span>
+                    <strong class="cyan-text">{format_price(divergence, 1)}%</strong>
+                  </div>
+                </div>
+                <!-- Row 3: suggestion -->
+                <div class="market-gauge-conclusion">
+                  <span>战术建议</span>
+                  <p>{escape(conclusion_text)}</p>
+                </div>
               </div>
             </div>
-            <div class="market-cycle-pressure">
-              {buying_pressure_html}
-            </div>
-          </div>
-          <div class="market-pos-card bento-size-2x2" data-bento-size="2x2">
-            {pos_html}
           </div>
           <div class="market-timeline-card bento-size-2x2" data-bento-size="2x2">
             <div class="market-timeline-rail">
@@ -2467,19 +2716,10 @@ def _render_market_spectrum_summary(payload: dict, pos_html: str = "", timeline_
             </div>
           </div>
           <div class="market-narrative-card bento-size-2x2" data-bento-size="2x2">
-            <div class="market-card-head">
-              <div><span class="market-node-icon">⌘</span><h2>叙事集群</h2></div>
-              <b>实时神经网络分析</b>
-            </div>
             <div class="market-bubble-stage">
               {bubble_stage_html}
             </div>
           </div>
-          <div class="market-ladder-card bento-size-2x2" data-bento-size="2x2">
-            <h3>板块梯队</h3>
-            {"".join(top_boards)}
-          </div>
-          {pulse_html}
         </section>
         """,
         unsafe_allow_html=True,
@@ -2531,13 +2771,18 @@ def _render_board_ladder(boards: pd.DataFrame, board_members: pd.DataFrame | Non
         pct_rank = "前排" if width >= 72 else "中段" if width >= 40 else "后排"
         cards.append(
             f'<div class="sentiment-board-card {tone} bento-size-2x2" data-bento-size="2x2">'
-            f'<div>'
-            f'  <div><strong>{escape(str(row.get("board_name") or "-"))}</strong><span>{escape(str(row.get("role") or "观察"))}</span></div>'
-            f'  <b class="text-{tone}">{width:.0f}%</b>'
-            f'</div>'
-            f'<p>涨停 {_fmt_count(row.get("limit_count"))} · 炸板 {_fmt_count(row.get("broken_count"))} · 最高 {_fmt_count(row.get("max_streak"))}板</p>'
-            f'<div class="sentiment-strength {tone}"><i style="width:{width:.1f}%"></i></div>'
-            f'<small>{pct_rank}强度 · {escape(str(row.get("evidence") or ""))}<br>强度 {format_price(row.get("strength"), 1)} · {escape(str(row.get("strategy") or ""))}</small>'
+            f'  <div class="board-card-top">'
+            f'    <div class="board-card-header">'
+            f'      <strong>{escape(str(row.get("board_name") or "-"))}</strong>'
+            f'      <span>{escape(str(row.get("role") or "观察"))}</span>'
+            f'    </div>'
+            f'    <b class="text-{tone}">{width:.0f}%</b>'
+            f'    <p>涨停 {_fmt_count(row.get("limit_count"))} · 炸板 {_fmt_count(row.get("broken_count"))} · 最高 {_fmt_count(row.get("max_streak"))}板</p>'
+            f'    <div class="sentiment-strength {tone}"><i style="width:{width:.1f}%"></i></div>'
+            f'  </div>'
+            f'  <div class="board-card-bottom">'
+            f'    <small>{pct_rank}强度 · {escape(str(row.get("evidence") or ""))}<br>强度 {format_price(row.get("strength"), 1)} · {escape(str(row.get("strategy") or ""))}</small>'
+            f'  </div>'
             f'</div>'
         )
     st.markdown('<div class="sentiment-board-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
@@ -2613,12 +2858,16 @@ def _render_battlefield(tactics: dict) -> None:
         status = "强机会/高波动" if score >= 75 else "可参与" if score >= 60 else "观察" if score >= 40 else "偏弱"
         cards.append(
             f'<div class="sentiment-method-card {tone} bento-size-2x2" data-bento-size="2x2">'
-            f'<span>{escape(str(item.get("tag", "观察")))}</span>'
-            f'<strong>{escape(str(item.get("name", "-")))}</strong>'
-            f'<b>{score:.1f}%</b>'
-            f'<div class="sentiment-strength {tone}"><i style="width:{width:.1f}%"></i></div>'
-            f'<small>{status}</small>'
-            f'<p>{escape(str(item.get("note", "")))}</p>'
+            f'  <div class="method-card-top">'
+            f'    <span>{escape(str(item.get("tag", "观察")))}</span>'
+            f'    <strong>{escape(str(item.get("name", "-")))}</strong>'
+            f'    <b>{score:.1f}%</b>'
+            f'    <div class="sentiment-strength {tone}"><i style="width:{width:.1f}%"></i></div>'
+            f'  </div>'
+            f'  <div class="method-card-bottom">'
+            f'    <small>{status}</small>'
+            f'    <p>{escape(str(item.get("note", "")))}</p>'
+            f'  </div>'
             f'</div>'
         )
     st.markdown('<div class="sentiment-method-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
@@ -2663,21 +2912,52 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
     
     # Position grids and timeline block
     mismatch = "、".join(tactics.get("mismatch", [])[:3])
-    timeline = tactics.get("timeline", [])
+    timeline = tactics.get("timeline", []) or []
+    
+    # Enrich daily strategy timeline to make Card 4 look informative
+    enriched_timeline = list(timeline)
+    present_times = {item.get("time") for item in enriched_timeline if item.get("time")}
+    additional_steps = [
+        {"time": "10:30", "action": "研判量能变化与个股强弱分歧，跟踪分歧后的首板回封及反包动量。"},
+        {"time": "13:10", "action": "监测午后市场宽度与修复动能，防范接力衰竭、回撤与炸板。"},
+        {"time": "14:50", "action": "尾盘观察核心龙头的筹码锁定度，防范派发，锁定次日溢价预期。"}
+    ]
+    for step in additional_steps:
+        if step["time"] not in present_times:
+            enriched_timeline.append(step)
+    enriched_timeline.sort(key=lambda x: str(x.get("time", "")))
     
     timeline_html = "".join(
         f'<div class="market-time-chip">'
         f'<strong>{escape(str(item.get("time", "")))}</strong>'
         f'<span>{escape(str(item.get("action", "")))}</span>'
         f'</div>'
-        for item in timeline
+        for item in enriched_timeline
     )
     
+    divergence = _sent_num(metrics.get("divergence"), 0) or 0
+    suggestion = metrics.get("suggestion") or tactics.get("main_line") or "等待公共源回传"
+    conclusion_text = ""
+    if mismatch:
+        conclusion_text += mismatch + "。 "
+    conclusion_text += suggestion
+    
     pos_html = (
-        f'<div class="market-pos-grid">'
-        f'<div><span>激进型</span><strong>{escape(str(tactics.get("aggressive_position", "-")))}</strong></div>'
-        f'<div><span>稳健型</span><strong>{escape(str(tactics.get("stable_position", "-")))}</strong></div>'
-        f'<div><span>战术风格</span><strong>{escape(mismatch or "等待确认")}</strong></div>'
+        f'<div class="market-pos-card bento-size-2x1" data-bento-size="2x1">'
+        f'<div class="market-pos-header">'
+        f'  <span>仓位与情绪定位</span>'
+        f'</div>'
+        f'<div class="market-pos-content">'
+        f'  <div class="market-pos-metrics">'
+        f'    <div class="pos-metric-item"><span>激进仓位</span><strong>{escape(str(tactics.get("aggressive_position", "-")))}</strong></div>'
+        f'    <div class="pos-metric-item"><span>稳健仓位</span><strong>{escape(str(tactics.get("stable_position", "-")))}</strong></div>'
+        f'    <div class="pos-metric-item"><span>分歧度</span><strong>{format_price(divergence, 1)}%</strong></div>'
+        f'  </div>'
+        f'  <div class="market-pos-conclusion">'
+        f'    <span>战术建议</span>'
+        f'    <p>{escape(conclusion_text)}</p>'
+        f'  </div>'
+        f'</div>'
         f'</div>'
     )
     
@@ -2689,31 +2969,31 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
     _render_market_signal_verification(payload)
     _render_metric_explanations(metrics)
 
-    st.markdown('<div class="chart-title" style="margin-bottom:16px;"><span>情绪周期定位</span><span class="pill pill-cyan">综合研判</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title" style="margin-top: 40px !important; margin-bottom: 16px !important;"><span>情绪周期定位</span><span class="pill pill-cyan">综合研判</span></div>', unsafe_allow_html=True)
     _render_emotion_cycle_position(metrics)
 
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
     # 5日图表并排展示
     hist_df = payload.get("history", pd.DataFrame())
+    emotion_score = _sent_num(metrics.get("emotion_score"))
+    _, market_chart_class = _score_chart_badge(emotion_score)
     emo_badge, emo_class = analyze_recent_5d_emotion(hist_df)
     counts_badge, counts_class = analyze_recent_5d_limit_counts(hist_df)
     amt_badge, amt_class = analyze_recent_5d_amount(hist_df)
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        _render_chart_card("近5日情绪评分", emo_badge, plot_recent_5d_emotion(hist_df), pill_class=emo_class)
+        _render_chart_card("近5日情绪评分", emo_badge, plot_recent_5d_emotion(hist_df), pill_class=emo_class, compact_text=False)
     with c2:
-        _render_chart_card("近5日涨跌停家数", counts_badge, plot_recent_5d_limit_counts(hist_df), pill_class=counts_class)
+        _render_chart_card("近5日涨跌停家数", counts_badge, plot_recent_5d_limit_counts(hist_df), pill_class=counts_class, compact_text=False)
     with c3:
-        _render_chart_card("近5日接力成交额", amt_badge, plot_recent_5d_amount(hist_df), pill_class=amt_class)
+        _render_chart_card("近5日接力成交额", amt_badge, plot_recent_5d_amount(hist_df), pill_class=amt_class, compact_text=False)
 
-    st.markdown("<div style='margin-bottom: 32px;'></div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="chart-title"><span>板块梯队复盘</span><span class="pill pill-cyan">市场合力</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title" style="margin-top: 40px !important; margin-bottom: 16px !important;"><span>板块梯队复盘</span><span class="pill pill-cyan">市场合力</span></div>', unsafe_allow_html=True)
     _render_board_ladder(payload.get("boards", pd.DataFrame()), payload.get("board_members", pd.DataFrame()))
 
-    st.markdown('<div class="chart-title" style="margin-top:48px;"><span>赚钱手法分析</span><span class="pill pill-cyan">胜率估算</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title" style="margin-top: 40px !important; margin-bottom: 16px !important;"><span>赚钱手法分析</span><span class="pill pill-cyan">胜率估算</span></div>', unsafe_allow_html=True)
     _render_battlefield(tactics)
 
     risk = tactics.get("risk", {})
@@ -2730,7 +3010,7 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="chart-title" style="margin-top:24px;"><span>明日观察池</span><span class="pill pill-cyan">候选标的</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-title" style="margin-top: 40px !important; margin-bottom: 16px !important;"><span>明日观察池</span><span class="pill pill-cyan">候选标的</span></div>', unsafe_allow_html=True)
     _render_watchlist_table(payload.get("watchlist", pd.DataFrame()))
 
     st.markdown("<div style='margin-bottom: 48px;'></div>", unsafe_allow_html=True)
@@ -2748,11 +3028,11 @@ def _render_market_sentiment_dashboard(payload: dict, window_days: int) -> None:
         missing = pd.to_numeric(history_for_detail.get("history_missing", 0), errors="coerce").fillna(0)
         valid_history_days = int(((counts > 0) & (missing <= 0)).sum())
     render_section_title("情绪周期三维监控", f"观察窗口近 {window_days} 日，当前公共源补齐到 {valid_history_days} 个有效交易日；空池日不再绘制为假 0 值。")
-    _render_chart_card("三维指标趋势", f"近{window_days}日", plot_market_sentiment_cycle(payload.get("history", pd.DataFrame())))
+    _render_chart_card("三维指标趋势", f"情绪 {format_price(emotion_score, 1)}", plot_market_sentiment_cycle(payload.get("history", pd.DataFrame())), pill_class=market_chart_class, compact_text=False)
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
-    _render_chart_card("涨跌停生态", "近20日", plot_limit_ecology(payload.get("history", pd.DataFrame())))
+    _render_chart_card("涨跌停生态", f"情绪 {format_price(emotion_score, 1)}", plot_limit_ecology(payload.get("history", pd.DataFrame())), pill_class=market_chart_class, compact_text=False)
 
-    _render_chart_card("板块情绪热力分布图", "分位热度", plot_market_sentiment_heatmap(payload.get("heatmap", pd.DataFrame())))
+    _render_chart_card("板块情绪热力分布图", "分位热度", plot_market_sentiment_heatmap(payload.get("heatmap", pd.DataFrame())), pill_class=market_chart_class, compact_text=False)
 
     tabs = st.tabs(["涨停池", "炸板池", "跌停池", "强势股池", "数据源诊断"])
     with tabs[0]:
@@ -2824,6 +3104,21 @@ def _render_ai_market_dashboard(config: dict) -> None:
 
     avatar_svg = """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="ai-avatar-icon"><path d="M12 2L14.85 9.15L22 12L14.85 14.85L12 22L9.15 14.85L2 12L9.15 9.15L12 2Z" fill="url(#ai-avatar-grad)" /><defs><linearGradient id="ai-avatar-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#37e8ff" /><stop offset="1" stop-color="#9b5cff" /></linearGradient></defs></svg>"""
 
+    def ai_loading_content(status: str) -> str:
+        loading_text = f"I'm Jocketing... {status}"
+        loading_messages_json = escape(
+            json.dumps([loading_text], ensure_ascii=False),
+            quote=True,
+        )
+        return (
+            '<span class="jocket-loading-text-type ai-chat-loading-text-type" '
+            f'data-jocket-text-type="true" data-messages="{loading_messages_json}" '
+            f'aria-label="{escape(loading_text, quote=True)}">'
+            f'<span class="jocket-text-type-output" aria-hidden="true">{escape(loading_text)}</span>'
+            '<span class="jocket-text-type-cursor" aria-hidden="true">_</span>'
+            '</span>'
+        )
+
     def render_ai_message(role: str, content: str) -> None:
         role_class = "user" if role == "user" else "assistant"
         safe_content = markdown.markdown(str(content or ""), extensions=['fenced_code', 'tables', 'nl2br'])
@@ -2861,13 +3156,15 @@ def _render_ai_market_dashboard(config: dict) -> None:
 
         with st.container(border=False):
             st.markdown('<section class="ai-thread">', unsafe_allow_html=True)
-            placeholder = st.empty()
             for message in st.session_state["ai_market_messages"]:
                 render_ai_message(message["role"], message["content"])
+            # Keep the in-flight assistant response after every committed
+            # message so loading and final states share chronological order.
+            placeholder = st.empty()
             st.markdown("</section>", unsafe_allow_html=True)
 
             full_answer = ""
-            safe_content = markdown.markdown("I'm Jocketing... 正在检索多维行情数据 <span class=\"streaming-cursor\">▌</span>", extensions=['fenced_code', 'tables', 'nl2br'])
+            safe_content = ai_loading_content("正在检索多维行情数据")
             placeholder.markdown(
                 f"""
                 <div class="ai-message-row assistant">
@@ -2898,7 +3195,7 @@ def _render_ai_market_dashboard(config: dict) -> None:
                     import time
                     
                     def update_snapshot_status(msg):
-                        safe_content = markdown.markdown(f"I'm Jocketing... **{msg}** <span class=\"streaming-cursor\">▌</span>", extensions=['fenced_code', 'tables', 'nl2br'])
+                        safe_content = ai_loading_content(str(msg))
                         placeholder.markdown(
                             f"""
                             <div class="ai-message-row assistant">
@@ -3425,8 +3722,10 @@ if page in {"个股行情", "市场情绪"}:
 
 # Dashboard Content
 if page == "AI洞察":
-    _render_ai_market_dashboard(config)
+    # Render the fixed composer before the synchronous AI work starts so the
+    # loading state and the completed conversation retain the same shell.
     _render_ai_command_bar()
+    _render_ai_market_dashboard(config)
 elif stock_job_running:
     pass
 elif market_job_running:

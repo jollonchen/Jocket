@@ -1,0 +1,43 @@
+started
+got
+market ready
+market clicked
+run ready
+run clicked
+Traceback (most recent call last):
+  File "<stdin>", line 19, in <module>
+  File "/opt/anaconda3/lib/python3.13/site-packages/selenium/webdriver/remote/webdriver.py", line 578, in execute_script
+    return self.execute(command, {"script": script, "args": converted_args})["value"]
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.13/site-packages/selenium/webdriver/remote/webdriver.py", line 468, in execute
+    self.error_handler.check_response(response)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.13/site-packages/selenium/webdriver/remote/errorhandler.py", line 232, in check_response
+    raise exception_class(message, screen, stacktrace)
+selenium.common.exceptions.TimeoutException: Message: timeout: Timed out receiving message from renderer: 20.000
+  (Session info: chrome=149.0.7827.155)
+Stacktrace:
+0   chromedriver                        0x00000001025e4c40 cxxbridge1$str$ptr + 3221216
+1   chromedriver                        0x00000001025dcb1c cxxbridge1$str$ptr + 3188156
+2   chromedriver                        0x000000010209f8f4 _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 75152
+3   chromedriver                        0x0000000102089d20 cxxbridge1$string$len + 4096
+4   chromedriver                        0x0000000102089a80 cxxbridge1$string$len + 3424
+5   chromedriver                        0x0000000102087644 chromedriver + 226884
+6   chromedriver                        0x0000000102088238 chromedriver + 229944
+7   chromedriver                        0x0000000102095b5c _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 34808
+8   chromedriver                        0x00000001020ac568 _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 127492
+9   chromedriver                        0x00000001020888a4 chromedriver + 231588
+10  chromedriver                        0x00000001020ac314 _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 126896
+11  chromedriver                        0x0000000102127634 _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 631504
+12  chromedriver                        0x00000001020dd9c0 _RNvCsiKAbIcglKMQ_7___rustc35___rust_no_alloc_shim_is_unstable_v2 + 329308
+13  chromedriver                        0x00000001025a2b70 cxxbridge1$str$ptr + 2950672
+14  chromedriver                        0x00000001025a62c8 cxxbridge1$str$ptr + 2964840
+15  chromedriver                        0x00000001025878a8 cxxbridge1$str$ptr + 2839368
+16  chromedriver                        0x00000001025a6b48 cxxbridge1$str$ptr + 2967016
+17  chromedriver                        0x00000001025783d4 cxxbridge1$str$ptr + 2776692
+18  chromedriver                        0x00000001025cb7ac cxxbridge1$str$ptr + 3117644
+19  chromedriver                        0x00000001025cb90c cxxbridge1$str$ptr + 3117996
+20  chromedriver                        0x00000001025dc774 cxxbridge1$str$ptr + 3187220
+21  libsystem_pthread.dylib             0x000000018870ad38 _pthread_start + 136
+22  libsystem_pthread.dylib             0x0000000188705cd0 thread_start + 8
+

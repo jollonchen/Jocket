@@ -86,8 +86,8 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 doc.head.appendChild(link);
               }
 
-              // Clean up and remove global dot field and orbs to disable dot field effect
-              doc.getElementById("jocket-dot-field")?.remove();
+              // Clean up deprecated orb nodes. Dot Field is managed separately
+              // and only mounted when the rendered DOM is a results view.
               doc.getElementById("global-cursor-orb")?.remove();
               doc.querySelectorAll(".ai-orb-stage, .ai-breathing-orb").forEach((node) => node.remove());
 
@@ -1387,7 +1387,10 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 const aiProcessing = doc.getElementById("jocket-ai-processing");
                 const isAiRunning = hasSpinner || (aiProcessing && aiProcessing.getAttribute("data-running") === "true");
                 const isAiChatActive = !!doc.getElementById("jocket-ai-chat-active");
-                const shouldBeActive = hasPageG || isAiRunning || isAiChatActive;
+                const isResultsPage = doc.body.classList.contains("jocket-results-page");
+                // AI chat keeps the same Aurora / fluid background as Landing,
+                // including both its loading and completed conversation states.
+                const shouldBeActive = isAiChatActive || (!isResultsPage && (hasPageG || isAiRunning));
 
                 const ownerStale = win.__jocketSplashCursor__ && !isIframeActive(win.__jocketSplashCursor__.owner);
 
@@ -1413,262 +1416,350 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 }
               };
 
+              // Streamlit-native port of React Bits DotField-JS-CSS.
+              // Selected preset: waveAmplitude=1, bulgeStrength=36,
+              // gradientFrom=#0a803a, gradientTo=#0e1289.
+              const DOT_FIELD_VERSION = "react-bits-dot-field-results-v4";
               const initDotField = (doc, win) => {
                 let container = doc.getElementById("jocket-dot-field-container");
-                let canvas = container && container.querySelector("#jocket-dot-field-canvas");
-                
-                if (!container) {
+                let canvas = container?.querySelector("#jocket-dot-field-canvas");
+                let glowSvg = container?.querySelector("#jocket-dot-field-glow");
+                let glowCircle = glowSvg?.querySelector("circle");
+
+                if (!container || !canvas || !glowSvg || !glowCircle) {
+                  container?.remove();
                   container = doc.createElement("div");
                   container.id = "jocket-dot-field-container";
-                  container.style.cssText = "position: fixed !important; inset: 0 !important; z-index: 0 !important; width: 100vw !important; height: 100vh !important; pointer-events: none !important; overflow: hidden !important; background: transparent !important;";
-                  
+                  container.setAttribute("aria-hidden", "true");
+
                   canvas = doc.createElement("canvas");
                   canvas.id = "jocket-dot-field-canvas";
-                  canvas.style.cssText = "position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; pointer-events: none !important; display: block !important; opacity: 0 !important; transition: opacity 0.8s ease-in-out !important;";
-                  
-                  container.appendChild(canvas);
+
+                  const svgNs = "http://www.w3.org/2000/svg";
+                  glowSvg = doc.createElementNS(svgNs, "svg");
+                  glowSvg.id = "jocket-dot-field-glow";
+                  const defs = doc.createElementNS(svgNs, "defs");
+                  const gradient = doc.createElementNS(svgNs, "radialGradient");
+                  const gradientId = "jocket-dot-field-glow-gradient";
+                  gradient.id = gradientId;
+                  const glowStart = doc.createElementNS(svgNs, "stop");
+                  glowStart.setAttribute("offset", "0%");
+                  glowStart.setAttribute("stop-color", "#120f17");
+                  const glowEnd = doc.createElementNS(svgNs, "stop");
+                  glowEnd.setAttribute("offset", "100%");
+                  glowEnd.setAttribute("stop-color", "transparent");
+                  gradient.append(glowStart, glowEnd);
+                  defs.appendChild(gradient);
+                  glowCircle = doc.createElementNS(svgNs, "circle");
+                  glowCircle.setAttribute("cx", "-9999");
+                  glowCircle.setAttribute("cy", "-9999");
+                  glowCircle.setAttribute("r", "160");
+                  glowCircle.setAttribute("fill", `url(#${gradientId})`);
+                  glowSvg.append(defs, glowCircle);
+
+                  container.append(canvas, glowSvg);
                   doc.body.prepend(container);
-                  
-                  setTimeout(() => {
-                    if (canvas) canvas.style.opacity = "0.35";
-                  }, 50);
                 }
-                
-                let isActive = true;
-                let animationFrameId = null;
-                
-                const dotRadius = 1.5;
-                const dotSpacing = 14;
-                const cursorRadius = 500;
-                const cursorForce = 0.1;
-                const bulgeOnly = true;
-                const bulgeStrength = 67;
-                const gradientFrom = "#4a4a4a";
-                const gradientTo = "#272727";
-                
-                const ctx = canvas.getContext("2d", { alpha: true });
-                const dpr = Math.min(win.devicePixelRatio || 1, 2);
-                
-                let dots = [];
-                const mouse = {
-                  x: -9999,
-                  y: -9999,
-                  prevX: -9999,
-                  prevY: -9999,
-                  speed: 0
+
+                const show = () => {
+                  container.style.removeProperty("visibility");
+                  container.style.removeProperty("opacity");
+                  container.classList.add("active");
                 };
-                
-                let dimensions = { w: 0, h: 0, offsetX: 0, offsetY: 0 };
-                let speedFactor = 0;
-                let cursorOpacity = 0;
-                
-                let resizeTimer = null;
-                function handleResize() {
-                  clearTimeout(resizeTimer);
-                  resizeTimer = setTimeout(resizeCanvas, 100);
+                const hide = () => {
+                  // Visibility changes synchronously on pointerdown so no
+                  // outgoing Dot Field frame can leak into a Landing screen.
+                  container.classList.remove("active");
+                  container.style.setProperty("opacity", "0", "important");
+                  container.style.setProperty("visibility", "hidden", "important");
+                };
+                // The canvas is painted synchronously below, so expose its
+                // container in the same task. Waiting for another animation
+                // frame leaves a one-frame black gap after Aurora is removed.
+                show();
+
+                const ctx = canvas.getContext("2d", { alpha: true });
+                if (!ctx) {
+                  return {
+                    version: DOT_FIELD_VERSION,
+                    show,
+                    hide,
+                    destroy() {
+                      hide();
+                      container.remove();
+                    }
+                  };
                 }
-                
-                function resizeCanvas() {
-                  if (!canvas || !isActive) return;
-                  const rect = canvas.parentElement.getBoundingClientRect();
-                  const w = rect.width;
-                  const h = rect.height;
-                  
-                  canvas.width = w * dpr;
-                  canvas.height = h * dpr;
+
+                const settings = {
+                  dotRadius: 1.5,
+                  dotSpacing: 14,
+                  cursorRadius: 500,
+                  cursorForce: 0.1,
+                  bulgeOnly: true,
+                  bulgeStrength: 36,
+                  sparkle: false,
+                  waveAmplitude: 1,
+                  gradientFrom: "#0a803a",
+                  gradientTo: "#0e1289"
+                };
+                const reducedMotion = win.matchMedia("(prefers-reduced-motion: reduce)").matches;
+                let active = true;
+                let rafId = null;
+                let resizeTimer = null;
+                let dots = [];
+                let frameCount = 0;
+                let engagement = 0;
+                let glowOpacity = 0;
+                let size = { w: 0, h: 0, offsetX: 0, offsetY: 0 };
+                const mouse = { x: -9999, y: -9999, prevX: -9999, prevY: -9999, speed: 0 };
+
+                const buildDots = (w, h) => {
+                  const step = settings.dotRadius + settings.dotSpacing;
+                  const cols = Math.floor(w / step);
+                  const rows = Math.floor(h / step);
+                  const padX = (w % step) / 2;
+                  const padY = (h % step) / 2;
+                  dots = new Array(rows * cols);
+                  let index = 0;
+                  for (let row = 0; row < rows; row += 1) {
+                    for (let col = 0; col < cols; col += 1) {
+                      const ax = padX + col * step + step / 2;
+                      const ay = padY + row * step + step / 2;
+                      dots[index++] = { ax, ay, sx: ax, sy: ay, vx: 0, vy: 0, x: ax, y: ay };
+                    }
+                  }
+                };
+
+                const resizeCanvas = () => {
+                  if (!active) return;
+                  const rect = container.getBoundingClientRect();
+                  const w = rect.width || win.innerWidth || 1024;
+                  const h = rect.height || win.innerHeight || 768;
+                  const dpr = Math.min(win.devicePixelRatio || 1, 2);
+                  canvas.width = Math.round(w * dpr);
+                  canvas.height = Math.round(h * dpr);
                   canvas.style.width = `${w}px`;
                   canvas.style.height = `${h}px`;
                   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-                  
-                  dimensions = {
+                  size = {
                     w,
                     h,
                     offsetX: rect.left + win.scrollX,
                     offsetY: rect.top + win.scrollY
                   };
-                  
-                  initGrid(w, h);
-                }
-                
-                function initGrid(width, height) {
-                  const spacing = dotRadius + dotSpacing;
-                  const cols = Math.floor(width / spacing);
-                  const rows = Math.floor(height / spacing);
-                  const offsetX = (width % spacing) / 2;
-                  const offsetY = (height % spacing) / 2;
-                  
-                  dots = new Array(rows * cols);
-                  let index = 0;
-                  for (let r = 0; r < rows; r++) {
-                    for (let c = 0; c < cols; c++) {
-                      const x = offsetX + c * spacing + spacing / 2;
-                      const y = offsetY + r * spacing + spacing / 2;
-                      dots[index++] = {
-                        ax: x, ay: y,
-                        sx: x, sy: y,
-                        vx: 0, vy: 0,
-                        x: x, y: y
-                      };
-                    }
-                  }
-                }
-                
-                function handleMouseMove(e) {
-                  mouse.x = e.clientX - dimensions.offsetX;
-                  mouse.y = e.clientY - dimensions.offsetY;
-                }
-                
-                function handleMouseLeave() {
+                  buildDots(w, h);
+                };
+
+                const handleResize = () => {
+                  win.clearTimeout(resizeTimer);
+                  resizeTimer = win.setTimeout(resizeCanvas, 100);
+                };
+                const handleMouseMove = (event) => {
+                  mouse.x = event.pageX - size.offsetX;
+                  mouse.y = event.pageY - size.offsetY;
+                };
+                const handleMouseLeave = () => {
                   mouse.x = -9999;
                   mouse.y = -9999;
-                }
-                
-                function handleTouchMove(e) {
-                  if (e.touches && e.touches[0]) {
-                    mouse.x = e.touches[0].clientX - dimensions.offsetX;
-                    mouse.y = e.touches[0].clientY - dimensions.offsetY;
-                  }
-                }
-                
-                function updateSpeed() {
+                };
+                const handleTouchMove = (event) => {
+                  const touch = event.touches?.[0];
+                  if (!touch) return;
+                  mouse.x = touch.pageX - size.offsetX;
+                  mouse.y = touch.pageY - size.offsetY;
+                };
+                const updateMouseSpeed = () => {
                   const dx = mouse.prevX - mouse.x;
                   const dy = mouse.prevY - mouse.y;
-                  const dist = Math.sqrt(dx * dx + dy * dy);
-                  mouse.speed += (dist - mouse.speed) * 0.5;
+                  const distance = Math.hypot(dx, dy);
+                  mouse.speed += (distance - mouse.speed) * 0.5;
                   if (mouse.speed < 0.001) mouse.speed = 0;
                   mouse.prevX = mouse.x;
                   mouse.prevY = mouse.y;
-                }
-                
-                const speedInterval = setInterval(updateSpeed, 20);
-                
-                function animate() {
-                  if (!isActive) return;
-                  
-                  const dotCount = dots.length;
-                  const normSpeed = Math.min(mouse.speed / 5, 1);
-                  speedFactor += (normSpeed - speedFactor) * 0.06;
-                  if (speedFactor < 0.001) speedFactor = 0;
-                  
-                  cursorOpacity += (speedFactor - cursorOpacity) * 0.08;
-                  
-                  ctx.clearRect(0, 0, dimensions.w, dimensions.h);
-                  
-                  const gradient = ctx.createLinearGradient(0, 0, dimensions.w, dimensions.h);
-                  gradient.addColorStop(0, gradientFrom);
-                  gradient.addColorStop(1, gradientTo);
+                };
+                const speedInterval = win.setInterval(updateMouseSpeed, 20);
+
+                const drawFrame = () => {
+                  if (!active) return;
+                  frameCount += 1;
+                  const time = frameCount * 0.02;
+                  const targetEngagement = Math.min(mouse.speed / 5, 1);
+                  engagement += (targetEngagement - engagement) * 0.06;
+                  if (engagement < 0.001) engagement = 0;
+                  glowOpacity += (engagement - glowOpacity) * 0.08;
+
+                  glowCircle.setAttribute("cx", `${mouse.x}`);
+                  glowCircle.setAttribute("cy", `${mouse.y}`);
+                  glowCircle.style.opacity = `${glowOpacity}`;
+
+                  ctx.clearRect(0, 0, size.w, size.h);
+                  const gradient = ctx.createLinearGradient(0, 0, size.w, size.h);
+                  gradient.addColorStop(0, settings.gradientFrom);
+                  gradient.addColorStop(1, settings.gradientTo);
                   ctx.fillStyle = gradient;
-                  
-                  const maxDist = cursorRadius;
-                  const maxDistSq = maxDist * maxDist;
-                  const radiusHalf = dotRadius / 2;
-                  const twoPi = Math.PI * 2;
-                  
                   ctx.beginPath();
-                  for (let i = 0; i < dotCount; i++) {
-                    const dot = dots[i];
+
+                  const cursorRadiusSq = settings.cursorRadius * settings.cursorRadius;
+                  const radius = settings.dotRadius / 2;
+                  for (let index = 0; index < dots.length; index += 1) {
+                    const dot = dots[index];
                     const dx = mouse.x - dot.ax;
                     const dy = mouse.y - dot.ay;
-                    const distSq = dx * dx + dy * dy;
-                    
-                    if (distSq < maxDistSq && speedFactor > 0.01) {
-                      const dist = Math.sqrt(distSq);
-                      if (bulgeOnly) {
-                        const force = 1 - dist / maxDist;
-                        const shift = force * force * bulgeStrength * speedFactor;
-                        const angle = Math.atan2(dy, dx);
-                        dot.sx += (dot.ax - Math.cos(angle) * shift - dot.sx) * 0.15;
-                        dot.sy += (dot.ay - Math.sin(angle) * shift - dot.sy) * 0.15;
-                      } else {
-                        const angle = Math.atan2(dy, dx);
-                        const force = (500 / dist) * (mouse.speed * cursorForce);
-                        dot.vx += Math.cos(angle) * -force;
-                        dot.vy += Math.sin(angle) * -force;
-                      }
-                    } else if (bulgeOnly) {
+                    const distanceSq = dx * dx + dy * dy;
+
+                    if (!reducedMotion && distanceSq < cursorRadiusSq && engagement > 0.01) {
+                      const distance = Math.sqrt(distanceSq);
+                      const pressure = 1 - distance / settings.cursorRadius;
+                      const push = pressure * pressure * settings.bulgeStrength * engagement;
+                      const angle = Math.atan2(dy, dx);
+                      dot.sx += (dot.ax - Math.cos(angle) * push - dot.sx) * 0.15;
+                      dot.sy += (dot.ay - Math.sin(angle) * push - dot.sy) * 0.15;
+                    } else {
                       dot.sx += (dot.ax - dot.sx) * 0.1;
                       dot.sy += (dot.ay - dot.sy) * 0.1;
                     }
-                    
-                    if (!bulgeOnly) {
-                      dot.vx *= 0.9;
-                      dot.vy *= 0.9;
-                      dot.x = dot.ax + dot.vx;
-                      dot.y = dot.ay + dot.vy;
-                      dot.sx += (dot.x - dot.sx) * 0.1;
-                      dot.sy += (dot.y - dot.sy) * 0.1;
+
+                    let drawX = dot.sx;
+                    let drawY = dot.sy;
+                    if (!reducedMotion && settings.waveAmplitude > 0) {
+                      drawY += Math.sin(dot.ax * 0.03 + time) * settings.waveAmplitude;
+                      drawX += Math.cos(dot.ay * 0.03 + time * 0.7) * settings.waveAmplitude * 0.5;
                     }
-                    
-                    let finalX = dot.sx;
-                    let finalY = dot.sy;
-                    
-                    ctx.moveTo(finalX + radiusHalf, finalY);
-                    ctx.arc(finalX, finalY, radiusHalf, 0, twoPi);
+                    ctx.moveTo(drawX + radius, drawY);
+                    ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
                   }
                   ctx.fill();
-                  
-                  animationFrameId = requestAnimationFrame(animate);
-                }
-                
+
+                  if (!reducedMotion) rafId = win.requestAnimationFrame(drawFrame);
+                };
+
                 resizeCanvas();
                 win.addEventListener("resize", handleResize);
                 doc.addEventListener("mousemove", handleMouseMove, { passive: true });
                 doc.addEventListener("mouseleave", handleMouseLeave, { passive: true });
                 doc.addEventListener("touchmove", handleTouchMove, { passive: true });
-                
-                animationFrameId = requestAnimationFrame(animate);
-                
+                drawFrame();
+
                 return {
+                  version: DOT_FIELD_VERSION,
+                  show,
+                  hide,
                   destroy() {
-                    isActive = false;
-                    if (animationFrameId) {
-                      cancelAnimationFrame(animationFrameId);
-                      animationFrameId = null;
-                    }
-                    clearInterval(speedInterval);
-                    clearTimeout(resizeTimer);
+                    active = false;
+                    if (rafId !== null) win.cancelAnimationFrame(rafId);
+                    win.clearInterval(speedInterval);
+                    win.clearTimeout(resizeTimer);
                     win.removeEventListener("resize", handleResize);
                     doc.removeEventListener("mousemove", handleMouseMove);
                     doc.removeEventListener("mouseleave", handleMouseLeave);
                     doc.removeEventListener("touchmove", handleTouchMove);
-                    
-                    if (canvas) {
-                      canvas.style.opacity = "0";
-                    }
-                    setTimeout(() => {
-                      if (container) container.remove();
-                    }, 800);
+                    hide();
+                    container.remove();
                   }
                 };
               };
 
               const manageDotField = () => {
-                const currentPageEl = doc.getElementById("jocket-current-page");
-                const currentPage = currentPageEl ? currentPageEl.getAttribute("data-page") : "";
-                const hasLanding = !!doc.querySelector(".st-key-jocket_page_g_landing");
-                const hasLoading = !!doc.querySelector(".jocket-loading-marker");
-                
-                const shouldBeActive = currentPage && currentPage !== "AI洞察" && !hasLanding && !hasLoading;
-                const ownerStale = win.__jocketDotField__ && !isIframeActive(win.__jocketDotField__.owner);
-                
+                const currentPage = doc.getElementById("jocket-current-page")?.getAttribute("data-page") || "";
+                const hasLoading = Boolean(
+                  doc.querySelector(".jocket-loading-marker") ||
+                  doc.querySelector('div[data-testid="stSpinner"]') ||
+                  doc.querySelector('#jocket-ai-processing[data-running="true"]')
+                );
+                const shouldBeActive = currentPage !== "AI洞察" &&
+                  doc.body.classList.contains("jocket-results-page") &&
+                  !hasLoading;
+                const instance = win.__jocketDotField__;
+                const ownerStale = instance && !isIframeActive(instance.owner);
+                const versionStale = instance && instance.version !== DOT_FIELD_VERSION;
+                const pendingTarget = win.__jocketBackgroundSwitchTarget__;
+
+                // Between pointerdown and Streamlit's rerender the old result
+                // marker is still present. Keep Dot Field hidden during that
+                // gap instead of trusting the stale DOM.
+                if (pendingTarget && currentPage !== pendingTarget) {
+                  instance?.hide?.();
+                  doc.getElementById("jocket-dot-field-container")?.style.setProperty(
+                    "visibility", "hidden", "important"
+                  );
+                  return;
+                }
+                if (pendingTarget && currentPage === pendingTarget) {
+                  const now = win.performance?.now?.() ?? Date.now();
+                  const matchedAt = win.__jocketBackgroundSwitchMatchedAt__;
+                  if (!matchedAt) {
+                    win.__jocketBackgroundSwitchMatchedAt__ = now;
+                    instance?.hide?.();
+                    return;
+                  }
+                  // The page marker updates slightly before the old result DOM
+                  // and body class are reconciled. Hold for longer than the
+                  // 120ms DOM observer debounce so stale result state cannot
+                  // remount Dot Field on an intermediate frame.
+                  if (now - matchedAt < 180) {
+                    instance?.hide?.();
+                    return;
+                  }
+                  delete win.__jocketBackgroundSwitchTarget__;
+                  delete win.__jocketBackgroundSwitchMatchedAt__;
+                }
+
                 if (shouldBeActive) {
-                  if (ownerStale) {
-                    win.__jocketDotField__.owner = window;
-                  } else if (!win.__jocketDotField__) {
+                  if (versionStale) {
+                    try { instance.destroy(); } catch (error) {}
+                    delete win.__jocketDotField__;
+                  } else if (ownerStale) {
+                    instance.owner = window;
+                  }
+                  if (!win.__jocketDotField__) {
                     win.__jocketDotField__ = initDotField(doc, win);
                     win.__jocketDotField__.owner = window;
                   }
-                } else {
-                  if (win.__jocketDotField__) {
-                    try {
-                      win.__jocketDotField__.destroy();
-                    } catch (e) {
-                      console.error("Error destroying dot field:", e);
-                    }
-                    delete win.__jocketDotField__;
+                  win.__jocketDotField__.show?.();
+                  return;
+                }
+
+                if (instance) {
+                  try { instance.destroy(); } catch (error) {
+                    console.error("Error destroying dot field:", error);
                   }
+                  delete win.__jocketDotField__;
+                } else {
+                  doc.getElementById("jocket-dot-field-container")?.remove();
                 }
               };
+
+              if (win.__jocketBackgroundSwitchGuardBound__ !== "v2") {
+                win.__jocketBackgroundSwitchGuardBound__ = "v2";
+                doc.addEventListener("pointerdown", (event) => {
+                  const button = event.target.closest?.(".st-key-analysis_mode_top button");
+                  if (!button) return;
+                  const targetPage = (
+                    button.getAttribute("data-jocket-nav-label") ||
+                    button.textContent ||
+                    ""
+                  ).trim();
+                  const currentPage = doc.getElementById("jocket-current-page")?.getAttribute("data-page") || "";
+                  if (!targetPage || targetPage === currentPage) return;
+
+                  win.__jocketBackgroundSwitchTarget__ = targetPage;
+                  delete win.__jocketBackgroundSwitchMatchedAt__;
+                  win.__jocketDotField__?.hide?.();
+                  const dotField = doc.getElementById("jocket-dot-field-container");
+                  if (dotField) {
+                    dotField.style.setProperty("opacity", "0", "important");
+                    dotField.style.setProperty("visibility", "hidden", "important");
+                  }
+
+                  // AI always uses the Landing background, so it is safe to
+                  // prepare Aurora immediately instead of waiting for rerender.
+                  if (targetPage === "AI洞察" && !win.__jocketSplashCursor__) {
+                    win.__jocketSplashCursor__ = initSplashCursor(doc, win);
+                    win.__jocketSplashCursor__.owner = window;
+                  }
+                }, true);
+              }
 
               const decorateAsPillNav = (wrapSelector, buttonsOrSelector, currentActiveText) => {
                 const wraps = doc.querySelectorAll(wrapSelector);
@@ -2649,7 +2740,7 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 });
               };
 
-              const enhanceMagicBentoCards = () => {
+              const syncResultsPageState = () => {
                 const landingVisible = [...doc.querySelectorAll(".page-empty-state")].some((node) => {
                   const rect = node.getBoundingClientRect();
                   const style = window.parent.getComputedStyle(node);
@@ -2663,10 +2754,17 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                   ".ta-stat-card",
                   ".hedge-update-card",
                   ".metric-card",
-                  ".profile-card"
+                  ".profile-card",
+                  ".profile-main-card",
+                  ".profile-kv-card"
                 ].join(","));
                 const isResultPage = !landingVisible && Boolean(resultSignal);
                 doc.body.classList.toggle("jocket-results-page", isResultPage);
+                return isResultPage;
+              };
+
+              const enhanceMagicBentoCards = () => {
+                const isResultPage = syncResultsPageState();
 
                 let spotlight = doc.getElementById("global-cursor-glow");
                 if (!isResultPage) {
@@ -2678,8 +2776,10 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 const spotlightRadius = 300;
                 const cardSelector = [
                   ".stock-terminal-hero",
+                  ".stock-market-metrics",
                   ".stock-live-price",
                   ".stock-ai-thesis",
+                  ".stock-ai-summary",
                   ".stock-ai-score",
                   ".stock-rating-card",
                   ".stock-score-ring",
@@ -2691,6 +2791,8 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                   ".result-chart-surface",
                   ".section-card",
                   ".profile-card",
+                  ".profile-main-card",
+                  ".profile-kv-card",
                   ".market-cycle-card",
                   ".market-narrative-card",
                   ".market-ladder-card",
@@ -2711,13 +2813,15 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                   ".sentiment-alert",
                   ".glass-table-wrap",
                   ".ta-stat-card",
-                  ".hedge-update-card"
+                  ".hedge-update-card",
+                  ".research-explanation-panel"
                 ].join(",");
 
                 const sizeClasses = [
                   "bento-size-1x1",
                   "bento-size-2x1",
                   "bento-size-2x2",
+                  "bento-size-3x2",
                   "bento-size-2x3",
                   "bento-size-4x1",
                   "bento-size-4x2",
@@ -2728,18 +2832,19 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
 
                 const assignBentoSize = (card) => {
                   card.classList.remove(...sizeClasses);
-                  const explicitSize = card.dataset.bentoSize;
+                  const sizeMarker = card.querySelector(".chart-size-marker[data-bento-size]");
+                  const explicitSize = card.dataset.bentoSize || sizeMarker?.dataset.bentoSize;
                   let size = explicitSize || "2x1";
 
-                  if (!explicitSize && card.matches(".metric-card, .ta-stat-card, .sentiment-index-card, .sentiment-cycle-metrics .mini-metric")) {
+                  if (!explicitSize && card.matches(".metric-card, .profile-kv-card, .ta-stat-card, .sentiment-index-card, .sentiment-cycle-metrics .mini-metric")) {
                     size = "1x1";
                   } else if (!explicitSize && card.matches(".stock-score-ring, .sentiment-metric-card, .sentiment-board-card, .sentiment-method-card")) {
                     size = "2x2";
-                  } else if (!explicitSize && card.matches(".stock-live-price, .stock-ai-thesis, .insight-card, .rank-card, .market-pos-card, .market-timeline-card, .chart-card, [class*='st-key-result_chart_'], .result-chart-surface")) {
+                  } else if (!explicitSize && card.matches(".stock-live-price, .stock-ai-thesis, .stock-ai-summary, .insight-card, .rank-card, .market-pos-card, .market-timeline-card, .chart-card, [class*='st-key-result_chart_'], .result-chart-surface")) {
                     size = "2x2";
-                  } else if (!explicitSize && card.matches(".glass-table-wrap")) {
+                  } else if (!explicitSize && card.matches(".glass-table-wrap, .research-explanation-panel")) {
                     size = "8x4";
-                  } else if (!explicitSize && card.matches(".stock-terminal-hero, .profile-card, .market-cycle-card, .market-narrative-card, .market-ladder-card, .market-distribution-card, .market-pulse-panel, .sentiment-hero, .sentiment-flow-card, .sentiment-command-strip")) {
+                  } else if (!explicitSize && card.matches(".stock-terminal-hero, .stock-market-metrics, .profile-card, .profile-main-card, .market-cycle-card, .market-narrative-card, .market-ladder-card, .market-distribution-card, .market-pulse-panel, .sentiment-hero, .sentiment-flow-card, .sentiment-command-strip")) {
                     size = "4x2";
                   }
 
@@ -3019,6 +3124,13 @@ def load_css(path: str = "assets/jocket_final.css") -> None:
                 const MagicObserver = window.parent.MutationObserver || window.MutationObserver;
                 let magicRefreshTimer = null;
                 const magicObserver = new MagicObserver(() => {
+                  // The results class owns both the current card layout and the
+                  // background choice. Synchronize it in the observer microtask
+                  // (before the browser's next paint); the heavier card
+                  // decoration may remain debounced below.
+                  try { syncResultsPageState(); } catch (error) {}
+                  try { manageSplashCursor(); } catch (error) {}
+                  try { manageDotField(); } catch (error) {}
                   try { enhanceNav(); } catch (error) {}
                   try { enhanceProvider(); } catch (error) {}
                   try { enhanceHedgeMode(); } catch (error) {}
@@ -3612,27 +3724,20 @@ def render_jocket_unified_empty_state(
         st.markdown(f'<div id="jocket-ai-provider" data-provider="{escape(str(selected_label))}"></div>', unsafe_allow_html=True)
 
 
-def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", indicator: str = "neutral", size: str = "2x1") -> str:
-    pill_class = {
-        "green": "pill-green",
-        "red": "pill-red",
-        "cyan": "pill-cyan",
-        "purple": "pill-purple",
-        "orange": "pill-orange",
-        "blue": "pill-cyan",
-    }.get(tone, "pill-cyan")
-    tone_color = {
-        "green": "#33D69F",
-        "red": "#FF5C7A",
-        "cyan": "#37E8FF",
-        "purple": "#9B5CFF",
-        "orange": "#FFB86B",
-        "blue": "#5B8CFF",
-    }.get(tone, "#37E8FF")
+def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", indicator: str = "neutral", size: str = "2x1", extra_class: str = "") -> str:
+    tone_cls = {
+        "green": "good",
+        "red": "danger",
+        "cyan": "watch",
+        "purple": "watch",
+        "orange": "warning",
+        "blue": "watch",
+    }.get(tone, "watch")
+    
     icon_map = {
         "up": "上行",
         "down": "下行",
-        "neutral": "中性",
+        "neutral": "平稳",
         "high": "偏高",
         "low": "偏低",
         "good": "较好",
@@ -3646,15 +3751,17 @@ def metric_card(label: str, value: str, footnote: str = "", tone: str = "cyan", 
         "bear_win": "空方胜",
         "draw": "平手",
     }
-    icon = icon_map.get(indicator, indicator)
+    status = icon_map.get(indicator, indicator)
+    
+    extra_cls = f" {extra_class}" if extra_class else ""
     return (
-        f'<div class="metric-card bento-size-{escape(size)}" data-bento-size="{escape(size)}" style="--card-glow:{tone_color}">'
-        f'<div class="metric-inner">'
-        f'<div class="metric-label">{escape(label)}</div>'
-        f'<div class="metric-value">{escape(value)}</div>'
-        f'<div class="metric-foot"><span>{escape(footnote)}</span><span class="pill {pill_class}">{icon}</span></div>'
-        f'</div></div>'
+        f'<div class="sentiment-metric-card {tone_cls} bento-size-{escape(size)}{extra_cls}" data-bento-size="{escape(size)}">'
+        f'<div class="sentiment-metric-top"><span>{escape(label)}</span><b>{escape(status)}</b></div>'
+        f'<strong>{escape(value)}</strong>'
+        f'<p>{escape(footnote)}</p>'
+        f'</div>'
     )
+
 
 
 def render_bento_grid(cards: Iterable[str]) -> None:
@@ -3709,10 +3816,26 @@ def render_section_title(title: str, subtitle: str = "") -> None:
         st.markdown(f'<p class="section-subtitle">{escape(subtitle)}</p>', unsafe_allow_html=True)
 
 
-def render_insight_cards(insights: list[dict]) -> None:
+def render_insight_cards(insights: list[dict], *, variant: str = "insight", size: str = "2x2") -> None:
     cards = []
     for item in insights:
         tone = item.get("tone", "cyan")
+        if variant == "kpi":
+            tone_cls = {
+                "green": "good",
+                "red": "danger",
+                "orange": "warning",
+                "purple": "watch",
+                "cyan": "watch",
+            }.get(tone, "watch")
+            cards.append(
+                f'<div class="sentiment-metric-card compact-kpi {tone_cls} bento-size-{escape(size)}" data-bento-size="{escape(size)}">'
+                f'<div class="sentiment-metric-top"><span>{escape(item.get("label", "观察点"))}</span><b>{escape(item.get("badge", "信号"))}</b></div>'
+                f'<strong>{escape(item.get("title", "-"))}</strong>'
+                f'<p>{escape(item.get("body", "-"))}</p>'
+                f'</div>'
+            )
+            continue
         pill_class = {
             "green": "pill-green",
             "red": "pill-red",
@@ -3721,14 +3844,14 @@ def render_insight_cards(insights: list[dict]) -> None:
             "cyan": "pill-cyan",
         }.get(tone, "pill-cyan")
         cards.append(
-            f'<div class="insight-card">'
-            f'<div class="insight-label">{escape(item.get("label", "观察点"))}</div>'
-            f'<div class="insight-title">{escape(item.get("title", "-"))}</div>'
-            f'<div class="insight-body">{escape(item.get("body", "-"))}</div>'
-            f'<div class="insight-foot"><span class="pill {pill_class}">{escape(item.get("badge", "信号"))}</span></div>'
+            f'<div class="insight-card {escape(tone)}">'
+            f'<div class="insight-header"><span>{escape(item.get("label", "观察点"))}</span><span class="pill {pill_class}">{escape(item.get("badge", "信号"))}</span></div>'
+            f'<strong class="insight-title">{escape(item.get("title", "-"))}</strong>'
+            f'<p class="insight-body">{escape(item.get("body", "-"))}</p>'
             f'</div>'
         )
     st.markdown('<div class="insight-grid bento-section">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+
 
 
 def _base_fig(fig: go.Figure, height: int = 420) -> go.Figure:
@@ -4346,9 +4469,10 @@ def render_evidence_table(evidence: dict) -> None:
 
 
 def render_dimension_cards(breakdown: list[dict], namespace: str = "score") -> None:
-    for idx, item in enumerate(breakdown):
-        title = f"{item.get('dimension', '-')}: {format_price(item.get('score'), 1)} / {format_price(item.get('max_score'), 0)}"
-        with st.expander(title, expanded=idx == 0):
+    st.markdown('<span class="score-breakdown-marker" aria-hidden="true"></span>', unsafe_allow_html=True)
+    for item in breakdown:
+        title = f"**{item.get('dimension', '-')}**　·　{format_price(item.get('score'), 1)} / {format_price(item.get('max_score'), 0)}"
+        with st.expander(title, expanded=False):
             rate = float(item.get("score_rate", 0) or 0)
             if rate >= 0.78:
                 stance = "该维度当前是明显贡献项，可以提高研究优先级，但仍要和风险项一起看。"
@@ -4415,22 +4539,15 @@ def render_company_profile(profile: dict, summary: str = "") -> None:
     if len(s_date) == 8 and s_date.isdigit():
         list_date = f"{s_date[:4]}-{s_date[4:6]}-{s_date[6:]}"
 
-    kv = [
-        ("交易所", profile.get("exchange")),
-        ("上市时间", list_date),
-        ("总市值", format_number_cn(profile.get("market_cap")) if profile.get("market_cap") else "暂未获取"),
-        ("流通市值", format_number_cn(profile.get("float_market_cap")) if profile.get("float_market_cap") else "暂未获取"),
-        ("总股本", format_number_cn(profile.get("shares_outstanding")) if profile.get("shares_outstanding") else "暂未获取"),
-        ("流通股本", format_number_cn(profile.get("float_shares")) if profile.get("float_shares") else "暂未获取"),
-        ("最新收盘价", format_price(profile.get("latest_price")) if profile.get("latest_price") else "暂未获取"),
-        ("数据更新", profile.get("updated_at")),
-        ("员工数", format_number_cn(profile.get("employees"), 0) if profile.get("employees") else "暂未获取"),
-        ("海外行业分类", profile.get("sector")),
-    ]
-    kv_html = "".join(
-        f'<div class="profile-kv"><span>{escape(label)}</span><strong>{escape(str(value or "暂未获取"))}</strong></div>'
-        for label, value in kv
-    )
+    mcap = format_number_cn(profile.get("market_cap")) if profile.get("market_cap") else "暂未获取"
+    fmcap = format_number_cn(profile.get("float_market_cap")) if profile.get("float_market_cap") else "暂未获取"
+    latest_price = format_price(profile.get("latest_price")) if profile.get("latest_price") else "暂未获取"
+    exchange = profile.get("exchange") or "暂未获取"
+    shares = format_number_cn(profile.get("shares_outstanding")) if profile.get("shares_outstanding") else "暂未获取"
+    fshares = format_number_cn(profile.get("float_shares")) if profile.get("float_shares") else "暂未获取"
+    employees = format_number_cn(profile.get("employees"), 0) if profile.get("employees") else "暂未获取"
+    updated_at = profile.get("updated_at") or "暂未获取"
+
     business = profile.get("business") or "暂未获取"
     # Prioritise the passed summary (which should be the translated/curated business intro)
     display_summary = summary or str(business)
@@ -4438,15 +4555,51 @@ def render_company_profile(profile: dict, summary: str = "") -> None:
         display_summary = str(display_summary)[:1200] + "..."
 
     html = f"""
-    <div class="profile-card">
-      <div class="profile-main">
-        <div class="eyebrow">公司画像</div>
-        <h3>{escape(str(profile.get("name") or profile.get("code") or "-"))}</h3>
-        <div class="profile-code">{escape(str(profile.get("code") or "-"))} · {escape(str(profile.get("yahoo_code") or "-"))}</div>
-        <div class="profile-badges">{badges_html}</div>
+    <div class="profile-grid">
+      <!-- Left 2x2 Bento Card: Company Profile -->
+      <div class="profile-main-card bento-size-4x2" data-bento-size="4x2">
+        <div class="profile-main-header">
+          <div class="eyebrow">公司画像</div>
+          <h3>{escape(str(profile.get("name") or profile.get("code") or "-"))}</h3>
+          <div class="profile-code">{escape(str(profile.get("code") or "-"))} · {escape(str(profile.get("yahoo_code") or "-"))}</div>
+          <div class="profile-badges">{badges_html}</div>
+        </div>
         <div class="profile-summary-text">{escape(display_summary)}</div>
       </div>
-      <div class="profile-kv-grid">{kv_html}</div>
+
+      <!-- Right 1x1 Bento Cards -->
+      <div class="profile-metrics-grid">
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>总市值</span></div>
+          <strong>{escape(mcap)}</strong>
+          <p>A股总市值</p>
+        </div>
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>流通市值</span></div>
+          <strong>{escape(fmcap)}</strong>
+          <p>自由流通市值</p>
+        </div>
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>收盘价 & 交易所</span></div>
+          <strong class="highlight-cyan">{escape(latest_price)}</strong>
+          <p>市场：{escape(exchange)}</p>
+        </div>
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>总股本 / 流通股本</span></div>
+          <strong style="font-size: clamp(13px, 1.1vw, 16px) !important;">{escape(shares)} / {escape(fshares)}</strong>
+          <p>发行及市场流通股</p>
+        </div>
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>上市日期 / 员工数</span></div>
+          <strong style="font-size: clamp(13px, 1.1vw, 16px) !important;">{escape(list_date or "N/A")} / {escape(employees)}</strong>
+          <p>上市与雇员规模</p>
+        </div>
+        <div class="profile-kv-card bento-size-1x1" data-bento-size="1x1">
+          <div class="profile-kv-top"><span>数据更新时间</span></div>
+          <strong style="font-size: clamp(13px, 1.1vw, 16px) !important;">{escape(updated_at)}</strong>
+          <p>行业：{escape(str(profile.get("sector") or "暂未获取"))}</p>
+        </div>
+      </div>
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
@@ -4605,7 +4758,7 @@ def render_valuation_metric_cards(metrics: dict) -> None:
         status_label, tone, indicator_label = status(raw, key)
         if forced_tone:
             tone = forced_tone
-        cards.append(metric_card(label, value, metric_note(label, raw, key, note, status_label), tone, indicator_label))
+        cards.append(metric_card(label, value, metric_note(label, raw, key, note, status_label), tone, indicator_label, size="1x1"))
     render_bento_grid(cards)
 
 
@@ -4655,7 +4808,11 @@ def plot_ratings_snapshot(ratings: dict, height: int = 530) -> go.Figure:
         ),
         showlegend=False,
     )
-    return _base_fig(fig, height)
+    fig = _base_fig(fig, height)
+    fig.update_layout(
+        margin=dict(l=35, r=35, t=15, b=15)
+    )
+    return fig
 
 
 def _rating_basis_sentence(key: str, score: float | None, metrics: dict) -> str:
@@ -4711,6 +4868,55 @@ def render_ratings_list(ratings: dict, metrics: dict | None = None) -> None:
         + "</div>"
     )
     st.markdown(html, unsafe_allow_html=True)
+
+
+def render_rating_metric_cards(ratings: dict, metrics: dict | None = None) -> None:
+    """Render the radar's supporting dimensions as compact 1x1 KPI cards."""
+    scores = ratings.get("scores", {}) if ratings else {}
+    label_map = {
+        "ROE": ("净资产收益率", "权益资本回报"),
+        "ROA": ("总资产收益率", "资产使用效率"),
+        "D/E": ("债务权益比", "杠杆越低越稳健"),
+        "P/E": ("市盈率", "盈利估值压力"),
+        "P/B": ("市净率", "结合 ROE 判断"),
+        "P/S": ("市销率", "收入估值压力"),
+        "Dividend Yield": ("股息率", "现金分红保护"),
+        "Revenue Growth": ("收入增长", "收入扩张动能"),
+        "Net Profit Growth": ("净利润增长", "利润兑现速度"),
+    }
+    cards = []
+    
+    # Render overall rating card first with a prominent class
+    overall = ratings.get("overall") if ratings else None
+    overall_text = "N/A" if overall is None else f"{float(overall):.1f}"
+    cards.append(
+        metric_card(
+            "综合评分",
+            overall_text,
+            "可得指标等权聚合",
+            "cyan",
+            str((ratings or {}).get("rating") or "数据受限"),
+            size="1x1",
+            extra_class="rating-overall-card",
+        )
+    )
+
+    for key, (label, note) in label_map.items():
+        value = scores.get(key)
+        if value is None:
+            value_text, status, tone = "N/A", "数据不足", "orange"
+        else:
+            score = float(value)
+            value_text = f"{score:.1f}"
+            if score >= 4:
+                status, tone = "强项", "green"
+            elif score >= 3:
+                status, tone = "中性", "cyan"
+            else:
+                status, tone = "短板", "orange"
+        cards.append(metric_card(label, value_text, f"1–5 分 · {note}", tone, status, size="1x1"))
+
+    st.markdown('<div class="rating-kpi-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
 
 def _financial_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -4771,40 +4977,40 @@ def _period_values(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def plot_financial_revenue_profit(df: pd.DataFrame) -> go.Figure:
+def plot_financial_revenue_profit(df: pd.DataFrame, height: int = 350) -> go.Figure:
     data = _period_values(df)
     fig = go.Figure()
     if data.empty:
-        return _base_fig(fig, 340)
+        return _base_fig(fig, height)
     if "totalRevenue" in data.columns:
         fig.add_trace(go.Bar(x=data["period"], y=data["totalRevenue"], name="营业收入", marker=_bar_marker(BLUE, 0.62), hovertemplate="%{x|%Y-%m-%d}<br>营业收入 %{y:,.0f}<extra></extra>"))
     if "netIncome" in data.columns:
         _add_glow_line(fig, x=data["period"], y=data["netIncome"], name="净利润", color=GREEN, width=2.8, mode="lines+markers", hovertemplate="%{x|%Y-%m-%d}<br>净利润 %{y:,.0f}<extra></extra>")
     fig.update_yaxes(title="金额")
-    return _base_fig(fig, 350)
+    return _base_fig(fig, height)
 
 
-def plot_profitability(df: pd.DataFrame) -> go.Figure:
+def plot_profitability(df: pd.DataFrame, height: int = 350) -> go.Figure:
     data = _period_values(df)
     fig = go.Figure()
     for col, name, color in [("roe", "ROE", CYAN), ("roa", "ROA", PURPLE), ("grossMargin", "毛利率", GREEN), ("netMargin", "净利率", ORANGE)]:
         if col in data.columns and data[col].notna().any():
             _add_glow_line(fig, x=data["period"], y=data[col] * 100, name=name, color=color, width=2.6, mode="lines+markers", hovertemplate=f"{name}<br>%{{x|%Y-%m-%d}}<br>%{{y:.2f}}%<extra></extra>")
     fig.update_yaxes(title="%")
-    return _base_fig(fig, 350)
+    return _base_fig(fig, height)
 
 
-def plot_cashflow_vs_profit(df: pd.DataFrame) -> go.Figure:
+def plot_cashflow_vs_profit(df: pd.DataFrame, height: int = 350) -> go.Figure:
     data = _period_values(df)
     fig = go.Figure()
     if data.empty:
-        return _base_fig(fig, 340)
+        return _base_fig(fig, height)
     if "operatingCashFlow" in data.columns:
         fig.add_trace(go.Bar(x=data["period"], y=data["operatingCashFlow"], name="经营现金流", marker=_bar_marker(CYAN, 0.62), hovertemplate="%{x|%Y-%m-%d}<br>经营现金流 %{y:,.0f}<extra></extra>"))
     if "netIncome" in data.columns:
         fig.add_trace(go.Bar(x=data["period"], y=data["netIncome"], name="净利润", marker=_bar_marker(GREEN, 0.58), hovertemplate="%{x|%Y-%m-%d}<br>净利润 %{y:,.0f}<extra></extra>"))
     fig.update_layout(barmode="group")
-    return _base_fig(fig, 350)
+    return _base_fig(fig, height)
 
 
 def _render_metric_explanations(metrics: dict) -> None:
@@ -4828,11 +5034,11 @@ def _render_emotion_cycle_position(metrics: dict) -> None:
     
     for phase in phases:
         is_active = (phase == period)
-        color = "var(--accent-red)" if is_active else "rgba(255,255,255,0.3)"
-        bg = "rgba(255,92,122,0.2)" if is_active else "rgba(255,255,255,0.05)"
+        color = "#ff2a5f" if is_active else "rgba(255,255,255,0.3)"
+        bg = "rgba(255,42,95,0.25)" if is_active else "rgba(255,255,255,0.05)"
         border = f"2px solid {color}" if is_active else f"1px solid {color}"
         weight = "900" if is_active else "500"
-        shadow = "0 0 16px rgba(255,92,122,0.4)" if is_active else "none"
+        shadow = "0 0 18px rgba(255,42,95,0.7), 0 0 8px rgba(255,42,95,0.4)" if is_active else "none"
         
         html += f'<div style="display:flex; flex-direction:column; align-items:center; z-index:1; gap:8px;">\n'
         html += f'<div style="width:16px; height:16px; border-radius:50%; background:{bg}; border:{border}; box-shadow:{shadow};"></div>\n'
@@ -4852,12 +5058,20 @@ def _render_emotion_cycle_position(metrics: dict) -> None:
 
     def mini_card(label: str, value: str, note: str, width: float, tone: str) -> str:
         safe_width = max(0, min(100, width))
+        status_map = {
+            "danger": "高风险",
+            "warning": "警惕",
+            "good": "活跃",
+            "watch": "常态",
+            "cool": "偏弱"
+        }
+        status = status_map.get(tone, "常态")
         return (
-            f'<div class="mini-metric sentiment-mini {tone}">'
-            f'<span>{label}</span>'
-            f'<strong>{value}</strong>'
-            f'<div class="sentiment-strength {tone}"><i style="width:{safe_width:.1f}%"></i></div>'
-            f'<small>{note}</small>'
+            f'<div class="sentiment-metric-card {tone} bento-size-2x1" data-bento-size="2x1">'
+            f'<div class="sentiment-metric-top"><span>{escape(label)}</span><b>{escape(status)}</b></div>'
+            f'<strong>{escape(value)}</strong>'
+            f'<div class="semantic-meter"><i style="width:{safe_width:.1f}%"></i></div>'
+            f'<p>{escape(note)}</p>'
             f'</div>\n'
         )
     

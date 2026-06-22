@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>JOCKET | 市场情绪终端</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;400;500;600;700;900&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#98f0ff",
+                        "on-tertiary-container": "#742ed6",
+                        "on-secondary-fixed-variant": "#880067",
+                        "secondary-container": "#aa0080",
+                        "background": "#070708",
+                        "outline-variant": "#3b494c",
+                        "on-background": "#e5e2e3",
+                        "on-surface": "#e5e2e3",
+                        "secondary-fixed-dim": "#ffaedb",
+                        "surface-container-low": "#1c1b1d",
+                        "on-primary-container": "#006570",
+                        "primary": "#cff8ff",
+                        "secondary": "#ffaedb",
+                        "on-surface-variant": "#bac9cc",
+                        "surface-bright": "#3a393a",
+                        "surface-container-high": "#2a2a2b",
+                        "primary-container": "#37e8ff",
+                        "royal-purple": "#9B5CFF",
+                        "bright-gold": "#FFE66D",
+                        "tertiary-container": "#e0cbff",
+                        "on-secondary-container": "#ffbee1",
+                        "error": "#ffb4ab",
+                        "surface-dim": "#131314",
+                        "primary-fixed-dim": "#13daf1",
+                        "surface-container": "#201f21",
+                        "tertiary": "#f7edff",
+                        "on-primary-fixed": "#001f24",
+                        "surface-glass": "rgba(255, 255, 255, 0.03)",
+                        "error-container": "#93000a",
+                        "surface-variant": "#353436",
+                        "surface-container-lowest": "#0e0e0f",
+                        "surface": "#131314",
+                        "on-tertiary-fixed-variant": "#5e00c1",
+                        "aurora-cyan": "#37E8FF",
+                        "on-primary-fixed-variant": "#004f58",
+                        "on-error": "#690005",
+                        "inverse-on-surface": "#313031",
+                        "outline": "#859396",
+                        "surface-container-highest": "#353436",
+                        "on-error-container": "#ffdad6",
+                        "on-tertiary-fixed": "#270057",
+                        "inverse-surface": "#e5e2e3",
+                        "border-glow": "rgba(255, 255, 255, 0.15)",
+                        "on-primary": "#00363d",
+                        "tertiary-fixed-dim": "#d5baff",
+                        "surface-tint": "#13daf1",
+                        "secondary-fixed": "#ffd8ea",
+                        "on-secondary-fixed": "#3c002b",
+                        "neon-pink": "#FF5CC8",
+                        "on-tertiary": "#42008a",
+                        "tertiary-fixed": "#ecdcff",
+                        "on-secondary": "#610048",
+                        "inverse-primary": "#006874"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "container-max": "1440px",
+                        "unit": "4px",
+                        "margin-safe": "32px"
+                    },
+                    "fontFamily": {
+                        "headline-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "data-sm": ["JetBrains Mono"],
+                        "label-caps": ["Inter"],
+                        "data-lg": ["JetBrains Mono"],
+                        "display-xl": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-md": ["32px", {"lineHeight": "40px", "letterSpacing": "0.02em", "fontWeight": "200"}],
+                        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "display-lg": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.03em", "fontWeight": "900"}],
+                        "data-sm": ["14px", {"lineHeight": "20px", "fontWeight": "500"}],
+                        "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.1em", "fontWeight": "700"}],
+                        "data-lg": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "display-xl": ["72px", {"lineHeight": "80px", "letterSpacing": "-0.04em", "fontWeight": "900"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        :root {
+            --cursor-x: 0;
+            --cursor-y: 0;
+        }
+
+        body {
+            background-color: #070708;
+            color: #e5e2e3;
+            overflow-x: hidden;
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(40px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 48px;
+            transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1), 
+                        box-shadow 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+                        border-color 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(255, 255, 255, 0.25);
+            text-shadow: 0.5px 0 0 rgba(255, 92, 200, 0.5), -0.5px 0 0 rgba(55, 232, 255, 0.5);
+        }
+
+        .glow-cyan:hover { box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(55, 232, 255, 0.1); }
+        .glow-purple:hover { box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(155, 92, 255, 0.1); }
+        
+        .chromatic-hover:hover {
+            text-shadow: 2px 0 0 rgba(255, 92, 200, 0.8), -2px 0 0 rgba(55, 232, 255, 0.8);
+        }
+
+        .stagger-in {
+            opacity: 0;
+            transform: translateY(40px);
+            animation: slide-up-wave 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        @keyframes slide-up-wave {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #global-cursor-glow {
+            position: fixed;
+            top: 0; left: 0;
+            width: 1000px;
+            height: 1000px;
+            background: radial-gradient(circle, rgba(55, 232, 255, 0.05) 0%, rgba(155, 92, 255, 0.02) 40%, transparent 70%);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: -1;
+            transform: translate(-50%, -50%);
+            left: var(--cursor-x);
+            top: var(--cursor-y);
+            transition: left 0.1s ease-out, top 0.1s ease-out;
+            filter: blur(60px);
+        }
+
+        .rainbow-marquee {
+            position: relative;
+            overflow: hidden;
+        }
+        .rainbow-marquee::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            padding: 2px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #37E8FF, #9B5CFF, #FF5CC8, #FFE66D, #37E8FF);
+            background-size: 200% auto;
+            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            mask-composite: exclude;
+            -webkit-mask-composite: destination-out;
+            animation: move-gradient 3s linear infinite;
+        }
+        @keyframes move-gradient {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 200% 50%; }
+        }
+
+        .gauge-ring {
+            stroke-dasharray: 283;
+            stroke-dashoffset: 73.5;
+            transition: stroke-dashoffset 2.5s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        .bubble-float {
+            animation: float 10s ease-in-out infinite;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-20px) scale(1.03); }
+        }
+
+        .aurora-follow {
+            background: radial-gradient(circle at var(--cmd-x) var(--cmd-y), rgba(55, 232, 255, 0.2) 0%, transparent 60%);
+        }
+    </style>
+</head>
+<body class="min-h-screen selection:bg-aurora-cyan selection:text-on-primary">
+<div id="global-cursor-glow"></div>
+<!-- Top Navigation Shell -->
+<header class="fixed top-0 left-0 right-0 z-50 flex justify-center w-full px-margin-safe">
+<nav class="bg-surface-glass rounded-full mt-6 mx-auto w-full max-w-4xl px-10 py-3 backdrop-blur-2xl border border-white/10 shadow-xl flex items-center justify-between gap-8">
+<div class="flex items-center gap-10">
+<img alt="JOCKET Logo" class="h-7 w-auto object-contain cursor-pointer" src="https://lh3.googleusercontent.com/aida/ADBb0uiPiran2GnD9qwptpzlZD1CipMczZ6p6EUbyDelA0UsUsxhSz7iYPKWZzHWZQuO2xHno44Ch9JrrTwZFem71qXXj_5hyRQ4CLloPZwplUcthl4ZeWhfdZIPVsQVesN9RUfTvmfsxNC3gazZimy8yisVibmnhCCpoWFHil_kj9kQ7sPPtsLDvrq0A7AD-5BYoo3wEsllxQxkczKVP_Ku9C46iSYdGg4y36Sx2omwK0AZ5Mbfr2DmqDlIvRo" style="filter: drop-shadow(rgba(55, 232, 255, 0.3) 0px 0px 10px);"/>
+<div class="hidden md:flex gap-10">
+<a class="font-label-caps text-[11px] text-on-surface-variant font-bold tracking-widest hover:text-aurora-cyan transition-all duration-300" href="#">AI行情</a>
+<a class="font-label-caps text-[11px] text-on-surface-variant font-bold tracking-widest hover:text-aurora-cyan transition-all duration-300" href="#">个股分析</a>
+<a class="font-label-caps text-[11px] text-on-surface font-black border-b-2 border-royal-purple pb-1 tracking-widest" href="#">市场情绪</a>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-5">
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant cursor-pointer hover:text-aurora-cyan transition-colors" data-icon="notifications">notifications</span>
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant cursor-pointer hover:text-aurora-cyan transition-colors" data-icon="account_circle">account_circle</span>
+</div>
+</div>
+</nav>
+</header>
+<main class="pt-36 pb-40 px-gutter max-w-container-max mx-auto relative z-10">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<!-- Market Mood Index Card -->
+<div class="lg:col-span-4 glass-card glow-cyan stagger-in p-10 flex flex-col items-center justify-center text-center relative overflow-hidden" style="animation-delay: 0.1s">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full bg-aurora-cyan/5 blur-[100px] pointer-events-none"></div>
+<h3 class="font-label-caps text-xs text-on-surface-variant mb-12 tracking-[0.4em] uppercase font-bold">情绪周期指数</h3>
+<div class="relative w-64 h-64 flex items-center justify-center">
+<svg class="w-full h-full -rotate-90" viewbox="0 0 100 100">
+<circle class="text-surface-variant/20" cx="50" cy="50" fill="transparent" r="46" stroke="currentColor" stroke-width="4"></circle>
+<circle class="text-aurora-cyan gauge-ring" cx="50" cy="50" fill="transparent" r="46" stroke="currentColor" stroke-linecap="round" stroke-width="4" style="stroke-dashoffset: 73.5;"></circle>
+</svg>
+<div class="absolute flex flex-col items-center">
+<span class="font-display-xl text-[96px] leading-none text-white font-black chromatic-hover cursor-default tabular-nums">74</span>
+<span class="font-label-caps text-[11px] text-aurora-cyan font-black tracking-[0.5em] mt-3">贪婪区间</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-16 w-full mt-12 border-t border-white/5 pt-10">
+<div>
+<p class="font-label-caps text-[10px] text-outline mb-1 tracking-widest uppercase font-bold">昨日收盘</p>
+<p class="font-data-lg text-2xl text-white font-bold tabular-nums">68</p>
+</div>
+<div>
+<p class="font-label-caps text-[10px] text-outline mb-1 tracking-widest uppercase font-bold">7日均值</p>
+<p class="font-data-lg text-2xl text-white font-bold tabular-nums">71</p>
+</div>
+</div>
+</div>
+<!-- Narrative Clusters -->
+<div class="lg:col-span-8 glass-card glow-purple stagger-in p-10 min-h-[560px] flex flex-col" style="animation-delay: 0.2s">
+<div class="flex justify-between items-center mb-12">
+<h3 class="font-headline-md text-3xl font-black flex items-center gap-5 text-white chromatic-hover">
+<span class="material-symbols-outlined text-aurora-cyan p-2.5 bg-white/5 rounded-2xl" data-icon="bubble_chart">bubble_chart</span>
+                    叙事集群
+                </h3>
+<div class="flex items-center gap-3 px-5 py-2 bg-aurora-cyan/10 border border-aurora-cyan/20 rounded-full">
+<span class="w-2 h-2 bg-aurora-cyan rounded-full animate-pulse shadow-[0_0_8px_#37E8FF]"></span>
+<span class="font-label-caps text-[10px] text-aurora-cyan font-black uppercase tracking-[0.2em]">实时神经网络分析</span>
+</div>
+</div>
+<div class="relative flex-grow w-full">
+<!-- Data Bubbles -->
+<div class="absolute top-[5%] left-[12%] w-72 h-72 rounded-full bg-aurora-cyan/5 border border-aurora-cyan/20 flex flex-col items-center justify-center bubble-float backdrop-blur-3xl group cursor-pointer hover:border-aurora-cyan/60 transition-all">
+<span class="font-label-caps text-[11px] text-aurora-cyan font-black tracking-[0.25em] uppercase">生成式 AI</span>
+<span class="font-display-lg text-[64px] text-white font-black tabular-nums mt-1 group-hover:scale-110 transition-transform">48%</span>
+<div class="absolute inset-0 rounded-full group-hover:bg-aurora-cyan/5 transition-colors"></div>
+</div>
+<div class="absolute bottom-6 right-[15%] w-52 h-52 rounded-full bg-royal-purple/5 border border-royal-purple/20 flex flex-col items-center justify-center bubble-float backdrop-blur-3xl group cursor-pointer hover:border-royal-purple/60 transition-all" style="animation-delay: -3s">
+<span class="font-label-caps text-[10px] text-royal-purple/90 font-black tracking-widest uppercase">新能源汽车</span>
+<span class="font-data-lg text-[40px] text-white font-black tabular-nums mt-1 group-hover:scale-110 transition-transform">12%</span>
+</div>
+<div class="absolute top-[30%] right-[10%] w-40 h-40 rounded-full bg-neon-pink/5 border border-neon-pink/20 flex flex-col items-center justify-center bubble-float backdrop-blur-3xl group cursor-pointer hover:border-neon-pink/60 transition-all" style="animation-delay: -6s">
+<span class="font-label-caps text-[10px] text-neon-pink/90 font-black tracking-widest uppercase">半导体</span>
+<span class="font-data-lg text-[32px] text-white font-black tabular-nums mt-1 group-hover:scale-110 transition-transform">15%</span>
+</div>
+</div>
+</div>
+<!-- Sector Dynamics -->
+<div class="lg:col-span-5 glass-card glow-cyan stagger-in p-10" style="animation-delay: 0.3s">
+<h3 class="font-headline-md text-2xl font-black mb-10 flex items-center gap-5 text-white chromatic-hover">
+<span class="material-symbols-outlined text-aurora-cyan p-2.5 bg-white/5 rounded-2xl" data-icon="query_stats">query_stats</span>
+                板块梯队
+            </h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-6 bg-white/[0.02] rounded-[32px] border border-white/5 hover:bg-white/5 hover:border-aurora-cyan/40 transition-all cursor-pointer group">
+<div class="flex items-center gap-6">
+<span class="material-symbols-outlined text-aurora-cyan text-[28px]" data-icon="computer">computer</span>
+<span class="font-body-md text-white font-bold text-lg">信息技术</span>
+</div>
+<span class="text-aurora-cyan font-data-sm text-xl tabular-nums font-black">+3.82%</span>
+</div>
+<div class="flex items-center justify-between p-6 bg-white/[0.02] rounded-[32px] border border-white/5 hover:bg-white/5 hover:border-royal-purple/40 transition-all cursor-pointer group">
+<div class="flex items-center gap-6">
+<span class="material-symbols-outlined text-royal-purple text-[28px]" data-icon="energy_savings_leaf">energy_savings_leaf</span>
+<span class="font-body-md text-white font-bold text-lg">能源工业</span>
+</div>
+<span class="text-royal-purple font-data-sm text-xl tabular-nums font-black">+1.24%</span>
+</div>
+<div class="flex items-center justify-between p-6 bg-white/[0.02] rounded-[32px] border border-white/5 hover:bg-white/5 hover:border-error/40 transition-all cursor-pointer group">
+<div class="flex items-center gap-6">
+<span class="material-symbols-outlined text-error text-[28px]" data-icon="account_balance">account_balance</span>
+<span class="font-body-md text-white font-bold text-lg">金融服务</span>
+</div>
+<span class="text-error font-data-sm text-xl tabular-nums font-black">-0.45%</span>
+</div>
+</div>
+</div>
+<!-- Volume Analysis -->
+<div class="lg:col-span-3 glass-card glow-cyan stagger-in p-10 flex flex-col justify-between" style="animation-delay: 0.4s">
+<div>
+<h3 class="font-label-caps text-[11px] text-outline mb-12 tracking-[0.3em] uppercase font-black">成交分布</h3>
+<div class="space-y-12">
+<div>
+<div class="flex justify-between mb-5">
+<span class="font-label-caps text-xs text-aurora-cyan font-black tracking-widest uppercase">买入压力</span>
+<span class="font-data-sm text-sm tabular-nums text-white font-bold">62%</span>
+</div>
+<div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-aurora-cyan shadow-[0_0_15px_#37E8FF] rounded-full" style="width: 62%"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between mb-5">
+<span class="font-label-caps text-xs text-error font-black tracking-widest uppercase">卖出压力</span>
+<span class="font-data-sm text-sm tabular-nums text-white font-bold">38%</span>
+</div>
+<div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+<div class="h-full bg-error shadow-[0_0_15px_rgba(255,180,171,0.5)] rounded-full" style="width: 38%"></div>
+</div>
+</div>
+</div>
+</div>
+<div class="pt-8 border-t border-white/5">
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined text-[22px] text-aurora-cyan" data-icon="insights">insights</span>
+<span class="font-label-caps text-[11px] tracking-widest uppercase font-black">机构资金占主导</span>
+</div>
+</div>
+</div>
+<!-- Live Sentiment Pulse -->
+<div class="lg:col-span-4 glass-card glow-purple stagger-in p-10" style="animation-delay: 0.5s">
+<div class="flex justify-between items-center mb-10">
+<h3 class="font-headline-md text-2xl font-black text-white chromatic-hover">实时脉动</h3>
+<div class="flex gap-2">
+<span class="px-3 py-1 bg-aurora-cyan/10 text-aurora-cyan border border-aurora-cyan/20 rounded-lg font-label-caps text-[10px] font-black uppercase">宏观</span>
+<span class="px-3 py-1 bg-royal-purple/10 text-royal-purple border border-royal-purple/20 rounded-lg font-label-caps text-[10px] font-black uppercase">社交</span>
+</div>
+</div>
+<div class="space-y-4">
+<div class="p-6 rounded-[32px] bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-aurora-cyan/30 transition-all group cursor-pointer">
+<div class="flex justify-between mb-3">
+<span class="font-label-caps text-[10px] text-aurora-cyan font-black tracking-[0.2em] uppercase">新闻资讯</span>
+<span class="font-data-sm text-[11px] text-outline tabular-nums font-bold">2 分钟前</span>
+</div>
+<p class="font-body-md text-on-surface/90 font-medium leading-relaxed">美联储官员暗示高利率政策可能持续至第三季度。</p>
+</div>
+<div class="p-6 rounded-[32px] bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-royal-purple/30 transition-all group cursor-pointer">
+<div class="flex justify-between mb-3">
+<span class="font-label-caps text-[10px] text-royal-purple font-black tracking-[0.2em] uppercase">社交热度</span>
+<span class="font-data-sm text-[11px] text-outline tabular-nums font-bold">15 分钟前</span>
+</div>
+<p class="font-body-md text-on-surface/90 font-medium leading-relaxed">$NVDA 财报讨论热度显著上升，市场预期普遍乐观。</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="w-full py-16 px-margin-safe border-t border-white/5 relative z-10 bg-background/50 backdrop-blur-2xl">
+<div class="max-w-container-max mx-auto flex flex-col md:flex-row justify-between items-center gap-10">
+<div class="text-[10px] font-label-caps text-on-surface-variant tracking-[0.4em] uppercase font-black opacity-50">
+            © 2024 JOCKET PRECISION TERMINAL. SECURED SPECTRUM V2.5.
+        </div>
+<div class="flex gap-12">
+<a class="text-[10px] font-label-caps text-outline hover:text-aurora-cyan transition-colors tracking-widest uppercase font-black" href="#">服务条款</a>
+<a class="text-[10px] font-label-caps text-outline hover:text-aurora-cyan transition-colors tracking-widest uppercase font-black" href="#">隐私政策</a>
+<a class="text-[10px] font-label-caps text-outline hover:text-aurora-cyan transition-colors tracking-widest uppercase font-black" href="#">API 文档</a>
+<a class="text-[10px] font-label-caps text-outline hover:text-aurora-cyan transition-colors tracking-widest uppercase font-black" href="#">技术支持</a>
+</div>
+</div>
+</footer>
+<!-- Floating Command Capsule -->
+<section class="fixed bottom-10 left-1/2 -translate-x-1/2 w-full max-w-xl px-gutter z-[100] flex justify-center">
+<div class="glass-card rounded-full p-1.5 flex flex-nowrap items-center gap-2 border border-white/10 shadow-2xl relative overflow-hidden h-14 w-full" id="commandBar">
+<div class="aurora-follow absolute inset-0 pointer-events-none opacity-60"></div>
+<!-- Date Selection -->
+<div class="flex-grow h-full bg-white/5 rounded-full px-5 flex items-center gap-3 border border-white/5 hover:bg-white/10 transition-all cursor-pointer group">
+<span class="material-symbols-outlined text-aurora-cyan text-[18px] group-hover:scale-110 transition-transform" data-icon="calendar_today">calendar_today</span>
+<span class="text-data-sm font-black text-on-surface tabular-nums text-xs">2024-05-24</span>
+</div>
+<!-- Range Selection -->
+<div class="flex items-center h-full bg-white/5 rounded-full p-1 border border-white/5">
+<button class="px-4 py-1.5 rounded-full text-[10px] font-black text-outline hover:text-white transition-all uppercase tracking-widest">14天</button>
+<button class="px-5 py-1.5 rounded-full text-[10px] font-black bg-aurora-cyan text-on-primary shadow-[0_0_15px_#37E8FF] uppercase tracking-widest">30天</button>
+<button class="px-4 py-1.5 rounded-full text-[10px] font-black text-outline hover:text-white transition-all uppercase tracking-widest">60天</button>
+</div>
+<!-- CTA -->
+<button class="rainbow-marquee h-full px-6 rounded-full bg-surface-container-lowest border border-white/5 group relative transition-transform active:scale-95 shrink-0 overflow-hidden">
+<span class="relative z-10 flex items-center gap-2 text-[11px] font-black text-white uppercase tracking-widest">
+<span class="material-symbols-outlined text-[16px] text-aurora-cyan" data-icon="bolt">bolt</span>
+                来财来财
+            </span>
+<div class="absolute inset-[1.5px] bg-[#070708] rounded-full z-[5]"></div>
+</button>
+</div>
+</section>
+<script>
+    const commandBar = document.getElementById('commandBar');
+    
+    document.addEventListener('mousemove', (e) => {
+        const x = e.clientX;
+        const y = e.clientY;
+        
+        // Global Background Orb
+        document.documentElement.style.setProperty('--cursor-x', `${x}px`);
+        document.documentElement.style.setProperty('--cursor-y', `${y}px`);
+        
+        // Command Bar Aurora Follow
+        const rect = commandBar.getBoundingClientRect();
+        const mouseX = x - rect.left;
+        const mouseY = y - rect.top;
+        commandBar.style.setProperty('--cmd-x', `${mouseX}px`);
+        commandBar.style.setProperty('--cmd-y', `${mouseY}px`);
+    });
+
+    // Individual Card Hover 3D Tilt + Chromatic aberration effect
+    document.querySelectorAll('.glass-card').forEach(card => {
+        card.addEventListener('mousemove', e => {
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            const rotateX = (y - centerY) / 60;
+            const rotateY = (centerX - x) / 60;
+            card.style.transform = `perspective(1000px) translateY(-10px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+        });
+        
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = `perspective(1000px) translateY(0) rotateX(0) rotateY(0)`;
+        });
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log("%c JOCKET SPECTRUM v2.5 %c Sentiment Interface Connected", "color: #37E8FF; font-weight: bold;", "color: #9B5CFF;");
+    });
+</script>
+</body></html>

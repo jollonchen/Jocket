@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "<stdin>", line 18, in <module>
+  File "/opt/anaconda3/lib/python3.13/site-packages/selenium/webdriver/support/wait.py", line 121, in until
+    raise TimeoutException(message, screen, stacktrace)
+selenium.common.exceptions.TimeoutException: Message: 
+
